@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#05060d">
 <title>Æther — your atmosphere</title>
 <meta name="description" content="A living daily companion.">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%0A%20%20%3Cdefs%3E%0A%20%20%20%20%3ClinearGradient%20id%3D%22g%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%231b1746%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%230a0a24%22%2F%3E%3C%2FlinearGradient%3E%0A%20%20%20%20%3Cmask%20id%3D%22c%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20fill%3D%22black%22%2F%3E%3Ccircle%20cx%3D%2215%22%20cy%3D%2216%22%20r%3D%229%22%20fill%3D%22white%22%2F%3E%3Ccircle%20cx%3D%2219.5%22%20cy%3D%2213%22%20r%3D%228%22%20fill%3D%22black%22%2F%3E%3C%2Fmask%3E%0A%20%20%3C%2Fdefs%3E%0A%20%20%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%227%22%20fill%3D%22url(%23g)%22%2F%3E%0A%20%20%3Crect%20width%3D%2232%22%20height%3D%2232%22%20fill%3D%22%23f6efcf%22%20mask%3D%22url(%23c)%22%2F%3E%0A%20%20%3Ccircle%20cx%3D%2223%22%20cy%3D%2222%22%20r%3D%221.1%22%20fill%3D%22%23cdd6ff%22%2F%3E%0A%3C%2Fsvg%3E%0A">
 <style>html,body{margin:0;background:#05060d}</style>
 </head>
 <body>
@@ -165,7 +166,7 @@
     border:1px solid var(--brd-soft);border-radius:14px;color:var(--text);font-family:var(--sans);
     font-size:1rem;line-height:1.55;padding:.9rem 1rem;outline:none;transition:.3s}
   .reflect-wrap textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--glow)}
-  .reflect-actions{display:flex;gap:.6rem;align-items:center;margin-top:.9rem}
+  .reflect-actions{display:flex;gap:.6rem;align-items:center;justify-content:flex-end;flex-wrap:wrap;margin-top:.9rem}
   .reflect-actions .fill{flex:1}
   .entries{margin-top:1.6rem;display:flex;flex-direction:column;gap:.7rem}
   .entries h3{font-size:.66rem;letter-spacing:.28em;text-transform:uppercase;color:var(--faint);margin:0 0 .2rem;font-weight:600}
@@ -209,6 +210,21 @@
     .ae-room{animation:none}
     .ae-sound.on .bars rect{animation:none}
   }
+
+  /* ---- header actions: back to freya.co.nz ---- */
+  .ae-actions{display:flex;align-items:center;gap:.5rem}
+  .ae-home{appearance:none;text-decoration:none;border:1px solid var(--brd);background:var(--panel);
+    color:var(--muted);height:40px;padding:0 .85rem;border-radius:999px;display:inline-flex;align-items:center;
+    gap:.4rem;cursor:pointer;transition:.35s;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    flex:none;font-family:var(--sans);font-size:.72rem;letter-spacing:.02em}
+  .ae-home:hover{color:var(--text);border-color:var(--accent);box-shadow:0 0 22px -6px var(--glow)}
+  .ae-home svg{width:15px;height:15px}
+  .ae-home .t{white-space:nowrap}
+  @media (max-width:560px){
+    .ae-brand span{display:none}
+    .ae-home{padding:0;width:40px;justify-content:center}
+    .ae-home .t{display:none}
+  }
 </style>
 
 <canvas id="ae-sky" aria-hidden="true"></canvas>
@@ -218,9 +234,14 @@
 <div class="ae-shell">
   <header class="ae-top">
     <div class="ae-brand"><b>Æther</b><span>your atmosphere</span></div>
-    <button class="ae-sound" id="soundBtn" aria-pressed="false" title="Ambient sound">
-      <svg viewBox="0 0 24 24" class="bars" fill="currentColor"><rect x="4" y="7" width="3" height="10" rx="1.5"/><rect x="9" y="4" width="3" height="16" rx="1.5"/><rect x="14" y="9" width="3" height="6" rx="1.5"/><rect x="19" y="6" width="3" height="12" rx="1.5" transform="translate(-1,0)"/></svg>
-    </button>
+    <div class="ae-actions">
+      <a class="ae-home" href="https://freya.co.nz" title="Back to freya.co.nz" aria-label="Back to freya.co.nz">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg><span class="t">freya.co.nz</span>
+      </a>
+      <button class="ae-sound" id="soundBtn" aria-pressed="false" title="Ambient sound">
+        <svg viewBox="0 0 24 24" class="bars" fill="currentColor"><rect x="4" y="7" width="3" height="10" rx="1.5"/><rect x="9" y="4" width="3" height="16" rx="1.5"/><rect x="14" y="9" width="3" height="6" rx="1.5"/><rect x="19" y="6" width="3" height="12" rx="1.5" transform="translate(-1,0)"/></svg>
+      </button>
+    </div>
   </header>
 
   <main>
@@ -309,7 +330,7 @@
           <p class="prompt" id="reflectPrompt">—</p>
           <textarea id="reflectText" placeholder="a sentence is enough…"></textarea>
           <div class="reflect-actions">
-            <span class="fill"></span>
+            <button class="btn ghost" id="reflectBackup">Back up to file</button>
             <button class="btn ghost" id="reflectExport">Export</button>
             <button class="btn primary" id="reflectSave">Save entry</button>
           </div>
@@ -744,18 +765,54 @@
         d.appendChild(w);d.appendChild(p);list.appendChild(d);
       });
     }
+    /* ---- back up entries to a log file on your computer (File System Access API) ---- */
+    var fsSupported=("showSaveFilePicker" in window), fsHandle=null, backupBtn=$("#reflectBackup");
+    function logText(a){
+      return "﻿Æther — Close the loop — journal backup\r\n"+
+        "Saved "+new Date().toLocaleString()+" · "+a.length+" entr"+(a.length===1?"y":"ies")+"\r\n"+
+        "----------------------------------------\r\n\r\n"+
+        a.map(function(en){return "["+fmtDate(en.ts)+"]\r\n"+en.text+"\r\n";}).join("\r\n");
+    }
+    function idbReq(mode,fn){return new Promise(function(res){var o=indexedDB.open("ae_fs",1);
+      o.onupgradeneeded=function(){o.result.createObjectStore("h");};
+      o.onerror=function(){res(null);};
+      o.onsuccess=function(){try{var s=o.result.transaction("h",mode).objectStore("h"),rq=fn(s);
+        rq.onsuccess=function(){res(rq.result);};rq.onerror=function(){res(null);};}catch(e){res(null);}};});}
+    function writeHandle(){ if(!fsHandle) return Promise.resolve(false);
+      return fsHandle.createWritable().then(function(w){return w.write(logText(load())).then(function(){return w.close();});})
+        .then(function(){return true;},function(){return false;}); }
+    function syncBackup(){ if(fsHandle) writeHandle(); }
+    function downloadCopy(a){
+      var blob=new Blob([logText(a)],{type:"text/plain"});
+      var url=URL.createObjectURL(blob),link=document.createElement("a");
+      link.href=url;link.download="aether-journal.log";document.body.appendChild(link);link.click();
+      document.body.removeChild(link);setTimeout(function(){URL.revokeObjectURL(url);},1000);
+    }
+    function pickFile(){
+      return window.showSaveFilePicker({suggestedName:"aether-journal.log",
+        types:[{description:"Log file",accept:{"text/plain":[".log",".txt"]}}]})
+        .then(function(h){fsHandle=h;return idbReq("readwrite",function(s){return s.put(h,"journal");});})
+        .then(function(){return writeHandle();});
+    }
+    if(backupBtn){
+      if(!fsSupported){ backupBtn.textContent="Save a copy"; }
+      else { idbReq("readonly",function(s){return s.get("journal");}).then(function(h){ if(h){ fsHandle=h; backupBtn.textContent="Back up now"; } }); }
+      backupBtn.addEventListener("click",function(){
+        var a=load(); if(!a.length){ toast("nothing to back up yet"); return; }
+        if(!fsSupported){ downloadCopy(a); toast("saved aether-journal.log"); return; }
+        var p = fsHandle ? fsHandle.requestPermission({mode:"readwrite"}).then(function(perm){ return perm==="granted"?writeHandle():pickFile(); }) : pickFile();
+        p.then(function(ok){ if(ok){ backupBtn.textContent="Back up now"; toast("backed up to your log file ✓"); } else { toast("backup cancelled"); } },
+               function(){ toast("backup cancelled"); });
+      });
+    }
+
     $("#reflectSave").addEventListener("click",function(){
       var v=ta.value.trim();if(!v){toast("write a little first");ta.focus();return;}
-      var a=load();a.push({ts:Date.now(),text:v});save(a);ta.value="";render();toast("saved to this device");
+      var a=load();a.push({ts:Date.now(),text:v});save(a);ta.value="";render();syncBackup();toast("saved to this device");
     });
     $("#reflectExport").addEventListener("click",function(){
       var a=load();if(!a.length){toast("nothing to export yet");return;}
-      var txt=a.map(function(en){return "— "+fmtDate(en.ts)+"\n"+en.text+"\n";}).join("\n");
-      var blob=new Blob(["Æther journal\n\n"+txt],{type:"text/plain"});
-      var url=URL.createObjectURL(blob),link=document.createElement("a");
-      link.href=url;link.download="aether-journal.txt";document.body.appendChild(link);link.click();
-      document.body.removeChild(link);setTimeout(function(){URL.revokeObjectURL(url);},1000);
-      toast("exported aether-journal.txt");
+      downloadCopy(a);toast("exported aether-journal.log");
     });
     render();
   })();
