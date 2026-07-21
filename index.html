@@ -1,25 +1,161 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Hello World</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Freya — index</title>
+<meta name="description" content="A small workshop on the web: FreyaCAD, Star Guide, NextRound, and Æther. Auckland, New Zealand.">
+<meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.ico">
 <style>
-  body {
-    margin: 0;
-    height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: system-ui, sans-serif;
-    background: #f5f5f5;
+  :root{
+    --bg:#eef1f6;
+    --ink:#141922;
+    --muted:#5a6675;
+    --faint:#8592a3;
+    --line:rgba(20,25,34,.12);
+    --line-soft:rgba(20,25,34,.07);
+    --surface:rgba(255,255,255,.6);
+    --accent:#3a5bd0;
+    --accent-ink:#3a5bd0;
+    --grid:rgba(20,25,34,.045);
+    --serif:"Palatino Linotype","Book Antiqua",Palatino,Georgia,"Times New Roman",serif;
+    --sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",sans-serif;
+    --mono:ui-monospace,"Cascadia Code","Cascadia Mono",Consolas,"SFMono-Regular",Menlo,monospace;
   }
-  h1 {
-    font-size: 3rem;
-    color: #333;
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0b0e14;
+      --ink:#eef1f8;
+      --muted:#98a5bd;
+      --faint:#6b7890;
+      --line:rgba(255,255,255,.13);
+      --line-soft:rgba(255,255,255,.07);
+      --surface:rgba(255,255,255,.035);
+      --accent:#8aa2ff;
+      --accent-ink:#a9bcff;
+      --grid:rgba(255,255,255,.04);
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.55;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+    min-height:100dvh;
+  }
+  /* faint drafting grid */
+  body::before{
+    content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+    background-image:
+      linear-gradient(var(--grid) 1px,transparent 1px),
+      linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+    background-size:26px 26px;
+    -webkit-mask-image:radial-gradient(120% 90% at 50% 0%,#000 55%,transparent 100%);
+    mask-image:radial-gradient(120% 90% at 50% 0%,#000 55%,transparent 100%);
+  }
+  .wrap{position:relative;z-index:1;max-width:720px;margin:0 auto;
+    padding:clamp(2.6rem,8vw,5rem) clamp(1.2rem,5vw,2rem) 3rem;}
+
+  header{margin-bottom:clamp(2rem,6vw,3.2rem)}
+  .eyebrow{font-family:var(--mono);font-size:.7rem;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--faint);margin:0 0 1rem;display:flex;align-items:center;gap:.6rem}
+  .eyebrow::after{content:"";height:1px;flex:1;background:var(--line)}
+  h1.mark{font-family:var(--serif);font-weight:600;font-size:clamp(3.2rem,13vw,5rem);
+    line-height:.95;letter-spacing:-.015em;margin:0;text-wrap:balance}
+  .lede{font-size:clamp(1.02rem,3.4vw,1.18rem);color:var(--muted);margin:1.1rem 0 0;max-width:44ch;text-wrap:pretty}
+  .lede b{color:var(--ink);font-weight:600}
+
+  .list{border-top:1px solid var(--line)}
+  a.row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:1.2rem;
+    text-decoration:none;color:inherit;border-bottom:1px solid var(--line);
+    padding:clamp(1.15rem,4vw,1.6rem) .4rem clamp(1.15rem,4vw,1.6rem) 0;
+    position:relative;transition:background .25s,padding-left .25s;}
+  a.row::before{content:"";position:absolute;left:0;top:12%;bottom:12%;width:2px;border-radius:2px;
+    background:var(--accent);transform:scaleY(0);transform-origin:top;transition:transform .25s}
+  a.row:hover,a.row:focus-visible{background:var(--surface);padding-left:1rem;outline:none}
+  a.row:hover::before,a.row:focus-visible::before{transform:scaleY(1)}
+  .row-top{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:.5rem}
+  .path{font-family:var(--mono);font-size:.78rem;color:var(--accent-ink);letter-spacing:.01em}
+  .tag{font-family:var(--mono);font-size:.62rem;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--faint);white-space:nowrap}
+  .name{font-family:var(--serif);font-weight:600;font-size:clamp(1.5rem,5.5vw,2rem);line-height:1.05;
+    margin:0;letter-spacing:-.01em;display:flex;align-items:center;gap:.5rem;transition:color .2s}
+  a.row:hover .name,a.row:focus-visible .name{color:var(--accent)}
+  .name .lock{width:.72em;height:.72em;opacity:.55;flex:none}
+  .desc{color:var(--muted);font-size:.98rem;margin:.5rem 0 0;max-width:52ch;text-wrap:pretty}
+  .go{font-family:var(--serif);font-size:1.6rem;color:var(--faint);transition:transform .25s,color .2s;line-height:1}
+  a.row:hover .go,a.row:focus-visible .go{color:var(--accent);transform:translateX(5px)}
+
+  footer{margin-top:clamp(2.4rem,7vw,3.5rem);display:flex;justify-content:space-between;flex-wrap:wrap;gap:.6rem;
+    font-family:var(--mono);font-size:.72rem;letter-spacing:.04em;color:var(--faint)}
+  footer a{color:var(--faint);text-decoration:none;border-bottom:1px solid var(--line)}
+  footer a:hover{color:var(--accent)}
+
+  @media (max-width:440px){
+    .go{display:none}
+    a.row{grid-template-columns:1fr}
+  }
+  @media (prefers-reduced-motion:reduce){
+    a.row,a.row .go,a.row::before,.name{transition:none}
   }
 </style>
 </head>
 <body>
-  <h1>Hello, World!</h1>
+  <div class="wrap">
+    <header>
+      <p class="eyebrow">Index &middot; freya.co.nz</p>
+      <h1 class="mark">Freya</h1>
+      <p class="lede">A small workshop on the web &mdash; <b>software, hardware, and a little calm</b>. Pick a door. Auckland, New&nbsp;Zealand.</p>
+    </header>
+
+    <nav class="list" aria-label="Projects">
+
+      <a class="row" href="/freyacad">
+        <div class="row-main">
+          <div class="row-top"><span class="path">/freyacad</span><span class="tag">CAD engine</span></div>
+          <h2 class="name">FreyaCAD</h2>
+          <p class="desc">Parametric solid modelling in the browser — sketch, extrude, and boolean geometry, powered by Manifold and three.js.</p>
+        </div>
+        <span class="go" aria-hidden="true">&rarr;</span>
+      </a>
+
+      <a class="row" href="/nextround">
+        <div class="row-main">
+          <div class="row-top"><span class="path">/nextround</span><span class="tag">Hospitality &middot; private</span></div>
+          <h2 class="name">NextRound
+            <svg class="lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-label="password protected"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+          </h2>
+          <p class="desc">A one-press service button for every table — guests tap, the bar knows in 84&nbsp;ms. No app, no venue Wi-Fi. (Code required.)</p>
+        </div>
+        <span class="go" aria-hidden="true">&rarr;</span>
+      </a>
+
+      <a class="row" href="/stars">
+        <div class="row-main">
+          <div class="row-top"><span class="path">/stars</span><span class="tag">Sky map</span></div>
+          <h2 class="name">Star Guide</h2>
+          <p class="desc">An interactive map of the night sky — constellations, their figures, and the planets overhead.</p>
+        </div>
+        <span class="go" aria-hidden="true">&rarr;</span>
+      </a>
+
+      <a class="row" href="/zen">
+        <div class="row-main">
+          <div class="row-top"><span class="path">/zen</span><span class="tag">Wellbeing</span></div>
+          <h2 class="name">Æther</h2>
+          <p class="desc">A living daily companion — a generative sky that shifts with the hour, a focus timer, a breathing guide, and a private journal.</p>
+        </div>
+        <span class="go" aria-hidden="true">&rarr;</span>
+      </a>
+
+    </nav>
+
+    <footer>
+      <span>Auckland, New Zealand</span>
+      <span>&copy; 2026 Freya</span>
+    </footer>
+  </div>
 </body>
 </html>

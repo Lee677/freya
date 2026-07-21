@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VPAS — Vacuum Pumps and Systems | Precision Rotary Valve Remanufacture</title>
+<meta name="description" content="New rotary valves, CNC overhaul, precision clearance checking, linear rail and seal upgrades, rotor tip welding and grinding. Authorised GEA rotary valve manufacturer. Auckland, New Zealand — now opening in the USA." />
+<meta name="keywords" content="rotary valves, GEA rotary valves, rotary valve overhaul, CNC machining, precision clearance, tip welding and grinding, linear rails, vacuum pumps, New Zealand, USA" />
+<meta name="theme-color" content="#0A0B0D" />
+<link rel="canonical" href="https://vpas.co.nz/" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="VPAS — Vacuum Pumps and Systems" />
+<meta property="og:description" content="Rotary valves overhauled on CNC machinery to precise clearances. Authorised GEA rotary valve manufacturer. NZ + USA." />
+<meta property="og:url" content="https://vpas.co.nz/" />
+<meta name="twitter:card" content="summary_large_image" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='14' fill='%230A0B0D'/%3E%3Cg fill='none' stroke='%23C9D1D9' stroke-width='4' stroke-linecap='round'%3E%3Ccircle cx='50' cy='50' r='30'/%3E%3Cline x1='50' y1='22' x2='50' y2='36'/%3E%3Cline x1='50' y1='64' x2='50' y2='78'/%3E%3Cline x1='22' y1='50' x2='36' y2='50'/%3E%3Cline x1='64' y1='50' x2='78' y2='50'/%3E%3C/g%3E%3Cline x1='50' y1='50' x2='68' y2='32' stroke='%23E23B2E' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E" />
+
+<style>
+  :root{
+    --black:#0A0B0D;--panel:#0F1114;--panel-2:#14171B;
+    --hair:rgba(201,209,217,.14);--hair-soft:rgba(201,209,217,.07);
+    --silver:#C9D1D9;--silver-dim:#8A939C;--silver-faint:#5A6169;--white:#F2F4F6;
+    --red:#E23B2E;
+    --font-display:'Space Grotesk',system-ui,sans-serif;
+    --font-body:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    --font-mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
+    --wrap:1280px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  body{margin:0;background:var(--black);color:var(--silver);font-family:var(--font-body);line-height:1.55;-webkit-font-smoothing:antialiased}
+  h1,h2,h3{font-family:var(--font-display);font-weight:600;letter-spacing:-.01em;line-height:1.06;margin:0;color:var(--white)}
+  p{margin:0}a{color:inherit;text-decoration:none}svg,canvas{display:block}
+  .wrap{max-width:var(--wrap);margin:0 auto;padding:0 clamp(20px,4vw,48px)}
+
+  .dial{font-family:var(--font-mono);font-size:.66rem;letter-spacing:.28em;text-transform:uppercase;color:var(--silver-dim)}
+  .dial .tick{color:var(--red)}
+
+  .btn{display:inline-flex;align-items:center;gap:.55em;font-family:var(--font-display);font-weight:500;font-size:.9rem;letter-spacing:.02em;padding:.85em 1.7em;border-radius:2px;border:1px solid var(--hair);cursor:pointer;background:transparent;color:var(--white);transition:background .18s,border-color .18s}
+  .btn:hover{border-color:var(--silver);background:rgba(255,255,255,.04)}
+  .btn:focus-visible{outline:1px solid var(--red);outline-offset:3px}
+  .btn-solid{background:var(--white);color:var(--black);border-color:var(--white)}
+  .btn-solid:hover{background:var(--silver);border-color:var(--silver)}
+
+  /* ---------- header + integrated lockup ---------- */
+  header.site{position:fixed;top:0;left:0;right:0;z-index:80;background:linear-gradient(rgba(10,11,13,.92),rgba(10,11,13,0))}
+  .nav{display:flex;align-items:center;justify-content:space-between;height:96px}
+  .lockup{display:inline-flex;flex-direction:column;line-height:1}
+  .lockup .word{display:flex;align-items:center;gap:.06em;font-family:var(--font-display);font-weight:700;color:var(--white)}
+  .lockup .word span{font-size:var(--lk,2.15rem);letter-spacing:.04em}
+  .lockup .word svg{width:calc(var(--lk,2.15rem)*.94);height:calc(var(--lk,2.15rem)*.94);margin:0 .05em}
+  .lockup .sub{font-family:var(--font-mono);font-size:calc(var(--lk,2.15rem)*.205);letter-spacing:.34em;text-transform:uppercase;color:var(--silver-dim);margin-top:.42em;white-space:nowrap}
+  .lockup.xl{--lk:3.4rem}
+  @media (max-width:640px){.lockup{--lk:1.7rem}.lockup.xl{--lk:2.3rem}}
+
+  .nav-right{display:flex;align-items:center;gap:26px}
+  .nav-right a.lnk{font-family:var(--font-mono);font-size:.68rem;letter-spacing:.2em;text-transform:uppercase;color:var(--silver-dim);transition:color .16s}
+  .nav-right a.lnk:hover{color:var(--white)}
+  @media (max-width:760px){.nav-right a.lnk{display:none}}
+
+  /* ---------- hero ---------- */
+  .stage{position:relative;height:100svh;min-height:680px;overflow:hidden;background:radial-gradient(60% 50% at 50% 46%,#12151a 0%,var(--black) 76%)}
+  #cnc{position:absolute;inset:0;width:100%;height:100%}
+  .stage-title{position:absolute;top:calc(96px + 2.5vh);left:0;right:0;text-align:center;pointer-events:none;z-index:5;padding:0 20px}
+  .stage-title .dial{display:block;margin-bottom:16px}
+  .stage-title h1{font-size:clamp(1.9rem,4.2vw,3.4rem)}
+  .stage-title h1 .thin{color:var(--silver-dim);font-weight:500}
+
+  .deck{position:absolute;left:0;right:0;bottom:0;z-index:6;border-top:1px solid var(--hair);background:rgba(10,11,13,.76);backdrop-filter:blur(10px)}
+  .deck-inner{display:grid;grid-template-columns:1fr 1.3fr .7fr}
+  .deck-cell{padding:18px clamp(18px,3vw,36px) 20px;border-right:1px solid var(--hair-soft)}
+  .deck-cell:last-child{border-right:none;display:flex;align-items:center;justify-content:center}
+  .deck-label{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+  .readout{font-family:var(--font-mono);font-size:.72rem;color:var(--white)}
+  .readout small{color:var(--silver-faint)}
+
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:26px;background:transparent;cursor:pointer;margin:0}
+  input[type=range]::-webkit-slider-runnable-track{height:1px;background:var(--hair)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:3px;height:22px;background:var(--red);margin-top:-10.5px;border-radius:0}
+  input[type=range]::-moz-range-track{height:1px;background:var(--hair)}
+  input[type=range]::-moz-range-thumb{width:3px;height:22px;background:var(--red);border:none;border-radius:0}
+  input[type=range]:focus-visible{outline:1px solid var(--red);outline-offset:4px}
+
+  .dro{display:grid;grid-template-columns:repeat(4,1fr);gap:0 18px}
+  .dro .cell .v{font-family:var(--font-mono);font-size:clamp(.9rem,1.5vw,1.2rem);color:var(--white);font-weight:500;font-variant-numeric:tabular-nums}
+  .dro .cell .v em{font-style:normal;color:var(--red)}
+  .dro .cell .k{font-family:var(--font-mono);font-size:.58rem;letter-spacing:.22em;color:var(--silver-faint);margin-top:5px;text-transform:uppercase}
+
+  @media (max-width:900px){
+    .deck-inner{grid-template-columns:1fr}
+    .deck-cell{border-right:none;border-bottom:1px solid var(--hair-soft);padding:13px 20px}
+    .deck-cell:last-child{border-bottom:none;padding:12px}
+    .dro{grid-template-columns:repeat(4,1fr);gap:0 10px}
+  }
+
+  /* ---------- scroll reveal ---------- */
+  .reveal{opacity:0;transform:translateY(26px);transition:opacity .8s cubic-bezier(.2,.6,.2,1),transform .8s cubic-bezier(.2,.6,.2,1)}
+  .reveal.in{opacity:1;transform:none}
+  @media (prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}}
+
+  /* ---------- scrolly story ---------- */
+  .story{position:relative;height:380vh;border-top:1px solid var(--hair)}
+  .story-sticky{position:sticky;top:0;height:100svh;min-height:640px;overflow:hidden;background:radial-gradient(56% 48% at 58% 50%,#101318 0%,var(--black) 78%)}
+  #storyCv{position:absolute;inset:0;width:100%;height:100%}
+  .story-rail{position:absolute;left:clamp(18px,4vw,64px);top:50%;transform:translateY(-50%);z-index:5;max-width:300px}
+  .story-rail .dial{display:block;margin-bottom:22px}
+  .step{padding:12px 0;border-top:1px solid var(--hair-soft);cursor:default}
+  .step:last-of-type{border-bottom:1px solid var(--hair-soft)}
+  .step .n{font-family:var(--font-mono);font-size:.62rem;letter-spacing:.14em;color:var(--silver-faint);transition:color .3s}
+  .step .t{font-family:var(--font-display);font-size:1.02rem;font-weight:600;color:var(--silver-faint);margin-top:4px;transition:color .3s}
+  .step.on .n{color:var(--red)}
+  .step.on .t{color:var(--white)}
+  .story-desc{margin-top:20px;font-size:.86rem;color:var(--silver-dim);line-height:1.65;min-height:4.6em}
+  .story-desc b{color:var(--silver);font-weight:500}
+  @media (max-width:860px){
+    .story{height:340vh}
+    .story-rail{left:0;right:0;top:auto;bottom:0;transform:none;max-width:none;padding:14px clamp(18px,4vw,64px) 18px;background:linear-gradient(transparent,rgba(10,11,13,.92) 30%)}
+    .steps-row{display:flex;gap:18px}
+    .step{border:none;padding:0}
+    .step .t{font-size:.86rem}
+    .story-desc{min-height:3.4em;margin-top:10px}
+  }
+
+  /* ---------- services ---------- */
+  section.band{border-top:1px solid var(--hair);padding:clamp(56px,8vw,100px) 0}
+  .band-head{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:14px;margin-bottom:clamp(30px,4vw,52px)}
+  .band-head h2{font-size:clamp(1.6rem,3vw,2.4rem)}
+  .svc-grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--hair-soft);border:1px solid var(--hair-soft)}
+  .svc{background:var(--panel);padding:clamp(24px,2.8vw,38px);transition:background .2s;position:relative}
+  .svc:hover{background:var(--panel-2)}
+  .svc .idx{font-family:var(--font-mono);font-size:.62rem;color:var(--silver-faint);letter-spacing:.14em}
+  .svc:hover .idx{color:var(--red)}
+  .svc h3{font-size:1.14rem;margin-top:14px}
+  .svc p{color:var(--silver-dim);font-size:.88rem;margin-top:10px;line-height:1.6;max-width:44ch}
+  .svc .ic{position:absolute;top:clamp(22px,2.6vw,34px);right:clamp(22px,2.6vw,34px);width:54px;height:54px;opacity:.7;transition:opacity .25s}
+  .svc:hover .ic{opacity:1}
+  .svc .ic .spin{transform-origin:50% 50%;transition:transform .9s cubic-bezier(.2,.7,.2,1)}
+  .svc:hover .ic .spin{transform:rotate(120deg)}
+  .svc .ic .slide{transition:transform .7s cubic-bezier(.2,.7,.2,1)}
+  .svc:hover .ic .slide{transform:translateX(9px)}
+  @media (max-width:560px){.svc-grid{grid-template-columns:1fr}}
+
+  .metrics{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--hair-soft);border-top:none}
+  .metric{padding:24px 26px 26px;border-right:1px solid var(--hair-soft);background:var(--black)}
+  .metric:last-child{border-right:none}
+  .metric .v{font-family:var(--font-display);font-weight:600;font-size:1.6rem;color:var(--white);font-variant-numeric:tabular-nums}
+  .metric .k{font-family:var(--font-mono);font-size:.6rem;letter-spacing:.2em;text-transform:uppercase;color:var(--silver-faint);margin-top:8px}
+  @media (max-width:800px){.metrics{grid-template-columns:1fr 1fr}.metric:nth-child(2){border-right:none}.metric{border-bottom:1px solid var(--hair-soft)}}
+
+  /* ---------- contact ---------- */
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:clamp(28px,4vw,64px)}
+  @media (max-width:800px){.grid-2{grid-template-columns:1fr}}
+  .loc h3{font-size:1.1rem}
+  .loc .dial{display:block;margin-bottom:12px}
+  .loc .row{display:flex;gap:16px;margin-top:10px;font-size:.9rem;color:var(--silver-dim)}
+  .loc .row .k{font-family:var(--font-mono);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;color:var(--silver-faint);min-width:64px;padding-top:4px}
+  .loc .row a:hover,.loc .row .v:hover{color:var(--white)}
+  .loc + .loc{margin-top:34px;padding-top:30px;border-top:1px solid var(--hair-soft)}
+  .field{margin-bottom:14px;display:flex;flex-direction:column}
+  .field label{font-family:var(--font-mono);font-size:.62rem;letter-spacing:.18em;text-transform:uppercase;color:var(--silver-faint);margin-bottom:7px}
+  .field input,.field textarea{font-family:var(--font-body);font-size:.95rem;color:var(--white);background:var(--panel);border:1px solid var(--hair-soft);border-radius:2px;padding:12px 14px;transition:border-color .16s}
+  .field input:focus,.field textarea:focus{outline:none;border-color:var(--silver-dim)}
+  .field textarea{resize:vertical;min-height:96px}
+  .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media (max-width:520px){.form-row{grid-template-columns:1fr}}
+  #formMsg{font-family:var(--font-mono);font-size:.72rem;color:var(--red);margin-top:12px;min-height:1.1em}
+  .form-note{font-family:var(--font-mono);font-size:.62rem;color:var(--silver-faint);margin-top:10px;letter-spacing:.04em}
+
+
+  .deck-one{display:flex;justify-content:center;padding:15px 0}
+  .stage .hint{position:absolute;left:50%;transform:translateX(-50%);bottom:86px;z-index:5;pointer-events:none;font-family:var(--font-mono);font-size:.62rem;letter-spacing:.24em;text-transform:uppercase;color:var(--silver-faint);transition:opacity .5s}
+  .stage .hint.hide{opacity:0}
+  #cnc{cursor:grab}
+  #cnc.dragging{cursor:grabbing}
+  @media (max-width:640px){.nav-right{gap:10px}.btn{padding:.7em 1em;font-size:.82rem}}
+  footer.site{border-top:1px solid var(--hair);padding:44px 0 36px}
+  .foot{display:flex;flex-wrap:wrap;gap:26px;justify-content:space-between;align-items:center}
+</style>
+</head>
+<body>
+
+<!-- integrated lockup template (reticle replaces the A) -->
+<template id="lockupT">
+  <span class="word" aria-label="VPAS">
+    <span>VP</span>
+    <svg viewBox="0 0 100 100" aria-hidden="true">
+      <g fill="none" stroke="#C9D1D9" stroke-width="7" stroke-linecap="round">
+        <circle cx="50" cy="50" r="34"/>
+        <line x1="50" y1="6" x2="50" y2="24"/><line x1="50" y1="76" x2="50" y2="94"/>
+        <line x1="6" y1="50" x2="24" y2="50"/><line x1="76" y1="50" x2="94" y2="50"/>
+      </g>
+      <line x1="50" y1="50" x2="70" y2="30" stroke="#E23B2E" stroke-width="6" stroke-linecap="round"/>
+      <circle cx="50" cy="50" r="5.5" fill="#E23B2E"/>
+    </svg>
+    <span>S</span>
+  </span>
+  <span class="sub">Vacuum Pumps and Systems</span>
+</template>
+
+<header class="site">
+  <div class="wrap">
+    <nav class="nav" aria-label="Primary">
+      <a class="lockup" id="lockupHead" href="#top" aria-label="VPAS — Vacuum Pumps and Systems"></a>
+      <div class="nav-right">
+        <a class="btn" href="#contact">Request a quote</a>
+      </div>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ============ HERO: POWDER THROUGH THE VALVE ============ -->
+  <section class="stage" aria-label="Rotary valve metering powder">
+    <canvas id="cnc"></canvas>
+    <div class="hint" id="spinHint">Drag the rotor to spin it</div>
+    <div class="stage-title">
+      <span class="dial"><span class="tick">●</span>&nbsp; Precision remanufacture · New Zealand · Now USA</span>
+      <h1>Precise metering, pocket by pocket,<br><span class="thin">is what a rotary valve is for.</span></h1>
+    </div>
+
+    <div class="deck">
+      <div class="wrap deck-one">
+        <a class="btn btn-solid" href="#contact">Request a quote</a>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ============ SCROLLY: THE OVERHAUL ============ -->
+  <section class="story" id="overhaul" aria-label="The overhaul, step by step">
+    <div class="story-sticky">
+      <canvas id="storyCv"></canvas>
+      <div class="story-rail">
+        <span class="dial">The overhaul <span class="tick">/</span> Scroll</span>
+        <div class="steps-row">
+          <div class="step" data-step="0"><div class="n">01</div><div class="t">Measure</div></div>
+          <div class="step" data-step="1"><div class="n">02</div><div class="t">Re-machine</div></div>
+          <div class="step" data-step="2"><div class="n">03</div><div class="t">Rebuild tips</div></div>
+          <div class="step" data-step="3"><div class="n">04</div><div class="t">Verify</div></div>
+        </div>
+        <p class="story-desc" id="storyDesc"><b>Measure.</b> Bore, rotor and end faces surveyed point by point — wear mapped before anything is cut.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SERVICES ============ -->
+  <section class="band" id="services">
+    <div class="wrap">
+      <div class="band-head reveal">
+        <h2>What comes through the workshop.</h2>
+        <span class="dial">CNC machinery <span class="tick">/</span> Workshop + field</span>
+      </div>
+
+      <div class="svc-grid">
+        <article class="svc reveal">
+          <span class="idx">01</span>
+          <svg class="ic" viewBox="0 0 100 100" aria-hidden="true">
+            <g fill="none" stroke="#8A939C" stroke-width="2.5">
+              <circle cx="50" cy="50" r="30"/>
+              <rect x="36" y="6" width="28" height="10"/>
+              <rect x="36" y="84" width="28" height="10"/>
+              <g class="spin" stroke="#C9D1D9">
+                <circle cx="50" cy="50" r="8"/>
+                <line x1="50" y1="26" x2="50" y2="42"/><line x1="50" y1="58" x2="50" y2="74"/>
+                <line x1="26" y1="50" x2="42" y2="50"/><line x1="58" y1="50" x2="74" y2="50"/>
+                <line x1="33" y1="33" x2="44" y2="44"/><line x1="56" y1="56" x2="67" y2="67"/>
+                <line x1="67" y1="33" x2="56" y2="44"/><line x1="44" y1="56" x2="33" y2="67"/>
+              </g>
+            </g>
+          </svg>
+          <h3>New rotary valves</h3>
+          <p>New valves and genuine replacement parts, supplied as authorised manufacturers of GEA rotary valves.</p>
+        </article>
+
+        <article class="svc reveal">
+          <span class="idx">02</span>
+          <svg class="ic" viewBox="0 0 100 100" aria-hidden="true">
+            <g fill="none" stroke="#8A939C" stroke-width="2.5">
+              <g class="spin">
+                <circle cx="38" cy="50" r="24"/>
+                <circle cx="38" cy="50" r="6"/>
+                <line x1="38" y1="26" x2="38" y2="38"/><line x1="38" y1="62" x2="38" y2="74"/>
+                <line x1="14" y1="50" x2="26" y2="50"/><line x1="50" y1="50" x2="62" y2="50"/>
+              </g>
+              <path class="slide" d="M70 44 h22 M70 56 h22 M70 44 l-8 6 8 6 z" stroke="#E23B2E"/>
+            </g>
+          </svg>
+          <h3>CNC overhaul</h3>
+          <p>Complete strip-down and remanufacture on our CNC machinery — bores, faces and journals machined back to specification.</p>
+        </article>
+
+        <article class="svc reveal">
+          <span class="idx">03</span>
+          <svg class="ic" viewBox="0 0 100 100" aria-hidden="true">
+            <g fill="none" stroke="#8A939C" stroke-width="2.5">
+              <path d="M14 70 a36 36 0 0 1 72 0"/>
+              <g class="spin">
+                <line x1="50" y1="70" x2="72" y2="42" stroke="#E23B2E"/>
+              </g>
+              <circle cx="50" cy="70" r="4" fill="#8A939C"/>
+              <line x1="20" y1="58" x2="25" y2="61"/><line x1="80" y1="58" x2="75" y2="61"/>
+              <line x1="50" y1="34" x2="50" y2="40"/>
+              <line x1="32" y1="42" x2="35" y2="47"/><line x1="68" y1="42" x2="65" y2="47"/>
+            </g>
+          </svg>
+          <h3>Precision clearance checking</h3>
+          <p>Rotor-to-bore and end clearances measured and set, so the valve seals and meters the way it was designed to.</p>
+        </article>
+
+        <article class="svc reveal">
+          <span class="idx">04</span>
+          <svg class="ic" viewBox="0 0 100 100" aria-hidden="true">
+            <g fill="none" stroke="#8A939C" stroke-width="2.5">
+              <line x1="10" y1="66" x2="90" y2="66"/>
+              <line x1="10" y1="74" x2="90" y2="74"/>
+              <g class="slide">
+                <rect x="26" y="48" width="26" height="14"/>
+                <circle cx="33" cy="70" r="3.4" stroke="#C9D1D9"/>
+                <circle cx="45" cy="70" r="3.4" stroke="#C9D1D9"/>
+              </g>
+              <path d="M62 40 l10 -12 6 4 -9 13 z" stroke="#E23B2E"/>
+              <line x1="60" y1="46" x2="66" y2="42" stroke="#E23B2E"/>
+            </g>
+          </svg>
+          <h3>Upgrades</h3>
+          <p>Linear rail demounting systems, improved seal arrangements, and rotor tip welding and grinding for tight, even running clearance.</p>
+        </article>
+      </div>
+
+      <div class="metrics reveal">
+        <div class="metric"><div class="v">GEA</div><div class="k">Authorised manufacturer</div></div>
+        <div class="metric"><div class="v"><span class="count" data-n="12">0</span> mo</div><div class="k">Warranty, every job</div></div>
+        <div class="metric"><div class="v"><span class="count" data-n="24">0</span> h</div><div class="k">Service facility</div></div>
+        <div class="metric"><div class="v">NZ + US</div><div class="k">Two operations</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CONTACT ============ -->
+  <section class="band" id="contact">
+    <div class="wrap">
+      <div class="band-head reveal">
+        <h2>Request a quote.</h2>
+        <span class="dial">Vacuum pumps <span class="tick">+</span> Rotary valves</span>
+      </div>
+      <div class="grid-2">
+        <div class="reveal">
+          <div class="form-row">
+            <div class="field"><label for="f-name">Name</label><input id="f-name" type="text" autocomplete="name" /></div>
+            <div class="field"><label for="f-company">Company</label><input id="f-company" type="text" autocomplete="organization" /></div>
+          </div>
+          <div class="form-row">
+            <div class="field"><label for="f-email">Email</label><input id="f-email" type="email" autocomplete="email" /></div>
+            <div class="field"><label for="f-phone">Phone</label><input id="f-phone" type="tel" autocomplete="tel" /></div>
+          </div>
+          <div class="field"><label for="f-msg">Equipment &amp; requirement</label><textarea id="f-msg"></textarea></div>
+          <button class="btn btn-solid" id="sendBtn" type="button">Send enquiry</button>
+          <p class="form-note">Opens your email client to <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="c7a3a2a6a987b1b7a6b4e9a4a8e9a9bd">[email&#160;protected]</a></p>
+          <p id="formMsg" role="status" aria-live="polite"></p>
+        </div>
+        <div class="reveal">
+          <div class="loc">
+            <span class="dial">New Zealand · Vacuum Pumps and Systems Ltd</span>
+            <h3>Auckland</h3>
+            <div class="row"><span class="k">Address</span><span class="v">35B David Sidwell Place, Auckland 0932</span></div>
+            <div class="row"><span class="k">Phone</span><a class="v" href="tel:+6494265381">+64 9 426 5381</a></div>
+            <div class="row"><span class="k">Free</span><a class="v" href="tel:0800878677">0800 878 677</a></div>
+            <div class="row"><span class="k">Contact</span><span class="v">Dean Robbins — <a href="/cdn-cgi/l/email-protection#5a3e3f3b341a2c2a3b29743935743420"><span class="__cf_email__" data-cfemail="fc98999d92bc8a8c9d8fd29f93d29286">[email&#160;protected]</span></a> · <a href="tel:+64274445033">+64 274 445 033</a></span></div>
+          </div>
+          <div class="loc">
+            <span class="dial">United States · Rotary Valves and Systems LLC <span class="tick">· Now opening</span></span>
+            <h3>North America</h3>
+            <div class="row"><span class="k">Enquiries</span><a class="v" href="/cdn-cgi/l/email-protection#224647434c62545243510c414d0c4c58"><span class="__cf_email__" data-cfemail="d1b5b4b0bf91a7a1b0a2ffb2beffbfab">[email&#160;protected]</span></a></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site">
+  <div class="wrap foot">
+    <a class="lockup xl" id="lockupFoot" href="#top" aria-label="VPAS — Vacuum Pumps and Systems"></a>
+    <span class="dial">© <span id="yr"></span> Vacuum Pumps and Systems Ltd · Rotary Valves and Systems LLC</span>
+  </div>
+</footer>
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+document.getElementById('yr').textContent=new Date().getFullYear();
+
+/* mount integrated lockup in header + footer */
+(function(){
+  var t=document.getElementById('lockupT');
+  ['lockupHead','lockupFoot'].forEach(function(id){
+    document.getElementById(id).appendChild(t.content.cloneNode(true));
+  });
+})();
+
+
+
+/* form -> mailto */
+document.getElementById('sendBtn').addEventListener('click',function(){
+  var g=function(id){return document.getElementById(id).value.trim();};
+  var name=g('f-name'),company=g('f-company'),email=g('f-email'),phone=g('f-phone'),msg=g('f-msg');
+  var out=document.getElementById('formMsg');
+  if(!name||!email||!msg){out.textContent='NAME, EMAIL AND MESSAGE REQUIRED';return;}
+  var subject='Enquiry from '+name+(company?' — '+company:'');
+  var body='Name: '+name+'\nCompany: '+company+'\nEmail: '+email+'\nPhone: '+phone+'\n\n'+msg+'\n';
+  window.location.href='mailto:dean@vpas.co.nz?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body);
+  out.textContent='OPENING EMAIL CLIENT…';
+});
+
+/* ---------- shared drawing kit ---------- */
+var REDUCE=window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+var COL={hair:'rgba(201,209,217,0.32)',hairSoft:'rgba(201,209,217,0.14)',
+         silver:'#C9D1D9',dim:'#8A939C',faint:'#5A6169',white:'#F2F4F6',red:'#E23B2E'};
+
+function fitCanvas(cv){
+  var dpr=Math.min(window.devicePixelRatio||1,2);
+  var w=cv.clientWidth,h=cv.clientHeight;
+  if(cv.width!==w*dpr||cv.height!==h*dpr){cv.width=w*dpr;cv.height=h*dpr;}
+  var ctx=cv.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  return {ctx:ctx,w:w,h:h};
+}
+function centreline(ctx,x1,y1,x2,y2){
+  ctx.save();ctx.strokeStyle=COL.hairSoft;ctx.lineWidth=1;
+  ctx.setLineDash([16,5,3,5]);
+  ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();ctx.restore();
+}
+function monoText(ctx,txt,x,y,size,col,align){
+  ctx.save();ctx.font=(size||10)+'px "IBM Plex Mono",monospace';
+  ctx.fillStyle=col||COL.dim;ctx.textAlign=align||'left';ctx.textBaseline='middle';
+  ctx.fillText(txt,x,y);ctx.restore();
+}
+/* drop-through housing section, engineering-drawing style */
+function drawHousing(ctx,cx,cy,s,o){
+  o=o||{};
+  var boreR=s, bodyR=s*1.30, duct=s*0.62, flW=s*0.86, flT=s*0.13, flY=s*1.62;
+  ctx.save();
+  ctx.strokeStyle=o.line||COL.silver;ctx.lineWidth=o.lw||1.4;
+
+  /* body circle with duct gaps */
+  var a=Math.asin(duct/bodyR);
+  if(o.topDuct===false){
+    ctx.beginPath();ctx.arc(cx,cy,bodyR,Math.PI/2+a,Math.PI/2-a);ctx.stroke();
+  }else{
+    ctx.beginPath();ctx.arc(cx,cy,bodyR,-Math.PI/2+a,Math.PI/2-a);ctx.stroke();
+    ctx.beginPath();ctx.arc(cx,cy,bodyR,Math.PI/2+a,Math.PI*1.5-a);ctx.stroke();
+  }
+
+  /* ducts + flanges top/bottom */
+  var sides=o.topDuct===false?[1]:[-1,1];
+  sides.forEach(function(sg){
+    var yb=cy+sg*Math.cos(a)*bodyR, yf=cy+sg*flY;
+    ctx.beginPath();
+    ctx.moveTo(cx-duct,yb);ctx.lineTo(cx-duct,yf);
+    ctx.moveTo(cx+duct,yb);ctx.lineTo(cx+duct,yf);
+    ctx.moveTo(cx-flW,yf);ctx.lineTo(cx+flW,yf);
+    ctx.moveTo(cx-flW,yf+sg*flT);ctx.lineTo(cx+flW,yf+sg*flT);
+    ctx.moveTo(cx-flW,yf);ctx.lineTo(cx-flW,yf+sg*flT);
+    ctx.moveTo(cx+flW,yf);ctx.lineTo(cx+flW,yf+sg*flT);
+    ctx.stroke();
+    /* flange bolt marks */
+    [-0.72,-0.30,0.30,0.72].forEach(function(fx){
+      ctx.beginPath();
+      ctx.moveTo(cx+fx*flW,yf);ctx.lineTo(cx+fx*flW,yf+sg*flT);
+      ctx.stroke();
+    });
+  });
+
+  /* bore */
+  ctx.strokeStyle=o.bore||o.line||COL.silver;
+  ctx.beginPath();ctx.arc(cx,cy,boreR,0,Math.PI*2);ctx.stroke();
+
+  /* end-cover bolt circle */
+  ctx.strokeStyle=COL.hair;ctx.lineWidth=1;
+  for(var i=0;i<10;i++){
+    var ba=i/10*Math.PI*2+Math.PI/10;
+    ctx.beginPath();
+    ctx.arc(cx+Math.cos(ba)*s*1.15,cy+Math.sin(ba)*s*1.15,s*0.035,0,Math.PI*2);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  centreline(ctx,cx-bodyR*1.5,cy,cx+bodyR*1.5,cy);
+  centreline(ctx,cx,cy-flY-s*0.45,cx,cy+flY+s*0.45);
+}
+function drawRotorGhost(ctx,cx,cy,s,rot,o){
+  o=o||{};
+  ctx.save();
+  ctx.strokeStyle=o.col||COL.faint;ctx.lineWidth=o.lw||1;
+  ctx.beginPath();ctx.arc(cx,cy,s*0.30,0,Math.PI*2);ctx.stroke();
+  if(o.tipDash!==false){ctx.setLineDash([4,5]);}
+  ctx.beginPath();ctx.arc(cx,cy,s*0.965,0,Math.PI*2);ctx.stroke();
+  ctx.setLineDash([]);
+  for(var i=0;i<10;i++){
+    var a=rot+i/10*Math.PI*2;
+    ctx.beginPath();
+    ctx.moveTo(cx+Math.cos(a)*s*0.30,cy+Math.sin(a)*s*0.30);
+    ctx.lineTo(cx+Math.cos(a)*s*0.955,cy+Math.sin(a)*s*0.955);
+    ctx.stroke();
+    if(o.tips){
+      ctx.save();ctx.strokeStyle=o.tipCol||COL.silver;ctx.lineWidth=o.tipLw||2;
+      ctx.beginPath();
+      ctx.arc(cx,cy,s*0.965,a-0.05,a+0.05);ctx.stroke();ctx.restore();
+    }
+  }
+  ctx.restore();
+}
+function dimLine(ctx,x1,y1,x2,y2,label,col){
+  col=col||COL.dim;
+  ctx.save();ctx.strokeStyle=col;ctx.fillStyle=col;ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+  function head(x,y,ang){
+    ctx.beginPath();
+    ctx.moveTo(x,y);
+    ctx.lineTo(x-9*Math.cos(ang-0.3),y-9*Math.sin(ang-0.3));
+    ctx.lineTo(x-9*Math.cos(ang+0.3),y-9*Math.sin(ang+0.3));
+    ctx.closePath();ctx.fill();
+  }
+  var ang=Math.atan2(y2-y1,x2-x1);
+  head(x2,y2,ang);head(x1,y1,ang+Math.PI);
+  if(label)monoText(ctx,label,(x1+x2)/2,(y1+y2)/2-12,11,col,'center');
+  ctx.restore();
+}
+
+/* ---------- HERO: powder metered through the valve (drag to spin) ---------- */
+(function(){
+  var cv=document.getElementById('cnc');
+  var hint=document.getElementById('spinHint');
+
+  var N=10, STEP=Math.PI*2/N;
+  var rot=0;
+  var omega=(22/60)*Math.PI*2;      // rad/s, start 22 rpm
+  var OMEGA_MAX=(45/60)*Math.PI*2;
+  var grains=[];
+  var last=performance.now();
+  var G={};
+
+  function geom(w,h){
+    var cx=w/2, cy=h*0.63, s=Math.min(w*0.14,h*0.175);
+    G.cx=cx;G.cy=cy;G.s=s;
+    G.boreR=s;G.hubR=s*0.34;G.bodyR=s*1.28;G.duct=s*0.60;
+    G.inTop=cy-s*2.15;G.outBot=cy+s*2.3;
+    G.flTop=cy-s*1.62;G.flBot=cy+s*1.62;
+  }
+  function pocketAngleCentre(i){return rot+(i+0.5)*STEP;}
+  function rpmNow(){return Math.max(0,omega)*60/(Math.PI*2);}
+
+  function spawn(){
+    var x=G.cx+(Math.random()*2-1)*G.duct*0.8;
+    grains.push({x:x,y:G.inTop+6,vx:(Math.random()*2-1)*4,vy:20+Math.random()*30,
+                 state:'fall',pk:-1,r:1.1+Math.random()*1.3,rad:0,aoff:0,c:Math.random()});
+  }
+  function tone(c){
+    var g=Math.round(150+c*70);
+    return 'rgba('+g+','+Math.round(g*0.94)+','+Math.round(g*0.82)+',';
+  }
+
+  function step(dt){
+    var cx=G.cx,cy=G.cy;
+    rot+=(REDUCE||dragging?0:omega)*dt;
+
+    var rate=(REDUCE?0:(16+rpmNow()*2.6))*dt;
+    G._acc=(G._acc||0)+rate;
+    while(G._acc>1){spawn();G._acc--;}
+
+    for(var k=grains.length-1;k>=0;k--){
+      var p=grains[k];
+      if(p.state==='fall'){
+        p.vy+=520*dt; p.x+=p.vx*dt; p.y+=p.vy*dt;
+        var dx=p.x-cx, dy=p.y-cy, dist=Math.hypot(dx,dy)||0.001;
+
+        /* strike the shaft/hub: bounce with restitution + surface drag from rotation */
+        if(dist<G.hubR+p.r && dy<G.hubR*0.6){
+          var nx=dx/dist, ny=dy/dist;
+          p.x=cx+nx*(G.hubR+p.r); p.y=cy+ny*(G.hubR+p.r);
+          var vn=p.vx*nx+p.vy*ny;
+          if(vn<0){ p.vx-=1.35*vn*nx; p.vy-=1.35*vn*ny; }
+          var tv=omega*G.hubR;                    // hub surface speed
+          p.vx+=-ny*tv*0.45; p.vy+=nx*tv*0.45;    // tangential drag kick
+          p.vx*=0.92; p.vy*=0.92;
+        }
+        /* captured by a pocket in the upper region */
+        else if(dy<G.s*0.15 && dist>G.hubR+p.r && dist<=G.boreR-1){
+          var ang=Math.atan2(dy,dx);
+          var rel=((ang-rot)%(Math.PI*2)+Math.PI*2)%(Math.PI*2);
+          p.state='carry'; p.pk=Math.floor(rel/STEP)%N;
+          /* powder settles low in the pocket, on and around the hub */
+          p.rad=G.hubR+(0.10+Math.random()*0.45)*(G.boreR-G.hubR);
+          p.aoff=(Math.random()*2-1)*STEP*0.32;
+        }
+        else if(p.y>cy+G.s*0.2 && dist>G.bodyR){ grains.splice(k,1); }
+      } else if(p.state==='carry'){
+        var ac=pocketAngleCentre(p.pk)+p.aoff;
+        p.x=cx+Math.cos(ac)*p.rad;
+        p.y=cy+Math.sin(ac)*p.rad;
+        var down=Math.sin(ac), cosv=Math.cos(ac);
+        if(down>0.72 && Math.abs(cosv)<0.66){
+          p.state='discharge'; p.vy=40; p.vx=(Math.random()*2-1)*8;
+        }
+      } else {
+        p.vy+=520*dt; p.x+=p.vx*dt; p.y+=p.vy*dt;
+        if(p.y>cy){ var pull=(cx-p.x)*3.2*dt; p.x+=pull; p.vx*=0.96; }
+        if(p.y>G.outBot){ grains.splice(k,1); }
+      }
+    }
+    if(grains.length>900) grains.splice(0,grains.length-900);
+  }
+
+  function drawValve(ctx){
+    var cx=G.cx,cy=G.cy,s=G.s,boreR=G.boreR,bodyR=G.bodyR,duct=G.duct;
+    ctx.save();
+    ctx.strokeStyle=COL.silver;ctx.lineWidth=1.5;
+    ctx.beginPath();
+    ctx.moveTo(cx-duct*2.1,G.inTop);ctx.lineTo(cx-duct,G.flTop);
+    ctx.lineTo(cx+duct,G.flTop);ctx.lineTo(cx+duct*2.1,G.inTop);
+    ctx.stroke();
+    ctx.beginPath();ctx.moveTo(cx-duct*1.35,G.flTop);ctx.lineTo(cx+duct*1.35,G.flTop);ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx-duct,G.flBot);ctx.lineTo(cx-duct*1.5,G.outBot);
+    ctx.lineTo(cx+duct*1.5,G.outBot);ctx.lineTo(cx+duct,G.flBot);
+    ctx.stroke();
+    ctx.beginPath();ctx.moveTo(cx-duct*1.35,G.flBot);ctx.lineTo(cx+duct*1.35,G.flBot);ctx.stroke();
+    ctx.restore();
+
+    var a=Math.asin(duct/bodyR);
+    ctx.save();ctx.strokeStyle=COL.silver;ctx.lineWidth=1.6;
+    ctx.beginPath();ctx.arc(cx,cy,bodyR,-Math.PI/2+a,Math.PI/2-a);ctx.stroke();
+    ctx.beginPath();ctx.arc(cx,cy,bodyR,Math.PI/2+a,Math.PI*1.5-a);ctx.stroke();
+    [-1,1].forEach(function(sg){
+      var yb=cy+sg*Math.cos(a)*bodyR;
+      ctx.beginPath();
+      ctx.moveTo(cx-duct,yb);ctx.lineTo(cx-duct, sg<0?G.flTop:G.flBot);
+      ctx.moveTo(cx+duct,yb);ctx.lineTo(cx+duct, sg<0?G.flTop:G.flBot);
+      ctx.stroke();
+    });
+    ctx.restore();
+
+    ctx.save();ctx.strokeStyle=COL.hair;ctx.lineWidth=1;
+    for(var i=0;i<10;i++){var ba=i/10*Math.PI*2+Math.PI/10;
+      ctx.beginPath();ctx.arc(cx+Math.cos(ba)*s*1.14,cy+Math.sin(ba)*s*1.14,s*0.032,0,Math.PI*2);ctx.stroke();}
+    ctx.restore();
+
+    /* pockets shaded */
+    ctx.save();
+    for(var i2=0;i2<N;i2++){
+      var a0=rot+i2*STEP, a1=a0+STEP;
+      var mid=a0+STEP/2;
+      var shade=0.05+0.05*(0.5+0.5*Math.sin(mid));
+      ctx.fillStyle='rgba(201,209,217,'+shade.toFixed(3)+')';
+      ctx.beginPath();
+      ctx.arc(cx,cy,boreR-1,a0+0.03,a1-0.03);
+      ctx.arc(cx,cy,G.hubR,a1-0.03,a0+0.03,true);
+      ctx.closePath();ctx.fill();
+    }
+    /* solid blades: tapered quads, no tip lands */
+    var wHub=s*0.05, wTip=s*0.072;
+    for(var j=0;j<N;j++){
+      var va=rot+j*STEP;
+      var px=Math.cos(va),py=Math.sin(va),qx=-py,qy=px;
+      var r0=G.hubR-2, r1=boreR-1;
+      ctx.fillStyle='rgba(178,190,200,0.92)';
+      ctx.strokeStyle='rgba(10,11,13,0.8)';ctx.lineWidth=1;
+      ctx.beginPath();
+      ctx.moveTo(cx+px*r0+qx*wHub, cy+py*r0+qy*wHub);
+      ctx.lineTo(cx+px*r1+qx*wTip, cy+py*r1+qy*wTip);
+      ctx.lineTo(cx+px*r1-qx*wTip, cy+py*r1-qy*wTip);
+      ctx.lineTo(cx+px*r0-qx*wHub, cy+py*r0-qy*wHub);
+      ctx.closePath();ctx.fill();ctx.stroke();
+    }
+    /* hub over blades */
+    ctx.fillStyle='#151920';ctx.strokeStyle=COL.silver;ctx.lineWidth=1.6;
+    ctx.beginPath();ctx.arc(cx,cy,G.hubR,0,Math.PI*2);ctx.fill();ctx.stroke();
+    ctx.fillStyle=COL.dim;
+    ctx.beginPath();ctx.arc(cx,cy,s*0.07,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+
+    centreline(ctx,cx-bodyR*1.4,cy,cx+bodyR*1.4,cy);
+    centreline(ctx,cx,G.inTop-6,cx,G.outBot+6);
+    monoText(ctx,'OUTLET',cx+duct*1.35+12,G.flBot+s*0.5,10,COL.faint,'left');
+  }
+
+  function drawGrains(ctx){
+    for(var k=0;k<grains.length;k++){
+      var p=grains[k];
+      ctx.fillStyle=tone(p.c)+(p.state==='carry'?0.95:0.8)+')';
+      ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();
+    }
+  }
+
+  /* ----- drag to spin ----- */
+  var dragging=false,prevA=0,prevT=0,dragOmega=0;
+  function angOf(e){
+    var r=cv.getBoundingClientRect();
+    return Math.atan2((e.clientY-r.top)-G.cy,(e.clientX-r.left)-G.cx);
+  }
+  function shortest(d){while(d>Math.PI)d-=Math.PI*2;while(d<-Math.PI)d+=Math.PI*2;return d;}
+  cv.addEventListener('pointerdown',function(e){
+    dragging=true;cv.classList.add('dragging');
+    prevA=angOf(e);prevT=performance.now();dragOmega=omega;
+    hint.classList.add('hide');
+    cv.setPointerCapture(e.pointerId);
+  });
+  cv.addEventListener('pointermove',function(e){
+    if(!dragging)return;
+    var a=angOf(e),t=performance.now();
+    var d=shortest(a-prevA), dtm=Math.max(0.008,(t-prevT)/1000);
+    rot+=d;
+    dragOmega=dragOmega*0.75+(d/dtm)*0.25;
+    prevA=a;prevT=t;
+  });
+  window.addEventListener('pointerup',function(){
+    if(!dragging)return;
+    dragging=false;cv.classList.remove('dragging');
+    omega=Math.max(0,Math.min(OMEGA_MAX,dragOmega));
+  });
+
+  function frame(now){
+    requestAnimationFrame(frame);
+    var dt=Math.min((now-last)/1000,0.05);last=now;
+    var f=fitCanvas(cv),ctx=f.ctx,w=f.w,h=f.h;
+    ctx.clearRect(0,0,w,h);
+    geom(w,h);
+    drawValve(ctx);
+    step(dt);
+    drawGrains(ctx);
+  }
+  geom(cv.clientWidth||1200,cv.clientHeight||700);
+  for(var i=0;i<40;i++){spawn();grains[i].y=G.inTop+Math.random()*(G.cy-G.inTop);}
+  requestAnimationFrame(frame);
+})();
+
+/* ---------- SCROLLY STORY ---------- */
+(function(){
+  var wrap=document.querySelector('.story'),cv=document.getElementById('storyCv');
+  var steps=[].slice.call(document.querySelectorAll('.step'));
+  var descEl=document.getElementById('storyDesc');
+  var DESC=[
+    '<b>Measure.</b> Bore, rotor and end faces surveyed point by point — wear mapped before anything is cut.',
+    '<b>Re-machine.</b> The housing goes on the CNC and the bore is machined round, straight and back to size.',
+    '<b>Rebuild tips.</b> Vane tips are built up by welding, then ground concentric to the freshly machined bore.',
+    '<b>Verify.</b> Tip clearance is measured all round and signed off — the valve seals like it did on day one.'
+  ];
+  var cur=-1;
+  function setStep(i){
+    if(i===cur)return;cur=i;
+    steps.forEach(function(el,j){el.classList.toggle('on',j===i);});
+    descEl.innerHTML=DESC[i];
+  }
+  function progress(){
+    var r=wrap.getBoundingClientRect();
+    var total=r.height-window.innerHeight;
+    return Math.max(0,Math.min(1,-r.top/total));
+  }
+  var rot=0.35;
+  function draw(){
+    var f=fitCanvas(cv),ctx=f.ctx,w=f.w,h=f.h;
+    ctx.clearRect(0,0,w,h);
+    var p=REDUCE?1:progress();
+    var stage=Math.min(3,Math.floor(p*4)), local=p*4-stage;
+    setStep(stage);
+
+    var cx=w>860?w*0.60:w*0.5, cy=h*0.46, s=Math.min(w*0.17,h*0.24);
+
+    drawHousing(ctx,cx,cy,s,{});
+
+    /* -------- stage 0: measure -------- */
+    var mA=stage===0?local:1;
+    var pts=8;
+    for(var i=0;i<pts*mA;i++){
+      var a=i/pts*Math.PI*2+0.25;
+      var px=cx+Math.cos(a)*s, py=cy+Math.sin(a)*s;
+      ctx.save();ctx.strokeStyle=COL.dim;ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(px,py);
+      var lx=cx+Math.cos(a)*(s+16), ly=cy+Math.sin(a)*(s+16);
+      ctx.lineTo(lx,ly);ctx.stroke();
+      ctx.fillStyle=COL.silver;
+      ctx.beginPath();ctx.arc(px,py,2.2,0,Math.PI*2);ctx.fill();
+      ctx.restore();
+      monoText(ctx,'+0.'+(18+((i*7)%21)),cx+Math.cos(a)*(s+34),cy+Math.sin(a)*(s+34),9,COL.faint,'center');
+    }
+
+    /* -------- stage 1: re-machine -------- */
+    if(stage>=1){
+      var t1=stage===1?local:1;
+      ctx.save();
+      ctx.strokeStyle='rgba(242,244,246,'+(0.55+0.4*t1)+')';ctx.lineWidth=2.4;
+      ctx.beginPath();ctx.arc(cx,cy,s,-Math.PI/2,-Math.PI/2+Math.PI*2*t1);ctx.stroke();
+      if(t1<1){
+        var ta=-Math.PI/2+Math.PI*2*t1;
+        ctx.fillStyle=COL.red;
+        ctx.beginPath();ctx.arc(cx+Math.cos(ta)*s,cy+Math.sin(ta)*s,3.4,0,Math.PI*2);ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    /* rotor ghost, tips build in stage 2 */
+    var tipT=stage>2?1:(stage===2?local:0);
+    drawRotorGhost(ctx,cx,cy,s,rot,{
+      col:stage>=2?COL.dim:COL.faint,
+      tips:tipT>0, tipCol:tipT<0.55?COL.red:COL.white, tipLw:2.4
+    });
+    if(stage===2){
+      monoText(ctx,(local<0.55?'● TIP WELD':'● TIP GRIND'),cx+s*1.42,cy-s*1.05,10,local<0.55?COL.red:COL.silver,'left');
+    }
+
+    /* -------- stage 3: verify -------- */
+    if(stage===3){
+      var v=local;
+      var val=(0.38-(0.38-0.10)*Math.min(1,v*1.4));
+      var a2=Math.PI*0.25;
+      var x1=cx+Math.cos(a2)*s*0.965, y1=cy+Math.sin(a2)*s*0.965;
+      var x2=cx+Math.cos(a2)*s, y2=cy+Math.sin(a2)*s;
+      ctx.save();ctx.strokeStyle=COL.red;ctx.lineWidth=1.4;
+      ctx.beginPath();ctx.moveTo(x1,y1);
+      ctx.lineTo(x1+18,y1+18);ctx.stroke();ctx.restore();
+      monoText(ctx,'TIP CLEARANCE '+val.toFixed(2)+' MM',x1+26,y1+24,11,v>0.75?COL.white:COL.silver,'left');
+      if(v>0.8){
+        ctx.save();ctx.strokeStyle=COL.white;ctx.lineWidth=1.4;
+        var bw=118,bh=34;
+        var bx=Math.min(cx+s*1.55,w-bw-16), by=cy+s*1.05;
+        ctx.strokeRect(bx,by,bw,bh);
+        monoText(ctx,'IN TOLERANCE',bx+bw/2,by+bh/2,11,COL.white,'center');
+        ctx.restore();
+      }
+    }
+    if(!REDUCE)requestAnimationFrame(draw);
+  }
+  if(REDUCE){draw();window.addEventListener('resize',draw);}
+  else requestAnimationFrame(draw);
+})();
+
+/* ---------- reveals + counters ---------- */
+(function(){
+  var io=new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if(e.isIntersecting){
+        e.target.classList.add('in');
+        e.target.querySelectorAll('.count').forEach(function(c){
+          if(c.dataset.done)return;c.dataset.done=1;
+          var n=+c.dataset.n,t0=performance.now();
+          (function tick(t){
+            var p=Math.min(1,(t-t0)/900);
+            c.textContent=Math.round(n*(REDUCE?1:p*(2-p)));
+            if(p<1&&!REDUCE)requestAnimationFrame(tick);else c.textContent=n;
+          })(t0);
+        });
+        io.unobserve(e.target);
+      }
+    });
+  },{threshold:0.18});
+  document.querySelectorAll('.reveal').forEach(function(el){io.observe(el);});
+})();
+</script>
+</body>
+</html>

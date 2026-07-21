@@ -1,0 +1,767 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#05060d">
+<title>Æther — your atmosphere</title>
+<meta name="description" content="A living daily companion.">
+<style>html,body{margin:0;background:#05060d}</style>
+</head>
+<body>
+<style>
+  :root{
+    color-scheme: dark;
+    --ground:#05060d;
+    --panel:rgba(255,255,255,.055);
+    --panel-2:rgba(255,255,255,.09);
+    --brd:rgba(255,255,255,.14);
+    --brd-soft:rgba(255,255,255,.08);
+    --text:#eef1f8;
+    --muted:#9aa6c4;
+    --faint:rgba(233,238,250,.55);
+    --accent:#ffb27a;      /* re-set live by time of day */
+    --accent-2:#7fd4c8;
+    --glow:rgba(255,178,122,.35);
+    --serif:"Cambria","Iowan Old Style","Palatino Linotype",Georgia,"Times New Roman",serif;
+    --sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",sans-serif;
+    --sp:clamp(1rem,3.5vw,2rem);
+    --maxw:640px;
+  }
+
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--ground);color:var(--text);
+    font-family:var(--sans);line-height:1.55;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+    overflow-x:hidden;
+  }
+
+  /* ---- living sky ---- */
+  #ae-sky{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0}
+  #ae-veil{position:fixed;inset:0;z-index:1;pointer-events:none;
+    background:
+      radial-gradient(120% 90% at 50% -10%, transparent 40%, rgba(5,6,13,.35) 100%),
+      linear-gradient(180deg, rgba(5,6,13,.25) 0%, transparent 22%, transparent 60%, rgba(5,6,13,.55) 100%);}
+  #ae-grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;mix-blend-mode:overlay}
+
+  /* ---- shell ---- */
+  .ae-shell{position:relative;z-index:2;min-height:100dvh;display:flex;flex-direction:column;
+    max-width:var(--maxw);margin:0 auto;padding:0 var(--sp);}
+  .ae-top{display:flex;align-items:center;justify-content:space-between;gap:1rem;
+    padding:clamp(1.1rem,4vw,1.8rem) 0 .4rem;}
+  .ae-brand{display:flex;align-items:baseline;gap:.6rem;font-family:var(--serif)}
+  .ae-brand b{font-weight:600;font-size:1.15rem;letter-spacing:.04em}
+  .ae-brand span{font-size:.62rem;letter-spacing:.42em;text-transform:uppercase;color:var(--faint);
+    font-family:var(--sans);transform:translateY(-1px)}
+  .ae-sound{appearance:none;border:1px solid var(--brd);background:var(--panel);color:var(--muted);
+    width:40px;height:40px;border-radius:50%;display:grid;place-items:center;cursor:pointer;
+    transition:.35s;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);flex:none}
+  .ae-sound:hover{color:var(--text);border-color:var(--accent);box-shadow:0 0 22px -6px var(--glow)}
+  .ae-sound.on{color:#0a0b12;background:var(--accent);border-color:var(--accent);box-shadow:0 0 26px -4px var(--glow)}
+  .ae-sound svg{width:18px;height:18px}
+  .ae-sound .bars rect{transform-box:fill-box;transform-origin:bottom}
+  .ae-sound.on .bars rect{animation:eq 1s ease-in-out infinite}
+  .ae-sound.on .bars rect:nth-child(2){animation-delay:.18s}
+  .ae-sound.on .bars rect:nth-child(3){animation-delay:.36s}
+  .ae-sound.on .bars rect:nth-child(4){animation-delay:.1s}
+  @keyframes eq{0%,100%{transform:scaleY(.4)}50%{transform:scaleY(1)}}
+
+  main{flex:1;padding-bottom:6.5rem}
+  .ae-room{display:none;animation:rise .7s cubic-bezier(.2,.7,.2,1) both}
+  .ae-room.is-active{display:block}
+  @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+
+  .eyebrow{font-size:.66rem;letter-spacing:.34em;text-transform:uppercase;color:var(--faint);margin:0 0 .5rem}
+  .panel{background:var(--panel);border:1px solid var(--brd-soft);border-radius:20px;
+    padding:clamp(1.1rem,4vw,1.6rem);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    box-shadow:0 20px 60px -30px rgba(0,0,0,.7)}
+
+  /* ---- NOW ---- */
+  .now-greet{font-family:var(--serif);font-weight:500;font-size:clamp(1.35rem,6vw,2rem);
+    margin:.2rem 0 0;text-wrap:balance;line-height:1.15}
+  .clock{font-family:var(--serif);font-weight:600;font-variant-numeric:tabular-nums;
+    font-size:clamp(3.6rem,20vw,6.4rem);line-height:.95;letter-spacing:-.01em;margin:.35rem 0 .1rem;
+    background:linear-gradient(180deg,var(--text),var(--muted));-webkit-background-clip:text;background-clip:text;
+    -webkit-text-fill-color:transparent}
+  .clock .sec{font-size:.34em;color:var(--accent);-webkit-text-fill-color:var(--accent);vertical-align:.55em;margin-left:.15em;letter-spacing:0}
+  .clock .ap{font-size:.28em;color:var(--faint);-webkit-text-fill-color:var(--faint);vertical-align:.7em;margin-left:.2em;letter-spacing:.1em}
+  .datestr{color:var(--muted);font-size:.98rem;margin:.1rem 0 1.3rem}
+
+  .chips{display:grid;grid-template-columns:1fr 1fr;gap:.7rem;margin-bottom:1.3rem}
+  .chip{background:var(--panel);border:1px solid var(--brd-soft);border-radius:16px;padding:.85rem 1rem;
+    display:flex;align-items:center;gap:.85rem;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+  .chip .k{font-size:.62rem;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin:0}
+  .chip .v{font-size:1.02rem;font-weight:600;margin:.1rem 0 0;font-variant-numeric:tabular-nums}
+  .chip .v small{font-weight:400;color:var(--muted);font-size:.8em}
+  #ae-moon{width:38px;height:38px;flex:none}
+  .yr-ring{width:38px;height:38px;flex:none;transform:rotate(-90deg)}
+  .yr-ring .bg{fill:none;stroke:var(--brd);stroke-width:3}
+  .yr-ring .fg{fill:none;stroke:var(--accent);stroke-width:3;stroke-linecap:round;
+    stroke-dasharray:100 100;transition:stroke-dashoffset 1s}
+
+  .thought{margin-bottom:1.3rem;position:relative;overflow:hidden}
+  .thought::before{content:"\201C";position:absolute;top:-.4rem;left:.6rem;font-family:var(--serif);
+    font-size:5rem;color:var(--accent);opacity:.18;line-height:1}
+  .thought p{font-family:var(--serif);font-size:clamp(1.15rem,4.6vw,1.4rem);line-height:1.4;margin:.2rem 0 .6rem;
+    text-wrap:balance;position:relative}
+  .thought .attr{font-size:.66rem;letter-spacing:.22em;text-transform:uppercase;color:var(--faint);margin:0}
+
+  .intention label{display:block;font-size:.66rem;letter-spacing:.24em;text-transform:uppercase;color:var(--faint);margin-bottom:.55rem}
+  .intention .row{display:flex;gap:.6rem;align-items:center}
+  .intention input{flex:1;background:rgba(0,0,0,.22);border:1px solid var(--brd-soft);border-radius:12px;
+    color:var(--text);font-family:var(--serif);font-size:1.08rem;padding:.7rem .9rem;outline:none;transition:.3s}
+  .intention input::placeholder{color:var(--faint);font-style:italic}
+  .intention input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--glow)}
+  .intention .done{color:var(--accent-2);font-size:.8rem;opacity:0;transition:.4s;white-space:nowrap}
+  .intention .done.show{opacity:1}
+
+  /* ---- FOCUS ---- */
+  .focus-wrap{text-align:center}
+  .timer-stage{position:relative;width:min(78vw,300px);height:min(78vw,300px);margin:.5rem auto 1.2rem}
+  .timer-stage svg{width:100%;height:100%;transform:rotate(-90deg)}
+  .timer-stage .track{fill:none;stroke:var(--brd);stroke-width:5}
+  .timer-stage .prog{fill:none;stroke:var(--accent);stroke-width:5;stroke-linecap:round;
+    stroke-dasharray:100 100;stroke-dashoffset:0;
+    filter:drop-shadow(0 0 8px var(--glow));transition:stroke-dashoffset .4s linear}
+  .timer-read{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .timer-read .t{font-family:var(--serif);font-size:clamp(2.6rem,13vw,3.6rem);font-weight:600;
+    font-variant-numeric:tabular-nums;line-height:1}
+  .timer-read .ph{font-size:.66rem;letter-spacing:.3em;text-transform:uppercase;color:var(--accent);margin-top:.5rem}
+  .presets{display:flex;gap:.5rem;justify-content:center;margin-bottom:1rem;flex-wrap:wrap}
+  .preset{appearance:none;background:var(--panel);border:1px solid var(--brd-soft);color:var(--muted);
+    padding:.5rem .95rem;border-radius:999px;font-size:.82rem;cursor:pointer;transition:.3s;font-family:var(--sans)}
+  .preset:hover{color:var(--text);border-color:var(--brd)}
+  .preset.sel{background:var(--accent);color:#0a0b12;border-color:var(--accent);font-weight:600}
+  .controls{display:flex;gap:.7rem;justify-content:center}
+  .btn{appearance:none;cursor:pointer;font-family:var(--sans);font-size:.92rem;font-weight:600;
+    border-radius:999px;padding:.8rem 1.8rem;border:1px solid var(--brd);background:var(--panel);color:var(--text);
+    transition:.3s;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+  .btn:hover{border-color:var(--accent)}
+  .btn.primary{background:var(--accent);color:#0a0b12;border-color:var(--accent);box-shadow:0 0 30px -8px var(--glow)}
+  .btn.primary:hover{filter:brightness(1.06)}
+  .btn.ghost{padding:.8rem 1.3rem;color:var(--muted)}
+  .focus-meta{color:var(--faint);font-size:.82rem;margin-top:1.1rem;letter-spacing:.02em}
+  .focus-meta b{color:var(--accent-2);font-weight:600}
+
+  /* ---- BREATHE ---- */
+  .breathe-wrap{text-align:center}
+  .patterns{display:flex;gap:.5rem;justify-content:center;margin-bottom:1.4rem;flex-wrap:wrap}
+  .orb-stage{position:relative;width:min(72vw,260px);height:min(72vw,260px);margin:.3rem auto 1.4rem;display:grid;place-items:center}
+  .orb{width:42%;height:42%;border-radius:50%;
+    background:radial-gradient(circle at 35% 30%,var(--accent),var(--accent-2) 120%);
+    box-shadow:0 0 60px -6px var(--glow);will-change:transform;transition:transform .1s linear}
+  .orb-ring{position:absolute;inset:0;border-radius:50%;border:1px solid var(--brd-soft)}
+  .orb-ring.r2{inset:12%}.orb-ring.r3{inset:24%}
+  .breath-cue{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
+  .breath-cue .word{font-family:var(--serif);font-size:1.5rem;color:var(--text)}
+  .breath-cue .count{font-variant-numeric:tabular-nums;color:var(--faint);font-size:.95rem;margin-top:.25rem;min-height:1.2em}
+  .breathe-sub{color:var(--muted);font-size:.86rem;margin:0 0 1.2rem}
+
+  /* ---- REFLECT ---- */
+  .reflect-wrap .prompt{font-family:var(--serif);font-size:1.15rem;color:var(--text);margin:.1rem 0 1rem;text-wrap:balance}
+  .reflect-wrap textarea{width:100%;min-height:120px;resize:vertical;background:rgba(0,0,0,.22);
+    border:1px solid var(--brd-soft);border-radius:14px;color:var(--text);font-family:var(--sans);
+    font-size:1rem;line-height:1.55;padding:.9rem 1rem;outline:none;transition:.3s}
+  .reflect-wrap textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--glow)}
+  .reflect-actions{display:flex;gap:.6rem;align-items:center;margin-top:.9rem}
+  .reflect-actions .fill{flex:1}
+  .entries{margin-top:1.6rem;display:flex;flex-direction:column;gap:.7rem}
+  .entries h3{font-size:.66rem;letter-spacing:.28em;text-transform:uppercase;color:var(--faint);margin:0 0 .2rem;font-weight:600}
+  .entry{background:var(--panel);border:1px solid var(--brd-soft);border-radius:14px;padding:.85rem 1rem;
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+  .entry .when{font-size:.64rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin:0 0 .3rem;display:flex;justify-content:space-between;align-items:center}
+  .entry .when button{background:none;border:none;color:var(--faint);cursor:pointer;font-size:.9rem;line-height:1;padding:.1rem .3rem;border-radius:6px;transition:.2s}
+  .entry .when button:hover{color:var(--accent);background:rgba(255,255,255,.06)}
+  .entry p{margin:0;white-space:pre-wrap;font-size:.95rem;color:#dfe4f2}
+  .entries .empty{color:var(--faint);font-size:.9rem;font-style:italic}
+
+  /* ---- bottom nav ---- */
+  .ae-nav{position:fixed;left:50%;transform:translateX(-50%);bottom:clamp(.8rem,3.5vw,1.4rem);z-index:5;
+    display:flex;gap:.2rem;padding:.35rem;border-radius:999px;
+    background:rgba(12,14,24,.6);border:1px solid var(--brd);
+    backdrop-filter:blur(20px) saturate(1.4);-webkit-backdrop-filter:blur(20px) saturate(1.4);
+    box-shadow:0 18px 50px -18px rgba(0,0,0,.8)}
+  .ae-nav button{appearance:none;border:none;background:none;cursor:pointer;color:var(--muted);
+    font-family:var(--sans);font-size:.75rem;letter-spacing:.02em;padding:.55rem .9rem;border-radius:999px;
+    display:flex;align-items:center;gap:.4rem;transition:.3s;position:relative}
+  .ae-nav button svg{width:16px;height:16px;opacity:.85}
+  .ae-nav button .lbl{max-width:0;overflow:hidden;opacity:0;transition:.35s;white-space:nowrap}
+  .ae-nav button:hover{color:var(--text)}
+  .ae-nav button.active{color:#0a0b12;background:var(--accent)}
+  .ae-nav button.active .lbl{max-width:6rem;opacity:1}
+  .ae-nav button.active svg{opacity:1}
+
+  .toast{position:fixed;left:50%;bottom:5.4rem;transform:translate(-50%,20px);z-index:6;
+    background:rgba(12,14,24,.9);border:1px solid var(--brd);color:var(--text);
+    padding:.6rem 1.1rem;border-radius:999px;font-size:.85rem;opacity:0;pointer-events:none;transition:.4s;
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  @media (max-width:380px){
+    .ae-nav button{padding:.55rem .7rem}
+    .chips{grid-template-columns:1fr}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .ae-room{animation:none}
+    .ae-sound.on .bars rect{animation:none}
+  }
+</style>
+
+<canvas id="ae-sky" aria-hidden="true"></canvas>
+<div id="ae-veil" aria-hidden="true"></div>
+<svg id="ae-grain" aria-hidden="true"><filter id="gn"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2"/></filter><rect width="100%" height="100%" filter="url(#gn)"/></svg>
+
+<div class="ae-shell">
+  <header class="ae-top">
+    <div class="ae-brand"><b>Æther</b><span>your atmosphere</span></div>
+    <button class="ae-sound" id="soundBtn" aria-pressed="false" title="Ambient sound">
+      <svg viewBox="0 0 24 24" class="bars" fill="currentColor"><rect x="4" y="7" width="3" height="10" rx="1.5"/><rect x="9" y="4" width="3" height="16" rx="1.5"/><rect x="14" y="9" width="3" height="6" rx="1.5"/><rect x="19" y="6" width="3" height="12" rx="1.5" transform="translate(-1,0)"/></svg>
+    </button>
+  </header>
+
+  <main>
+    <!-- NOW -->
+    <section class="ae-room is-active" id="room-now" aria-label="Now">
+      <p class="eyebrow" id="weekday">—</p>
+      <h1 class="now-greet" id="greeting">Hello.</h1>
+      <div class="clock" id="clock" aria-live="off">—</div>
+      <p class="datestr" id="datestr">—</p>
+
+      <div class="chips">
+        <div class="chip">
+          <svg class="yr-ring" viewBox="0 0 40 40"><circle class="bg" cx="20" cy="20" r="16"/><circle class="fg" id="yrFg" cx="20" cy="20" r="16" pathLength="100"/></svg>
+          <div><p class="k">Year 2026</p><p class="v" id="yrVal">—</p></div>
+        </div>
+        <div class="chip">
+          <canvas id="ae-moon" width="76" height="76"></canvas>
+          <div><p class="k" id="moonName">Moon</p><p class="v" id="moonVal">—</p></div>
+        </div>
+      </div>
+
+      <div class="panel thought">
+        <p id="thoughtText">—</p>
+        <p class="attr">A thought for today</p>
+      </div>
+
+      <div class="panel intention">
+        <label for="intentInput">Today, I intend to…</label>
+        <div class="row">
+          <input id="intentInput" type="text" autocomplete="off" spellcheck="true"
+            placeholder="name one thing that would make today good" />
+          <span class="done" id="intentDone">saved ✓</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- FOCUS -->
+    <section class="ae-room" id="room-focus" aria-label="Focus">
+      <p class="eyebrow">Focus</p>
+      <h2 class="now-greet" style="margin-bottom:.4rem">One thing, fully.</h2>
+      <div class="focus-wrap">
+        <div class="timer-stage">
+          <svg viewBox="0 0 220 220"><circle class="track" cx="110" cy="110" r="100"/><circle class="prog" id="timerProg" cx="110" cy="110" r="100" pathLength="100"/></svg>
+          <div class="timer-read"><div class="t" id="timerT">25:00</div><div class="ph" id="timerPh">Focus</div></div>
+        </div>
+        <div class="presets" id="presets">
+          <button class="preset sel" data-f="25" data-b="5">25 · 5</button>
+          <button class="preset" data-f="50" data-b="10">50 · 10</button>
+          <button class="preset" data-f="15" data-b="3">15 · 3</button>
+          <button class="preset" data-f="90" data-b="20">90 · 20</button>
+        </div>
+        <div class="controls">
+          <button class="btn primary" id="timerStart">Begin</button>
+          <button class="btn ghost" id="timerReset">Reset</button>
+        </div>
+        <p class="focus-meta"><b id="sessCount">0</b> focus sessions today · <span id="sessTip">the sky brightens as you work</span></p>
+      </div>
+    </section>
+
+    <!-- BREATHE -->
+    <section class="ae-room" id="room-breathe" aria-label="Breathe">
+      <p class="eyebrow">Breathe</p>
+      <h2 class="now-greet" style="margin-bottom:.4rem">Come back to the body.</h2>
+      <div class="breathe-wrap">
+        <div class="patterns" id="patterns">
+          <button class="preset sel" data-p="box">Box · 4·4·4·4</button>
+          <button class="preset" data-p="478">Calm · 4·7·8</button>
+          <button class="preset" data-p="coherent">Even · 5·5</button>
+        </div>
+        <div class="orb-stage">
+          <div class="orb-ring"></div><div class="orb-ring r2"></div><div class="orb-ring r3"></div>
+          <div class="orb" id="orb"></div>
+          <div class="breath-cue"><div class="word" id="breathWord">Ready</div><div class="count" id="breathCount"></div></div>
+        </div>
+        <p class="breathe-sub" id="breatheSub">Box breathing — a steady square. Good before focus.</p>
+        <div class="controls"><button class="btn primary" id="breathBtn">Start</button></div>
+      </div>
+    </section>
+
+    <!-- REFLECT -->
+    <section class="ae-room" id="room-reflect" aria-label="Reflect">
+      <p class="eyebrow">Reflect</p>
+      <h2 class="now-greet" style="margin-bottom:.4rem">Close the loop.</h2>
+      <div class="reflect-wrap">
+        <div class="panel">
+          <p class="prompt" id="reflectPrompt">—</p>
+          <textarea id="reflectText" placeholder="a sentence is enough…"></textarea>
+          <div class="reflect-actions">
+            <span class="fill"></span>
+            <button class="btn ghost" id="reflectExport">Export</button>
+            <button class="btn primary" id="reflectSave">Save entry</button>
+          </div>
+        </div>
+        <div class="entries" id="entries">
+          <h3>Past entries</h3>
+          <p class="empty" id="entriesEmpty">Nothing here yet. Your reflections stay on this device, only for you.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<nav class="ae-nav" id="nav" aria-label="Rooms">
+  <button class="active" data-room="now"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="lbl">Now</span></button>
+  <button data-room="focus"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg><span class="lbl">Focus</span></button>
+  <button data-room="breathe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 21c4-3 7-6 7-10a7 7 0 0 0-14 0c0 4 3 7 7 10z"/></svg><span class="lbl">Breathe</span></button>
+  <button data-room="reflect"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 5h16M4 12h16M4 19h10"/></svg><span class="lbl">Reflect</span></button>
+</nav>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+  var $=function(s,r){return (r||document).querySelector(s);};
+  var reduce=window.matchMedia&&window.matchMedia("(prefers-reduced-motion:reduce)").matches;
+
+  /* ---------- safe storage ---------- */
+  var mem={};
+  var store={
+    get:function(k){try{var v=localStorage.getItem(k);return v==null?(k in mem?mem[k]:null):v;}catch(e){return k in mem?mem[k]:null;}},
+    set:function(k,v){try{localStorage.setItem(k,v);}catch(e){mem[k]=v;}},
+    del:function(k){try{localStorage.removeItem(k);}catch(e){}delete mem[k];}
+  };
+
+  /* ---------- date / seed ---------- */
+  var now=new Date();
+  function dayOfYear(d){var s=new Date(d.getFullYear(),0,0);return Math.floor((d-s)/864e5);}
+  var doy=dayOfYear(now);
+  var seed=now.getFullYear()*1000+doy;
+  var todayKey=now.getFullYear()+"-"+(now.getMonth()+1)+"-"+now.getDate();
+
+  function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+
+  /* ---------- value noise (for flow field) ---------- */
+  function makeNoise(sd){
+    var p=new Uint8Array(256),perm=new Uint8Array(512),i,j,t,r=mulberry32(sd);
+    for(i=0;i<256;i++)p[i]=i;
+    for(i=255;i>0;i--){j=(r()*(i+1))|0;t=p[i];p[i]=p[j];p[j]=t;}
+    for(i=0;i<512;i++)perm[i]=p[i&255];
+    function fade(x){return x*x*x*(x*(x*6-15)+10);}
+    function lerp(a,b,x){return a+(b-a)*x;}
+    function grad(h,x,y){var u=(h&1)?-x:x,v=(h&2)?-y:y;return u+v;}
+    return function(x,y){
+      var X=Math.floor(x)&255,Y=Math.floor(y)&255;x-=Math.floor(x);y-=Math.floor(y);
+      var u=fade(x),v=fade(y);
+      var aa=perm[perm[X]+Y],ab=perm[perm[X]+Y+1],ba=perm[perm[X+1]+Y],bb=perm[perm[X+1]+Y+1];
+      return lerp(lerp(grad(aa,x,y),grad(ba,x-1,y),u),lerp(grad(ab,x,y-1),grad(bb,x-1,y-1),u),v);
+    };
+  }
+
+  /* ---------- time-of-day palettes ---------- */
+  var palettes={
+    dawn:   {top:"#241934",mid:"#5a3a55",bot:"#c9755f",cols:["#ffd9a0","#ff9e7d","#f6c9c0","#c98fb0","#8f7bd0"],accent:"#ffb27a",accent2:"#7fd4c8"},
+    morning:{top:"#0e2a44",mid:"#245b78",bot:"#7fb8c4",cols:["#bfe9ff","#8fd0e0","#ffe6a8","#e9f6ff","#6fb3c8"],accent:"#ffcf7a",accent2:"#6fd0e6"},
+    midday: {top:"#123a63",mid:"#2f6f9e",bot:"#a9d4e8",cols:["#eaf6ff","#bfe3f5","#ffffff","#9fd0ef","#dff1ff"],accent:"#66d1ff",accent2:"#ffd27a"},
+    golden: {top:"#2a1b3a",mid:"#7a3f52",bot:"#e08a55",cols:["#ffdf9e","#ff9e5e","#ff7a86","#c98fb0","#ffc48f"],accent:"#ff9e5e",accent2:"#ffd27a"},
+    dusk:   {top:"#150f2e",mid:"#3d2a5c",bot:"#8a4a7a",cols:["#f0a6c8","#a17bd0","#ff9ec0","#6f7bd8","#d0a0e0"],accent:"#c79bff",accent2:"#ff9ec0"},
+    night:  {top:"#04040f","mid":"#0b1330",bot:"#182a55",cols:["#9fb4ff","#6f8fe0","#c0d0ff","#7fd4c8","#8f7bd0"],accent:"#8fa8ff",accent2:"#7fd4c8"}
+  };
+  function paletteFor(h){
+    if(h>=5&&h<8)return palettes.dawn;
+    if(h>=8&&h<11)return palettes.morning;
+    if(h>=11&&h<16)return palettes.midday;
+    if(h>=16&&h<19)return palettes.golden;
+    if(h>=19&&h<21)return palettes.dusk;
+    return palettes.night;
+  }
+  var pal=paletteFor(now.getHours());
+  var root=document.documentElement.style;
+  root.setProperty("--accent",pal.accent);
+  root.setProperty("--accent-2",pal.accent2);
+  function hexA(hex,a){var n=parseInt(hex.slice(1),16);return "rgba("+((n>>16)&255)+","+((n>>8)&255)+","+(n&255)+","+a+")";}
+  root.setProperty("--glow",hexA(pal.accent,.38));
+  root.setProperty("--ground",pal.top);
+  document.body.style.background="radial-gradient(140% 120% at 50% 8%,"+pal.mid+" 0%,"+pal.top+" 60%)";
+
+  /* ---------- flow-field sky ---------- */
+  (function sky(){
+    var cv=$("#ae-sky"),ctx=cv.getContext("2d"),W,H,dpr,parts=[],noise=makeNoise(seed),PARTS,scale=0.0016,t=0;
+    function size(){
+      dpr=Math.min(window.devicePixelRatio||1,2);
+      W=cv.clientWidth;H=cv.clientHeight;
+      cv.width=W*dpr;cv.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);
+      PARTS=Math.round(Math.min(620,Math.max(220,W*H/2600)));
+      seedParts();
+      // paint gradient base once
+      var g=ctx.createLinearGradient(0,0,0,H);
+      g.addColorStop(0,pal.top);g.addColorStop(.55,pal.mid);g.addColorStop(1,pal.bot);
+      ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+    }
+    function seedParts(){
+      parts=[];var r=mulberry32(seed+7);
+      for(var i=0;i<PARTS;i++){parts.push({x:r()*W,y:r()*H,c:pal.cols[(r()*pal.cols.length)|0],life:40+r()*160});}
+    }
+    function step(draw){
+      ctx.fillStyle=hexA(pal.top,0.045);ctx.fillRect(0,0,W,H);
+      ctx.globalCompositeOperation="lighter";
+      for(var i=0;i<parts.length;i++){
+        var p=parts[i];
+        var a=noise(p.x*scale+t*0.06,p.y*scale)*Math.PI*2.2;
+        var nx=p.x+Math.cos(a)*1.35,ny=p.y+Math.sin(a)*1.35;
+        if(draw){
+          ctx.strokeStyle=hexA(p.c,0.055);ctx.lineWidth=1.15;
+          ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(nx,ny);ctx.stroke();
+        }
+        p.x=nx;p.y=ny;p.life--;
+        if(p.life<0||p.x<-5||p.x>W+5||p.y<-5||p.y>H+5){
+          var r=Math.random();p.x=r*W;p.y=Math.random()*H;p.life=60+Math.random()*160;
+          p.c=pal.cols[(Math.random()*pal.cols.length)|0];
+        }
+      }
+      ctx.globalCompositeOperation="source-over";
+    }
+    var focusBoost=0;
+    window.__skyBoost=function(){focusBoost=1;};
+    function loop(){
+      t+=1+focusBoost*1.4; if(focusBoost>0)focusBoost*=0.995;
+      step(true);
+      raf=requestAnimationFrame(loop);
+    }
+    var raf;
+    size();
+    if(reduce){for(var k=0;k<220;k++)step(true);}
+    else loop();
+    var rz;window.addEventListener("resize",function(){clearTimeout(rz);rz=setTimeout(function(){cancelAnimationFrame(raf);size();if(!reduce)loop();},200);});
+  })();
+
+  /* ---------- clock / greeting / date ---------- */
+  var days=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+  var months=["January","February","March","April","May","June","July","August","September","October","November","December"];
+  function greetWord(h){if(h<5)return "Still night.";if(h<12)return "Good morning.";if(h<17)return "Good afternoon.";if(h<21)return "Good evening.";return "Winding down.";}
+  function tick(){
+    var d=new Date(),h=d.getHours(),m=d.getMinutes(),s=d.getSeconds();
+    var ap=h<12?"AM":"PM",h12=h%12;if(h12===0)h12=12;
+    var mm=(m<10?"0":"")+m,ss=(s<10?"0":"")+s;
+    $("#clock").innerHTML=h12+":"+mm+'<span class="sec">'+ss+'</span><span class="ap">'+ap+'</span>';
+  }
+  $("#weekday").textContent=days[now.getDay()];
+  $("#greeting").textContent=greetWord(now.getHours());
+  $("#datestr").textContent=days[now.getDay()]+", "+months[now.getMonth()]+" "+now.getDate()+", "+now.getFullYear()+"  ·  day "+doy+" of the year";
+  tick();setInterval(tick,1000);
+
+  /* ---------- year progress ---------- */
+  (function(){
+    var y=now.getFullYear(),start=new Date(y,0,1),end=new Date(y+1,0,1);
+    var pct=(now-start)/(end-start);
+    $("#yrVal").innerHTML=Math.round(pct*100)+"% <small>· "+(Math.ceil((end-now)/864e5))+" days left</small>";
+    $("#yrFg").style.strokeDashoffset=(100-pct*100).toFixed(2);
+  })();
+
+  /* ---------- moon phase ---------- */
+  (function(){
+    var synodic=29.530588853;
+    var ref=Date.UTC(2000,0,6,18,14)/864e5; // known new moon
+    var daysNow=now.getTime()/864e5;
+    var age=(((daysNow-ref)%synodic)+synodic)%synodic;
+    var phase=age/synodic; // 0..1
+    var illum=Math.round((1-Math.cos(phase*2*Math.PI))/2*100);
+    var names=[[0.02,"New Moon"],[0.24,"Waxing Crescent"],[0.28,"First Quarter"],[0.48,"Waxing Gibbous"],[0.52,"Full Moon"],[0.73,"Waning Gibbous"],[0.77,"Last Quarter"],[0.98,"Waning Crescent"],[1.01,"New Moon"]];
+    var nm="New Moon";for(var i=0;i<names.length;i++){if(phase<=names[i][0]){nm=names[i][1];break;}}
+    $("#moonName").textContent=nm;
+    $("#moonVal").innerHTML=illum+"% <small>lit</small>";
+    // draw
+    var c=$("#ae-moon"),g=c.getContext("2d"),R=34,cx=38,cy=38;
+    g.clearRect(0,0,76,76);
+    g.save();g.beginPath();g.arc(cx,cy,R,0,7);g.closePath();g.clip();
+    g.fillStyle="rgba(120,130,170,.28)";g.fillRect(0,0,76,76);
+    var th=phase*2*Math.PI,ct=Math.cos(th),st=Math.sin(th),steps=64;
+    var grad=g.createLinearGradient(cx-R,cy-R,cx+R,cy+R);grad.addColorStop(0,"#fdf6e3");grad.addColorStop(1,"#cfd6ea");
+    g.fillStyle=grad;
+    for(var k=0;k<=steps;k++){
+      var yy=-1+2*k/steps,w=Math.sqrt(Math.max(0,1-yy*yy)),xt=ct*w,x0,x1;
+      if(st>=0){x0=xt;x1=w;}else{x0=-w;x1=xt;}
+      if(x1>x0){var rh=(2/steps)*R*1.05;g.fillRect(cx+x0*R,cy+yy*R-rh/2,(x1-x0)*R,rh);}
+    }
+    g.restore();
+    // soft rim
+    g.beginPath();g.arc(cx,cy,R,0,7);g.strokeStyle="rgba(255,255,255,.14)";g.lineWidth=1;g.stroke();
+  })();
+
+  /* ---------- thought of the day ---------- */
+  var thoughts=[
+    "Begin before you feel ready — readiness is the residue of beginning.",
+    "The day asks for your attention, not your perfection.",
+    "Small and steady quietly outruns big and sudden.",
+    "You can do anything once you stop trying to do everything.",
+    "Rest is not the reward for the work; it is part of the work.",
+    "Notice one ordinary thing today as if it were rare.",
+    "The mood will follow the motion — so move first.",
+    "What you give attention to grows. Choose the garden.",
+    "Slow is smooth, and smooth becomes fast.",
+    "Progress hides inside the days that felt like nothing happened.",
+    "Be kind to the version of you that is still learning this.",
+    "The hard part is usually the start; the rest is momentum.",
+    "Trade the perfect plan for the honest first step.",
+    "A calm mind is simply a wider lens.",
+    "Do the next right thing, then the next.",
+    "You are allowed to change your mind and call it growth.",
+    "Curiosity is a better engine than pressure.",
+    "Leave a little room today for something to surprise you.",
+    "Finish one thing fully before scattering into three.",
+    "The breath you are taking now is a fine place to start over.",
+    "Tend to the roots; the fruit is not your job today.",
+    "Comparison is a thief with a very convincing smile.",
+    "Half of confidence is simply showing up again.",
+    "Make it small enough that starting feels easy.",
+    "The quiet hours are where the real work sharpens.",
+    "You don't have to carry tomorrow while you're living in today.",
+    "Let good enough be finished, so great can begin.",
+    "Attention is the most honest form of love.",
+    "The obstacle is often the path wearing a disguise.",
+    "Water the day with a little patience.",
+    "You've survived every hard morning so far — note the record.",
+    "Choose one thing to protect from the noise today.",
+    "Momentum is built, never found lying around.",
+    "A clear no makes room for a wholehearted yes.",
+    "Do less, but mean it more.",
+    "The map is not the mountain — take the step anyway."
+  ];
+  $("#thoughtText").textContent=thoughts[doy%thoughts.length];
+
+  /* ---------- intention ---------- */
+  (function(){
+    var inp=$("#intentInput"),done=$("#intentDone"),key="ae_intent_"+todayKey,tmr;
+    var saved=store.get(key);if(saved)inp.value=saved;
+    inp.addEventListener("input",function(){
+      store.set(key,inp.value);
+      done.classList.add("show");clearTimeout(tmr);
+      tmr=setTimeout(function(){done.classList.remove("show");},1400);
+    });
+  })();
+
+  /* ---------- toast ---------- */
+  var toastEl=$("#toast"),toastT;
+  function toast(msg){toastEl.textContent=msg;toastEl.classList.add("show");clearTimeout(toastT);toastT=setTimeout(function(){toastEl.classList.remove("show");},2200);}
+
+  /* ---------- audio engine ---------- */
+  var audio=(function(){
+    var ctx=null,master,on=false,drone=[],bellTimer,delay,fb,filt,lfo;
+    var scale=[220,246.94,293.66,329.63,392.00,440,587.33,659.25]; // A pentatonic-ish
+    function ensure(){
+      if(ctx)return;
+      var AC=window.AudioContext||window.webkitAudioContext;if(!AC)return;
+      ctx=new AC();
+      master=ctx.createGain();master.gain.value=0;master.connect(ctx.destination);
+      filt=ctx.createBiquadFilter();filt.type="lowpass";filt.frequency.value=650;filt.Q.value=0.6;filt.connect(master);
+      delay=ctx.createDelay(1.5);delay.delayTime.value=0.42;
+      fb=ctx.createGain();fb.gain.value=0.34;
+      var wet=ctx.createGain();wet.gain.value=0.5;
+      delay.connect(fb);fb.connect(delay);delay.connect(wet);wet.connect(master);
+      window.__aeWet=delay;
+      // drone
+      [55,110,164.81].forEach(function(f,i){
+        var o=ctx.createOscillator();o.type=i===2?"triangle":"sine";o.frequency.value=f;
+        o.detune.value=(i-1)*4;
+        var g=ctx.createGain();g.gain.value=i===0?0.5:0.28;
+        o.connect(g);g.connect(filt);o.start();drone.push({o:o,g:g});
+      });
+      lfo=ctx.createOscillator();lfo.frequency.value=0.05;
+      var lg=ctx.createGain();lg.gain.value=180;lfo.connect(lg);lg.connect(filt.frequency);lfo.start();
+    }
+    function bell(freq,vol,pan){
+      if(!ctx)return;var t=ctx.currentTime;
+      var o=ctx.createOscillator(),o2=ctx.createOscillator(),g=ctx.createGain();
+      o.type="sine";o2.type="sine";o.frequency.value=freq;o2.frequency.value=freq*2.01;
+      var pp=ctx.createStereoPanner?ctx.createStereoPanner():null;if(pp)pp.pan.value=pan||0;
+      var g2=ctx.createGain();g2.gain.value=0.35;o2.connect(g2);
+      o.connect(g);g2.connect(g);
+      g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(vol||0.16,t+0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+3.2);
+      var out=pp||filt;g.connect(out);if(pp){pp.connect(filt);pp.connect(delay);}else{g.connect(delay);}
+      o.start(t);o2.start(t);o.stop(t+3.3);o2.stop(t+3.3);
+    }
+    function scheduleBells(){
+      if(!on)return;
+      bell(scale[(Math.random()*scale.length)|0],0.08+Math.random()*0.06,(Math.random()*2-1)*0.6);
+      bellTimer=setTimeout(scheduleBells,4000+Math.random()*7000);
+    }
+    return {
+      toggle:function(){
+        ensure();if(!ctx)return false;
+        on=!on;
+        if(ctx.state==="suspended")ctx.resume();
+        master.gain.cancelScheduledValues(ctx.currentTime);
+        master.gain.linearRampToValueAtTime(on?0.16:0,ctx.currentTime+ (on?1.2:0.6));
+        if(on){bellTimer=setTimeout(scheduleBells,1500);}else{clearTimeout(bellTimer);}
+        return on;
+      },
+      isOn:function(){return on;},
+      chime:function(){ensure();if(!ctx)return;bell(392,0.2,-.3);setTimeout(function(){bell(587.33,0.2,.2);},260);setTimeout(function(){bell(659.25,0.22,0);},520);},
+      cue:function(hi){ensure();if(!ctx)return;bell(hi?329.63:196,0.12,0);}
+    };
+  })();
+
+  var soundBtn=$("#soundBtn");
+  soundBtn.addEventListener("click",function(){
+    var s=audio.toggle();
+    soundBtn.classList.toggle("on",s);soundBtn.setAttribute("aria-pressed",s?"true":"false");
+    if(s===false&&!audio.isOn())toast("sound off");else if(s)toast("ambient sound on");
+  });
+
+  /* ---------- navigation ---------- */
+  var rooms={};["now","focus","breathe","reflect"].forEach(function(r){rooms[r]=$("#room-"+r);});
+  $("#nav").addEventListener("click",function(e){
+    var b=e.target.closest("button[data-room]");if(!b)return;
+    var r=b.getAttribute("data-room");
+    Array.prototype.forEach.call(this.querySelectorAll("button"),function(x){x.classList.toggle("active",x===b);});
+    for(var k in rooms)rooms[k].classList.toggle("is-active",k===r);
+    window.scrollTo({top:0,behavior:reduce?"auto":"smooth"});
+  });
+
+  /* ---------- focus timer ---------- */
+  (function(){
+    var prog=$("#timerProg"),tEl=$("#timerT"),phEl=$("#timerPh"),startBtn=$("#timerStart"),resetBtn=$("#timerReset");
+    var focusMin=25,breakMin=5,mode="focus",total=focusMin*60,left=total,running=false,iv=null;
+    var sessKey="ae_sess_"+todayKey,sess=parseInt(store.get(sessKey)||"0",10);
+    $("#sessCount").textContent=sess;
+    function fmt(s){var m=(s/60)|0,ss=s%60;return (m<10?"0":"")+m+":"+(ss<10?"0":"")+ss;}
+    function render(){
+      tEl.textContent=fmt(left);
+      phEl.textContent=mode==="focus"?"Focus":"Break";
+      prog.style.strokeDashoffset=(100-(left/total)*100).toFixed(2);
+      prog.style.stroke=mode==="focus"?"var(--accent)":"var(--accent-2)";
+    }
+    function set(f,b){focusMin=f;breakMin=b;if(!running){mode="focus";total=f*60;left=total;render();}}
+    function stopIv(){if(iv){clearInterval(iv);iv=null;}}
+    function done(){
+      stopIv();running=false;startBtn.textContent="Begin";
+      audio.chime();
+      if(mode==="focus"){
+        sess++;store.set(sessKey,String(sess));$("#sessCount").textContent=sess;
+        if(window.__skyBoost)window.__skyBoost();
+        toast("Session complete — take a break.");
+        mode="break";total=breakMin*60;left=total;render();
+      }else{
+        toast("Break over — ready when you are.");
+        mode="focus";total=focusMin*60;left=total;render();
+      }
+    }
+    startBtn.addEventListener("click",function(){
+      if(running){stopIv();running=false;startBtn.textContent="Resume";return;}
+      running=true;startBtn.textContent="Pause";
+      if(audio.isOn())audio.cue(true);
+      iv=setInterval(function(){left--;if(left<=0){render();done();return;}render();},1000);
+    });
+    resetBtn.addEventListener("click",function(){stopIv();running=false;startBtn.textContent="Begin";mode="focus";total=focusMin*60;left=total;render();});
+    $("#presets").addEventListener("click",function(e){
+      var b=e.target.closest(".preset");if(!b)return;
+      Array.prototype.forEach.call(this.children,function(x){x.classList.toggle("sel",x===b);});
+      set(parseInt(b.dataset.f,10),parseInt(b.dataset.b,10));
+    });
+    render();
+  })();
+
+  /* ---------- breathing ---------- */
+  (function(){
+    var orb=$("#orb"),word=$("#breathWord"),count=$("#breathCount"),btn=$("#breathBtn"),sub=$("#breatheSub");
+    var patterns={
+      box:{seq:[["Breathe in",4,0.28,1],["Hold",4,1,1],["Breathe out",4,1,0.28],["Hold",4,0.28,0.28]],sub:"Box breathing — a steady square. Good before focus."},
+      "478":{seq:[["Breathe in",4,0.28,1],["Hold",7,1,1],["Breathe out",8,1,0.28]],sub:"4·7·8 — a longer exhale to settle the nerves."},
+      coherent:{seq:[["Breathe in",5,0.28,1],["Breathe out",5,1,0.28]],sub:"Even breathing — five in, five out, for balance."}
+    };
+    var cur="box",running=false,raf=null,phaseIdx=0,phaseStart=0;
+    function setScale(v){orb.style.transform="scale("+v+")";}
+    function frame(ts){
+      var seq=patterns[cur].seq,ph=seq[phaseIdx],dur=ph[1]*1000;
+      var e=ts-phaseStart,p=Math.min(e/dur,1);
+      var from=ph[2],to=ph[3],eased=p<0.5?2*p*p:1-Math.pow(-2*p+2,2)/2;
+      setScale(from+(to-from)*eased);
+      word.textContent=ph[0];
+      count.textContent=Math.max(0,Math.ceil(ph[1]-e/1000));
+      if(p>=1){
+        phaseIdx=(phaseIdx+1)%seq.length;phaseStart=ts;
+        if(audio.isOn()){var nx=seq[phaseIdx][0];if(nx.indexOf("in")>-1)audio.cue(false);else if(nx.indexOf("out")>-1)audio.cue(true);}
+      }
+      raf=requestAnimationFrame(frame);
+    }
+    function start(){running=true;btn.textContent="Stop";phaseIdx=0;phaseStart=performance.now();
+      if(audio.isOn())audio.cue(false);raf=requestAnimationFrame(frame);}
+    function stop(){running=false;btn.textContent="Start";if(raf)cancelAnimationFrame(raf);
+      word.textContent="Ready";count.textContent="";setScale(0.5);}
+    btn.addEventListener("click",function(){running?stop():start();});
+    $("#patterns").addEventListener("click",function(e){
+      var b=e.target.closest(".preset");if(!b)return;
+      Array.prototype.forEach.call(this.children,function(x){x.classList.toggle("sel",x===b);});
+      cur=b.dataset.p;sub.textContent=patterns[cur].sub;if(running){phaseIdx=0;phaseStart=performance.now();}
+    });
+    setScale(0.5);
+  })();
+
+  /* ---------- reflect / journal ---------- */
+  (function(){
+    var prompts=[
+      "What is one thing that went right today?",
+      "What are you grateful for right now?",
+      "What drained you, and what filled you back up?",
+      "What did you learn today — about anything, or anyone?",
+      "What would you like to leave behind before tomorrow?",
+      "Who or what deserves a quiet thank-you tonight?",
+      "What felt like enough today?",
+      "What is one small win you'd otherwise forget?"
+    ];
+    $("#reflectPrompt").textContent=prompts[doy%prompts.length];
+    var key="ae_journal",ta=$("#reflectText"),list=$("#entries"),empty=$("#entriesEmpty");
+    function load(){try{return JSON.parse(store.get(key)||"[]");}catch(e){return [];}}
+    function save(a){store.set(key,JSON.stringify(a));}
+    function fmtDate(ts){var d=new Date(ts);return months[d.getMonth()].slice(0,3)+" "+d.getDate()+", "+d.getFullYear()+" · "+(function(){var h=d.getHours(),m=d.getMinutes(),ap=h<12?"am":"pm",h12=h%12||12;return h12+":"+(m<10?"0":"")+m+ap;})();}
+    function render(){
+      var a=load();
+      Array.prototype.slice.call(list.querySelectorAll(".entry")).forEach(function(n){n.remove();});
+      empty.style.display=a.length?"none":"block";
+      a.slice().reverse().forEach(function(en){
+        var d=document.createElement("div");d.className="entry";
+        var p=document.createElement("p");p.textContent=en.text;
+        var w=document.createElement("div");w.className="when";
+        var sp=document.createElement("span");sp.textContent=fmtDate(en.ts);
+        var del=document.createElement("button");del.setAttribute("aria-label","Delete entry");del.textContent="✕";
+        del.addEventListener("click",function(){var arr=load().filter(function(x){return x.ts!==en.ts;});save(arr);render();toast("entry removed");});
+        w.appendChild(sp);w.appendChild(del);
+        d.appendChild(w);d.appendChild(p);list.appendChild(d);
+      });
+    }
+    $("#reflectSave").addEventListener("click",function(){
+      var v=ta.value.trim();if(!v){toast("write a little first");ta.focus();return;}
+      var a=load();a.push({ts:Date.now(),text:v});save(a);ta.value="";render();toast("saved to this device");
+    });
+    $("#reflectExport").addEventListener("click",function(){
+      var a=load();if(!a.length){toast("nothing to export yet");return;}
+      var txt=a.map(function(en){return "— "+fmtDate(en.ts)+"\n"+en.text+"\n";}).join("\n");
+      var blob=new Blob(["Æther journal\n\n"+txt],{type:"text/plain"});
+      var url=URL.createObjectURL(blob),link=document.createElement("a");
+      link.href=url;link.download="aether-journal.txt";document.body.appendChild(link);link.click();
+      document.body.removeChild(link);setTimeout(function(){URL.revokeObjectURL(url);},1000);
+      toast("exported aether-journal.txt");
+    });
+    render();
+  })();
+
+})();
+</script>
+
+</body>
+</html>
