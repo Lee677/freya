@@ -20,6 +20,7 @@ own path.
 | [`/stars`](https://freya.co.nz/stars) | **Star Guide** | An interactive map of the night sky — constellations, their figures, and the planets overhead. |
 | [`/nextround`](https://freya.co.nz/nextround) | **NextRound** | A one-press service button for every table — guests tap, the bar knows in 84 ms. No app, no venue Wi-Fi. *(Private — access code required.)* |
 | [`/zen`](https://freya.co.nz/zen) | **Æther** | A living daily companion — a generative sky that shifts with the hour, a focus timer, a breathing guide, and a private on-device journal. |
+| [`/sentinel`](https://freya.co.nz/sentinel) | **Shitehawk Sentinel** | An autonomous pan-tilt gull-deterrence turret — ESP32-CAM motion tracking, below-horizon laser lock, 0% AI. |
 
 *Also deployed from this repo: [`/vpas`](https://freya.co.nz/vpas) — VPAS, precision rotary valve remanufacture.*
 
