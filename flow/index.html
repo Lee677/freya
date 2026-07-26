@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#050608">
+<meta name="theme-color" content="#090909">
 <title>Flow — a generative sketch</title>
 <meta name="description" content="A tiny generative-art sketch in p5.js, by @yuruyurau.">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="alternate icon" href="/favicon.ico">
 <style>
   :root{
-    --bg:#050608;
+    --bg:#090909;
     --ink:#eef1f8;
     --muted:#8b96ad;
     --line:rgba(255,255,255,.14);
@@ -20,18 +20,14 @@
     --mono:ui-monospace,"Cascadia Code","Cascadia Mono",Consolas,"SFMono-Regular",Menlo,monospace;
   }
   *{box-sizing:border-box}
-  html,body{margin:0;height:100%}
-  body{
-    background:var(--bg);color:var(--ink);font-family:var(--sans);
-    display:flex;flex-direction:column;align-items:center;justify-content:center;
-    min-height:100dvh;overflow:hidden;
-  }
-  .stage{position:relative;display:grid;place-items:center;width:100%;flex:1}
-  canvas{display:block;max-width:92vmin;max-height:78vh;width:auto;height:auto;
-    border-radius:18px;box-shadow:0 40px 120px -40px rgba(0,0,0,.9);}
+  html,body{margin:0;padding:0;height:100%;background:var(--bg);overflow:hidden}
+  body{color:var(--ink);font-family:var(--sans)}
 
-  .top{position:fixed;top:clamp(.9rem,3.5vw,1.5rem);left:clamp(.9rem,3.5vw,1.5rem);
-    right:clamp(.9rem,3.5vw,1.5rem);display:flex;justify-content:space-between;align-items:center;z-index:2}
+  /* the sketch fills the viewport entirely */
+  canvas{position:fixed;top:0;left:0;display:block;z-index:0}
+
+  .top{position:fixed;top:max(clamp(.9rem,3.5vw,1.5rem),env(safe-area-inset-top));
+    left:max(clamp(.9rem,3.5vw,1.5rem),env(safe-area-inset-left));z-index:2}
   .home{appearance:none;text-decoration:none;border:1px solid var(--line);background:rgba(255,255,255,.05);
     color:var(--muted);height:38px;padding:0 .8rem;border-radius:999px;display:inline-flex;align-items:center;
     gap:.4rem;transition:.3s;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
@@ -39,11 +35,13 @@
   .home:hover{color:var(--ink);border-color:var(--accent)}
   .home svg{width:14px;height:14px}
 
-  .credit{position:fixed;left:0;right:0;bottom:clamp(1rem,4vw,1.8rem);z-index:2;
+  .credit{position:fixed;left:0;right:0;bottom:max(clamp(1rem,4vw,1.8rem),env(safe-area-inset-bottom));
+    z-index:2;pointer-events:none;
     display:flex;flex-direction:column;align-items:center;gap:.25rem;text-align:center;
-    font-family:var(--mono);font-size:.72rem;letter-spacing:.03em;color:var(--muted)}
-  .credit a{color:var(--accent);text-decoration:none;border-bottom:1px solid rgba(138,162,255,.35);
-    padding-bottom:1px;transition:.2s}
+    font-family:var(--mono);font-size:.72rem;letter-spacing:.03em;color:var(--muted);
+    text-shadow:0 2px 14px rgba(0,0,0,.9)}
+  .credit a{pointer-events:auto;color:var(--accent);text-decoration:none;
+    border-bottom:1px solid rgba(138,162,255,.35);padding-bottom:1px;transition:.2s}
   .credit a:hover{border-color:var(--accent)}
   .credit .title{font-family:var(--serif);font-size:1rem;color:var(--ink);letter-spacing:.01em}
 
@@ -62,10 +60,6 @@
   </a>
 </div>
 
-<div class="stage">
-  <main id="sketch"></main>
-</div>
-
 <div class="credit">
   <span class="title">Flow</span>
   <span>Original generative-art sketch by
@@ -77,28 +71,80 @@
 <script>
 /*
   Reconstructed from a hand-typed, character-limited p5.js sketch by @yuruyurau
-  (https://x.com/yuruyurau?s=11). The math below is untouched from the original;
-  only the canvas size and stroke colour were scaled up to fill a full page.
+  (https://x.com/yuruyurau?s=11).
+
+  The generative math below is verbatim from the original — only unpacked from
+  its one-line, default-argument form so the point coordinates can be reused for
+  auto-fitting. Everything added here is presentation: a full-viewport canvas,
+  and a measured fit so the figure sits centred at any screen size.
 */
-t=0
-a=(y,d=mag(k=(4+cos(i/9-t*2))*cos(i/35),e=y/7-13)+sin(e/9+t/2)-4)=>
-  point((q=2*sin(k*3)-y/35*k*(9+k*sin(cos(e)*9-d*2+t)))+40*cos(c=d-t)+20,
-        q*sin(c)+d*35)
+
+let t = 0;
+let i = 0;
+let fit = { s: 1, cx: 200, cy: 200, bw: 400, bh: 400 };
+
+// Original math, unchanged. Uses the global `i` exactly as the source does.
+function px(y){
+  const e = y / 7 - 13;
+  const k = (4 + cos(i / 9 - t * 2)) * cos(i / 35);
+  const d = mag(k, e) + sin(e / 9 + t / 2) - 4;
+  const q = 2 * sin(k * 3) - y / 35 * k * (9 + k * sin(cos(e) * 9 - d * 2 + t));
+  const c = d - t;
+  return [q + 40 * cos(c) + 200, q * sin(c) + d * 35];
+}
+
+// Sample the figure across a full animation cycle to find its true bounds,
+// so centring never depends on hand-guessed numbers.
+function measure(){
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  const saveT = t, saveI = i;
+  for(let tt = 0; tt < TWO_PI * 2; tt += TWO_PI / 24){
+    t = tt;
+    for(i = 1e4; i > 0; i -= 20){
+      const p = px(i / 235);
+      if(p[0] < minX) minX = p[0];
+      if(p[0] > maxX) maxX = p[0];
+      if(p[1] < minY) minY = p[1];
+      if(p[1] > maxY) maxY = p[1];
+    }
+  }
+  t = saveT; i = saveI;
+  fit.cx = (minX + maxX) / 2;
+  fit.cy = (minY + maxY) / 2;
+  fit.bw = maxX - minX;
+  fit.bh = maxY - minY;
+}
+
+function applyFit(){
+  // contain-fit against the figure's full-cycle bounds, so it fills the
+  // screen on desktop and on portrait phones alike without ever cropping
+  fit.s = Math.min(width / fit.bw, height / fit.bh) * 0.95;
+}
 
 function setup(){
-  var s=Math.min(window.innerWidth,window.innerHeight,900)
-  createCanvas(s,s).parent('sketch')
+  createCanvas(windowWidth, windowHeight);
+  measure();
+  applyFit();
 }
+
 function windowResized(){
-  var s=Math.min(window.innerWidth,window.innerHeight,900)
-  resizeCanvas(s,s)
+  resizeCanvas(windowWidth, windowHeight);
+  applyFit();
 }
+
 function draw(){
-  background(9).stroke(255,96)
-  push()
-  scale(width/400)
-  for(t+=PI/80,i=1e4;i--;)a(i/235)
-  pop()
+  background(9);
+  stroke(255, 96);
+  push();
+  translate(width / 2, height / 2);
+  scale(fit.s);
+  translate(-fit.cx, -fit.cy);
+  t += PI / 80;
+  for(i = 1e4; i--;){
+    const p = px(i / 235);
+    point(p[0], p[1]);
+  }
+  pop();
 }
 </script>
 
