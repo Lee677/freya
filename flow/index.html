@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#050608">
+<title>Flow — a generative sketch</title>
+<meta name="description" content="A tiny generative-art sketch in p5.js, by @yuruyurau.">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="alternate icon" href="/favicon.ico">
+<style>
+  :root{
+    --bg:#050608;
+    --ink:#eef1f8;
+    --muted:#8b96ad;
+    --line:rgba(255,255,255,.14);
+    --accent:#8aa2ff;
+    --serif:"Palatino Linotype","Book Antiqua",Palatino,Georgia,"Times New Roman",serif;
+    --sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",sans-serif;
+    --mono:ui-monospace,"Cascadia Code","Cascadia Mono",Consolas,"SFMono-Regular",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg);color:var(--ink);font-family:var(--sans);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    min-height:100dvh;overflow:hidden;
+  }
+  .stage{position:relative;display:grid;place-items:center;width:100%;flex:1}
+  canvas{display:block;max-width:92vmin;max-height:78vh;width:auto;height:auto;
+    border-radius:18px;box-shadow:0 40px 120px -40px rgba(0,0,0,.9);}
+
+  .top{position:fixed;top:clamp(.9rem,3.5vw,1.5rem);left:clamp(.9rem,3.5vw,1.5rem);
+    right:clamp(.9rem,3.5vw,1.5rem);display:flex;justify-content:space-between;align-items:center;z-index:2}
+  .home{appearance:none;text-decoration:none;border:1px solid var(--line);background:rgba(255,255,255,.05);
+    color:var(--muted);height:38px;padding:0 .8rem;border-radius:999px;display:inline-flex;align-items:center;
+    gap:.4rem;transition:.3s;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    font-family:var(--mono);font-size:.72rem;letter-spacing:.02em}
+  .home:hover{color:var(--ink);border-color:var(--accent)}
+  .home svg{width:14px;height:14px}
+
+  .credit{position:fixed;left:0;right:0;bottom:clamp(1rem,4vw,1.8rem);z-index:2;
+    display:flex;flex-direction:column;align-items:center;gap:.25rem;text-align:center;
+    font-family:var(--mono);font-size:.72rem;letter-spacing:.03em;color:var(--muted)}
+  .credit a{color:var(--accent);text-decoration:none;border-bottom:1px solid rgba(138,162,255,.35);
+    padding-bottom:1px;transition:.2s}
+  .credit a:hover{border-color:var(--accent)}
+  .credit .title{font-family:var(--serif);font-size:1rem;color:var(--ink);letter-spacing:.01em}
+
+  @media (max-width:520px){
+    .home .t{display:none}
+    .home{width:38px;padding:0;justify-content:center}
+  }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <a class="home" href="https://freya.co.nz" title="Back to freya.co.nz" aria-label="Back to freya.co.nz">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    <span class="t">freya.co.nz</span>
+  </a>
+</div>
+
+<div class="stage">
+  <main id="sketch"></main>
+</div>
+
+<div class="credit">
+  <span class="title">Flow</span>
+  <span>Original generative-art sketch by
+    <a href="https://x.com/yuruyurau?s=11" target="_blank" rel="noopener noreferrer">@yuruyurau</a>
+  </span>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+<script>
+/*
+  Reconstructed from a hand-typed, character-limited p5.js sketch by @yuruyurau
+  (https://x.com/yuruyurau?s=11). The math below is untouched from the original;
+  only the canvas size and stroke colour were scaled up to fill a full page.
+*/
+t=0
+a=(y,d=mag(k=(4+cos(i/9-t*2))*cos(i/35),e=y/7-13)+sin(e/9+t/2)-4)=>
+  point((q=2*sin(k*3)-y/35*k*(9+k*sin(cos(e)*9-d*2+t)))+40*cos(c=d-t)+20,
+        q*sin(c)+d*35)
+
+function setup(){
+  var s=Math.min(window.innerWidth,window.innerHeight,900)
+  createCanvas(s,s).parent('sketch')
+}
+function windowResized(){
+  var s=Math.min(window.innerWidth,window.innerHeight,900)
+  resizeCanvas(s,s)
+}
+function draw(){
+  background(9).stroke(255,96)
+  push()
+  scale(width/400)
+  for(t+=PI/80,i=1e4;i--;)a(i/235)
+  pop()
+}
+</script>
+
+</body>
+</html>
