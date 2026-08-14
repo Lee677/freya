@@ -17,6 +17,7 @@ own path.
 | --- | --- | --- |
 | [`/`](https://freya.co.nz) | **Index** | The front page — a contents list linking everything below. |
 | [`/freyacad`](https://freya.co.nz/freyacad) | **FreyaCAD** | Parametric solid modelling in the browser — sketch, extrude, and boolean geometry, powered by [Manifold](https://github.com/elalish/manifold) and three.js. |
+| [`/grid`](https://freya.co.nz/grid) | **Grid** | Magnet-free Gridfinity for any drawer — baseplates sized to the millimetre, bins in any shape, and pockets cut from a photograph of the tool. STL or STEP. |
 | [`/stars`](https://freya.co.nz/stars) | **Star Guide** | An interactive map of the night sky — constellations, their figures, and the planets overhead. |
 | [`/nextround`](https://freya.co.nz/nextround) | **NextRound** | A one-press service button for every table — guests tap, the bar knows in 84 ms. No app, no venue Wi-Fi. *(Private — access code required.)* |
 | [`/zen`](https://freya.co.nz/zen) | **Æther** | A living daily companion — a generative sky that shifts with the hour, a focus timer, a breathing guide, and a private on-device journal. |

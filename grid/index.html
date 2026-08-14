@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Grid — Gridfinity generator</title>
+<meta name="description" content="Magnet-free Gridfinity baseplates for any drawer, and bins shaped to any tool from a photograph. STL and STEP, straight from the browser.">
+<meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/svg+xml" href="./favicon.svg">
+<link rel="alternate icon" href="./favicon.ico">
+<style>
+  :root{
+    --bg:#eef1f6; --ink:#141922; --muted:#5a6675; --faint:#8592a3;
+    --line:rgba(20,25,34,.12); --line-soft:rgba(20,25,34,.07);
+    --surface:rgba(255,255,255,.62); --raised:#fff;
+    --accent:#3a5bd0; --accent-ink:#3a5bd0; --warn:#a4571b; --ok:#1f7a4d;
+    --grid:rgba(20,25,34,.045);
+    --serif:"Palatino Linotype","Book Antiqua",Palatino,Georgia,"Times New Roman",serif;
+    --sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",sans-serif;
+    --mono:ui-monospace,"Cascadia Code","Cascadia Mono",Consolas,"SFMono-Regular",Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0b0e14; --ink:#eef1f8; --muted:#98a5bd; --faint:#6b7890;
+      --line:rgba(255,255,255,.13); --line-soft:rgba(255,255,255,.07);
+      --surface:rgba(255,255,255,.035); --raised:rgba(255,255,255,.06);
+      --accent:#8aa2ff; --accent-ink:#a9bcff; --warn:#e0a45c; --ok:#5fd39a;
+      --grid:rgba(255,255,255,.04);
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.5;
+    -webkit-font-smoothing:antialiased;min-height:100dvh}
+  body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+    background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+    background-size:26px 26px;
+    -webkit-mask-image:radial-gradient(120% 90% at 50% 0%,#000 55%,transparent 100%);
+    mask-image:radial-gradient(120% 90% at 50% 0%,#000 55%,transparent 100%)}
+  .wrap{position:relative;z-index:1;max-width:1240px;margin:0 auto;padding:clamp(1.6rem,4vw,2.8rem) clamp(1rem,3vw,1.8rem) 3rem}
+
+  header{margin-bottom:1.4rem}
+  .eyebrow{font-family:var(--mono);font-size:.68rem;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--faint);margin:0 0 .7rem;display:flex;align-items:center;gap:.6rem}
+  .eyebrow::after{content:"";height:1px;flex:1;background:var(--line)}
+  .eyebrow a{color:var(--faint);text-decoration:none}
+  .eyebrow a:hover{color:var(--accent)}
+  h1.mark{font-family:var(--serif);font-weight:600;font-size:clamp(2.4rem,7vw,3.4rem);line-height:1;margin:0;letter-spacing:-.015em}
+  .lede{color:var(--muted);margin:.6rem 0 0;max-width:62ch;text-wrap:pretty}
+
+  nav.tabs{display:flex;flex-wrap:wrap;gap:.15rem;border-bottom:1px solid var(--line);margin:1.4rem 0 1.2rem}
+  nav.tabs button{appearance:none;background:none;border:0;border-bottom:2px solid transparent;
+    font:inherit;font-size:.92rem;color:var(--muted);padding:.55rem .85rem;cursor:pointer;margin-bottom:-1px}
+  nav.tabs button:hover{color:var(--ink)}
+  nav.tabs button[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent)}
+
+  .split{display:grid;grid-template-columns:minmax(320px,384px) 1fr;gap:1.4rem;align-items:start}
+  @media (max-width:900px){.split{grid-template-columns:1fr}}
+
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:1rem 1.05rem 1.1rem}
+  .pane{display:none}
+  .pane.on{display:block}
+  .grp{border:0;margin:0 0 1rem;padding:0}
+  .grp>legend,.grp>.legend{font-family:var(--mono);font-size:.66rem;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--faint);padding:0 0 .5rem}
+  .row{display:grid;grid-template-columns:1fr auto;gap:.55rem;align-items:center;margin:.34rem 0}
+  .row label{font-size:.88rem;color:var(--muted)}
+  .row .hint{display:block;font-size:.74rem;color:var(--faint);line-height:1.3}
+  input[type=number],input[type=text],select{font:inherit;font-size:.88rem;color:var(--ink);background:var(--raised);
+    border:1px solid var(--line);border-radius:7px;padding:.32rem .45rem;width:7.2rem;text-align:right}
+  select{text-align:left;width:9.6rem}
+  input[type=range]{width:9.6rem;accent-color:var(--accent)}
+  input[type=checkbox]{width:1.05rem;height:1.05rem;accent-color:var(--accent)}
+  input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
+  .two input{width:100%}
+
+  button.act{appearance:none;font:inherit;font-size:.86rem;cursor:pointer;border-radius:8px;
+    border:1px solid var(--line);background:var(--raised);color:var(--ink);padding:.44rem .7rem}
+  button.act:hover{border-color:var(--accent);color:var(--accent)}
+  button.act.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.act.primary:hover{filter:brightness(1.08);color:#fff}
+  button.act[disabled]{opacity:.45;cursor:not-allowed}
+  .btns{display:flex;flex-wrap:wrap;gap:.45rem;margin-top:.7rem}
+
+  .stage{position:sticky;top:1rem;display:flex;flex-direction:column;gap:.7rem}
+  @media (max-width:900px){.stage{position:static;order:-1}}
+  #view{height:clamp(340px,58vh,620px);border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--surface)}
+  #view canvas{display:block;width:100%;height:100%}
+  #photo{border:1px solid var(--line);border-radius:12px;overflow:auto;background:var(--surface);padding:.5rem;
+    max-height:clamp(340px,62vh,700px);position:relative}
+  #photo canvas{display:block;max-width:100%;cursor:crosshair;border-radius:6px}
+  .hide{display:none !important}
+
+  .readout{font-family:var(--mono);font-size:.74rem;line-height:1.55;color:var(--muted);
+    background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:.6rem .75rem;white-space:pre-wrap}
+  .readout b{color:var(--ink);font-weight:600}
+  .readout .w{color:var(--warn)}
+  .status{font-family:var(--mono);font-size:.72rem;color:var(--faint);min-height:1.2em}
+  .status.busy{color:var(--accent)}
+  .status.err{color:var(--warn)}
+
+  details.note{margin-top:.8rem;border-top:1px solid var(--line-soft);padding-top:.6rem}
+  details.note summary{cursor:pointer;font-size:.82rem;color:var(--muted)}
+  details.note p{font-size:.83rem;color:var(--muted);margin:.5rem 0}
+  .steps{counter-reset:s;padding-left:0;list-style:none;margin:.4rem 0}
+  .steps li{counter-increment:s;position:relative;padding-left:1.7rem;margin:.35rem 0;font-size:.85rem;color:var(--muted)}
+  .steps li::before{content:counter(s);position:absolute;left:0;top:.05rem;width:1.15rem;height:1.15rem;border-radius:50%;
+    background:var(--raised);border:1px solid var(--line);font-family:var(--mono);font-size:.66rem;
+    display:flex;align-items:center;justify-content:center;color:var(--faint)}
+  .steps li.done::before{background:var(--accent);border-color:var(--accent);color:#fff}
+  .drop{border:1.5px dashed var(--line);border-radius:10px;padding:1rem;text-align:center;color:var(--faint);font-size:.86rem;cursor:pointer}
+  .drop.over{border-color:var(--accent);color:var(--accent)}
+  .prose{max-width:70ch}
+  .prose h3{font-family:var(--serif);font-size:1.15rem;margin:1.4rem 0 .3rem}
+  .prose p,.prose li{color:var(--muted);font-size:.9rem}
+  .prose code{font-family:var(--mono);font-size:.82rem;color:var(--ink)}
+  table.spec{border-collapse:collapse;font-family:var(--mono);font-size:.76rem;margin:.6rem 0;width:100%}
+  table.spec td{border-bottom:1px solid var(--line-soft);padding:.22rem .4rem;color:var(--muted)}
+  table.spec td:last-child{text-align:right;color:var(--ink)}
+  footer{margin-top:2.4rem;display:flex;justify-content:space-between;flex-wrap:wrap;gap:.6rem;
+    font-family:var(--mono);font-size:.7rem;color:var(--faint)}
+  footer a{color:var(--faint);text-decoration:none;border-bottom:1px solid var(--line)}
+  footer a:hover{color:var(--accent)}
+</style>
+
+<script src="./three.min.js"></script>
+<script>window.THREE||document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"><\/script>');</script>
+<script type="module">
+  const SOURCES = ['./manifold.js',
+    'https://cdn.jsdelivr.net/npm/manifold-3d@3/manifold.js',
+    'https://unpkg.com/manifold-3d@3/manifold.js'];
+  async function go(){
+    let Module=null, base='';
+    for(const src of SOURCES){
+      try{ const mod = await import(/* @vite-ignore */ src);
+        if(mod && mod.default){ Module = mod.default; base = src.replace(/manifold\.js(?:\?.*)?$/, ''); break; }
+      }catch(_){}
+    }
+    if(!Module) throw new Error('manifold-3d could not be loaded.');
+    const wasm = await Module({ locateFile:(p)=> p.endsWith('.wasm') ? (base+'manifold.wasm') : p });
+    if(typeof wasm.setup === 'function') wasm.setup();
+    window.MANIFOLD = wasm;
+    window.dispatchEvent(new Event('manifold-ready'));
+  }
+  go().catch(err=>{
+    const s=document.getElementById('status');
+    if(s){ s.className='status err'; s.textContent='3D engine failed to start: '+(err&&err.message||err); }
+  });
+</script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="eyebrow"><a href="/">freya.co.nz</a> &middot; /grid</p>
+    <h1 class="mark">Grid</h1>
+    <p class="lede">Magnet-free Gridfinity, generated in the browser. Baseplates that fill <b>any</b> drawer,
+      bins in any size, and pockets cut to the shape of a real tool &mdash; photograph it next to a ruler and
+      the outline comes off the picture. Everything exports as <b>STL</b> or <b>STEP</b>.</p>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="bp" aria-selected="true">Baseplate</button>
+    <button role="tab" data-tab="bin" aria-selected="false">Bin</button>
+    <button role="tab" data-tab="scan" aria-selected="false">Tool scan</button>
+    <button role="tab" data-tab="rig" aria-selected="false">Photo rig</button>
+    <button role="tab" data-tab="doc" aria-selected="false">Notes</button>
+  </nav>
+
+  <div class="split">
+    <!-- ================= CONTROLS ================= -->
+    <section class="panel">
+
+      <!-- ---------- BASEPLATE ---------- -->
+      <div class="pane on" id="pane-bp">
+        <fieldset class="grp">
+          <div class="legend">Drawer (inside)</div>
+          <div class="row"><label for="bp-units">Units</label>
+            <select id="bp-units"><option value="1">millimetres</option><option value="25.4">inches</option></select></div>
+          <div class="row"><label for="bp-w">Width (X)</label><input type="number" id="bp-w" value="560" step="0.1"></div>
+          <div class="row"><label for="bp-d">Depth (Y)</label><input type="number" id="bp-d" value="400" step="0.1"></div>
+          <div class="row"><label for="bp-gap">Fit gap, each side<span class="hint">plate is this much smaller than the drawer</span></label>
+            <input type="number" id="bp-gap" value="0.5" step="0.1"></div>
+          <div class="row"><label for="bp-relief">Corner relief<span class="hint">square notch for radiused drawer corners</span></label>
+            <input type="number" id="bp-relief" value="0" step="0.5"></div>
+        </fieldset>
+
+        <fieldset class="grp">
+          <div class="legend">Plate</div>
+          <div class="row"><label for="bp-fill">Leftover space</label>
+            <select id="bp-fill"><option value="skirt">fill with solid skirt</option><option value="grid">trim to grid</option></select></div>
+          <div class="row"><label for="bp-align">Grid position</label>
+            <select id="bp-align"><option value="center">centred</option><option value="min">front-left</option><option value="max">back-right</option></select></div>
+          <div class="row"><label for="bp-floor">Floor thickness<span class="hint">0 = open skeleton (fast, less filament)</span></label>
+            <input type="number" id="bp-floor" value="0" step="0.2" min="0"></div>
+        </fieldset>
+
+        <fieldset class="grp">
+          <div class="legend">Printing</div>
+          <div class="row"><label for="bp-split">Split to fit the bed</label><input type="checkbox" id="bp-split" checked></div>
+          <div class="row"><label for="bp-bedx">Bed X / Y</label>
+            <span class="two" style="width:9.6rem"><input type="number" id="bp-bedx" value="256"><input type="number" id="bp-bedy" value="256"></span></div>
+          <div class="row"><label for="bp-seg">Arc quality<span class="hint">segments per corner</span></label>
+            <select id="bp-seg"><option value="4">draft (4)</option><option value="8" selected>normal (8)</option><option value="16">fine (16)</option></select></div>
+        </fieldset>
+
+        <div class="btns">
+          <button class="act primary" id="bp-build">Generate</button>
+          <button class="act" id="bp-stl" disabled>STL</button>
+          <button class="act" id="bp-step" disabled>STEP</button>
+          <button class="act" id="bp-zip" disabled>All tiles (.zip)</button>
+        </div>
+        <details class="note"><summary>What magnet-free means here</summary>
+          <p>No magnet bores, no screw counterbores, nothing to glue in. The plate holds bins by the
+          45&deg; wedge of the standard profile alone, which is what stops them sliding in a drawer.
+          Plates print upside-down-free: flat on the bed, no supports.</p></details>
+      </div>
+
+      <!-- ---------- BIN ---------- -->
+      <div class="pane" id="pane-bin">
+        <fieldset class="grp">
+          <div class="legend">Size</div>
+          <div class="row"><label>Grid units X &times; Y</label>
+            <span class="two" style="width:9.6rem"><input type="number" id="bin-nx" value="2" min="1" max="12"><input type="number" id="bin-ny" value="1" min="1" max="12"></span></div>
+          <div class="row"><label for="bin-uz">Height (7 mm units)</label><input type="number" id="bin-uz" value="3" min="1" max="30"></div>
+          <div class="row"><label for="bin-lip">Stacking lip</label><input type="checkbox" id="bin-lip" checked></div>
+          <div class="row"><label for="bin-hmode">Height counts</label>
+            <select id="bin-hmode"><option value="add">body + lip on top</option><option value="total">total incl. lip</option></select></div>
+        </fieldset>
+
+        <fieldset class="grp">
+          <div class="legend">Interior</div>
+          <div class="row"><label for="bin-style">Style</label>
+            <select id="bin-style">
+              <option value="hollow">open bin</option>
+              <option value="div">compartments</option>
+              <option value="pocket">tool pocket (from scan)</option>
+              <option value="solid">solid block</option>
+            </select></div>
+          <div class="row"><label for="bin-wall">Wall</label><input type="number" id="bin-wall" value="1.2" step="0.1" min="0.4"></div>
+          <div class="row"><label for="bin-floor">Floor</label><input type="number" id="bin-floor" value="1.2" step="0.1" min="0.4"></div>
+          <div class="row" data-when="hollow div"><label for="bin-scoop">Scoop radius<span class="hint">0 = none</span></label>
+            <input type="number" id="bin-scoop" value="0" step="0.5" min="0"></div>
+          <div class="row" data-when="div"><label>Compartments X &times; Y</label>
+            <span class="two" style="width:9.6rem"><input type="number" id="bin-divx" value="2" min="1" max="12"><input type="number" id="bin-divy" value="1" min="1" max="12"></span></div>
+          <div class="row" data-when="div"><label for="bin-divt">Divider thickness</label><input type="number" id="bin-divt" value="1.2" step="0.1" min="0.4"></div>
+        </fieldset>
+
+        <fieldset class="grp" data-when="pocket">
+          <div class="legend">Tool pocket</div>
+          <div class="row"><label>Outline</label><span class="readout" style="padding:.2rem .4rem" id="bin-poly">none yet</span></div>
+          <div class="row"><label for="bin-pclear">Clearance around tool</label><input type="number" id="bin-pclear" value="0.5" step="0.1"></div>
+          <div class="row"><label for="bin-pdepth">Pocket depth</label><input type="number" id="bin-pdepth" value="12" step="0.5"></div>
+          <div class="row"><label>Copies X &times; Y</label>
+            <span class="two" style="width:9.6rem"><input type="number" id="bin-pcols" value="1" min="1" max="20"><input type="number" id="bin-prows" value="1" min="1" max="20"></span></div>
+          <div class="row"><label for="bin-pspace">Gap between copies</label><input type="number" id="bin-pspace" value="4" step="0.5"></div>
+          <div class="row"><label for="bin-pfinger">Finger dish radius<span class="hint">round dip in the pocket floor, 0 = none</span></label><input type="number" id="bin-pfinger" value="9" step="1" min="0"></div>
+          <div class="row"><label for="bin-pauto">Auto-size the bin</label><input type="checkbox" id="bin-pauto" checked></div>
+        </fieldset>
+
+        <div class="btns">
+          <button class="act primary" id="bin-build">Generate</button>
+          <button class="act" id="bin-stl" disabled>STL</button>
+          <button class="act" id="bin-step" disabled>STEP</button>
+        </div>
+      </div>
+
+      <!-- ---------- SCAN ---------- -->
+      <div class="pane" id="pane-scan">
+        <ol class="steps" id="sc-steps">
+          <li id="sc-s1">Photograph the tool on a plain, contrasting background</li>
+          <li id="sc-s2">Set the scale &mdash; click the reference points</li>
+          <li id="sc-s3">Trace the outline</li>
+          <li id="sc-s4">Send it to the Bin tab</li>
+        </ol>
+
+        <div class="drop" id="sc-drop">Drop a photo here, or click to choose
+          <input type="file" id="sc-file" accept="image/*" hidden></div>
+
+        <fieldset class="grp" style="margin-top:.9rem">
+          <div class="legend">Scale reference</div>
+          <div class="row"><label for="sc-mode">Method</label>
+            <select id="sc-mode">
+              <option value="frame">4 corners of a known rectangle</option>
+              <option value="ruler">2 points on a ruler</option>
+            </select></div>
+          <div class="row" data-scan="frame"><label>Rectangle inside size</label>
+            <span class="two" style="width:9.6rem"><input type="number" id="sc-fw" value="200"><input type="number" id="sc-fd" value="150"></span></div>
+          <div class="row" data-scan="ruler"><label for="sc-len">Distance between the 2 points</label><input type="number" id="sc-len" value="100" step="1"></div>
+          <div class="row"><label>Points picked</label><span class="readout" style="padding:.2rem .45rem" id="sc-pts">0</span></div>
+          <div class="btns">
+            <button class="act" id="sc-clearpts">Clear points</button>
+            <button class="act primary" id="sc-apply" disabled>Apply scale</button>
+          </div>
+        </fieldset>
+
+        <fieldset class="grp">
+          <div class="legend">Outline</div>
+          <div class="row"><label for="sc-auto">Auto threshold</label><input type="checkbox" id="sc-auto" checked></div>
+          <div class="row"><label for="sc-thr">Threshold</label><input type="range" id="sc-thr" min="1" max="254" value="128"></div>
+          <div class="row"><label for="sc-inv">Invert light / dark</label><input type="checkbox" id="sc-inv"></div>
+          <div class="row"><label for="sc-clean">Noise clean-up</label><input type="range" id="sc-clean" min="0" max="6" value="2"></div>
+          <div class="row"><label for="sc-simp">Smoothing (mm)</label><input type="range" id="sc-simp" min="0" max="30" value="4"></div>
+          <div class="row"><label>Drag on the picture to limit the search area</label><span class="hint" id="sc-roi">whole image</span></div>
+          <div class="btns">
+            <button class="act primary" id="sc-trace" disabled>Trace outline</button>
+            <button class="act" id="sc-roiclear">Clear area</button>
+            <button class="act" id="sc-use" disabled>Use in bin &rarr;</button>
+            <button class="act" id="sc-svg" disabled>SVG</button>
+          </div>
+        </fieldset>
+        <details class="note"><summary>Getting a good trace</summary>
+          <p>Plain background, no shadow under the tool, camera as square-on as you can manage.
+          A dark tool on white paper (or the reverse) is ideal. If the camera was tilted, use the
+          4-corner method &mdash; it rectifies the perspective, so an ordinary hand-held photo works.
+          The <b>Photo rig</b> tab prints the frame and a stand that holds a phone directly overhead.</p></details>
+      </div>
+
+      <!-- ---------- RIG ---------- -->
+      <div class="pane" id="pane-rig">
+        <fieldset class="grp">
+          <div class="legend">Calibration frame</div>
+          <div class="row"><label>Inside size X &times; Y</label>
+            <span class="two" style="width:9.6rem"><input type="number" id="rig-iw" value="200"><input type="number" id="rig-id" value="150"></span></div>
+          <div class="row"><label for="rig-fw">Frame width</label><input type="number" id="rig-fw" value="12" step="1"></div>
+          <div class="row"><label for="rig-t">Thickness</label><input type="number" id="rig-t" value="3" step="0.5"></div>
+          <div class="btns">
+            <button class="act primary" id="rig-build">Preview frame</button>
+            <button class="act" id="rig-stl" disabled>STL</button>
+            <button class="act" id="rig-step" disabled>STEP</button>
+            <button class="act" id="rig-svg">Paper version (SVG)</button>
+          </div>
+        </fieldset>
+
+        <fieldset class="grp">
+          <div class="legend">Overhead phone stand</div>
+          <div class="row"><label for="st-h">Camera height</label><input type="number" id="st-h" value="320" step="10"></div>
+          <div class="row"><label for="st-reach">Arm reach</label><input type="number" id="st-reach" value="120" step="5"></div>
+          <div class="row"><label>Phone width / thickness</label>
+            <span class="two" style="width:9.6rem"><input type="number" id="st-pw" value="78"><input type="number" id="st-pt" value="11"></span></div>
+          <div class="row"><label>Lens window: in from left / back</label>
+            <span class="two" style="width:9.6rem"><input type="number" id="st-lx" value="22"><input type="number" id="st-ly" value="20"></span></div>
+          <div class="row"><label for="st-ld">Lens window size</label><input type="number" id="st-ld" value="34" step="1"></div>
+          <div class="row"><label for="st-bedz">Max print height</label><input type="number" id="st-bedz" value="250" step="10"></div>
+          <div class="btns">
+            <button class="act primary" id="st-build">Preview stand</button>
+            <button class="act" id="st-zip" disabled>All parts (.zip)</button>
+          </div>
+        </fieldset>
+        <details class="note"><summary>Do I need the stand?</summary>
+          <p>No &mdash; the 4-corner method already removes perspective, so a hand-held photo of a tool
+          inside the frame is enough for a pocket that fits. The stand helps when you are scanning a lot
+          of tools in a row, or when the tool is deep and you want the outline at its true silhouette
+          rather than a slightly oblique one.</p></details>
+      </div>
+
+      <!-- ---------- DOC ---------- -->
+      <div class="pane" id="pane-doc">
+        <div class="prose">
+          <h3>Profile</h3>
+          <p>Standard Gridfinity, magnet-free. Everything is generated from these numbers:</p>
+          <table class="spec">
+            <tr><td>Grid pitch</td><td>42.00 mm</td></tr>
+            <tr><td>Height unit</td><td>7.00 mm</td></tr>
+            <tr><td>Foot / socket profile</td><td>0.80 + 1.80 + 2.15 = 4.75 mm</td></tr>
+            <tr><td>Bin footprint (1&times;1)</td><td>41.50 mm, r 3.75</td></tr>
+            <tr><td>Foot bottom</td><td>35.60 mm, r 0.80</td></tr>
+            <tr><td>Socket clearance</td><td>0.25 mm per side</td></tr>
+          </table>
+          <h3>Height, honestly</h3>
+          <p>A bin&rsquo;s body is <code>7 mm &times; units</code>. The stacking lip sits on top of that and
+          the foot of the bin above sinks 4.75 mm back into it, so a stack grows by exactly
+          <code>7 mm &times; units</code> per bin. If your existing bins were made by a generator that counts
+          the lip inside the 7 mm module, switch <em>Height counts</em> to <em>total incl. lip</em> and they
+          will match.</p>
+          <h3>STEP files</h3>
+          <p>The STEP export is a real solid B-rep, not a mesh wrapper: coplanar triangles are merged back
+          into single planar faces with proper inner and outer loops, so a wall arrives in SOLIDWORKS or
+          Fusion as one face you can select and dimension. Round corners stay faceted &mdash; raise
+          <em>Arc quality</em> to <em>fine</em> if you intend to edit them.</p>
+          <h3>Printing</h3>
+          <p>Plates and bins print flat on the bed with no supports. Bins are strongest at 3 perimeters
+          and 15&nbsp;% infill; the plate is fine at 2 perimeters. Nothing here needs magnets, screws or glue.</p>
+          <h3>Everything happens on your machine</h3>
+          <p>No upload, no server, no account. The photograph never leaves the browser.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= STAGE ================= -->
+    <section class="stage">
+      <div id="view"></div>
+      <div id="photo" class="hide"><canvas id="sc-canvas" width="10" height="10"></canvas></div>
+      <div class="readout" id="readout">Ready.</div>
+      <div class="status" id="status">loading engine&hellip;</div>
+    </section>
+  </div>
+
+  <footer>
+    <span>Auckland, New Zealand</span>
+    <span><a href="/">&larr; freya.co.nz</a></span>
+  </footer>
+</div>
+
+<!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "bf566b1bebe84eaa8c4f3d6a83251b4a"}'></script><!-- End Cloudflare Web Analytics -->
+<script src="./js/core.js"></script>
+<script src="./js/exporters.js"></script>
+<script src="./js/vision.js"></script>
+<script src="./js/viewer.js"></script>
+<script src="./js/app.js"></script>
+</body>
+</html>
