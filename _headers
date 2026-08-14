@@ -1,0 +1,55 @@
+# Cloudflare Pages response headers.
+#
+# Policy: the vendored libraries are version-pinned and never edited in place,
+# so they cache hard. Everything I actually write has an unhashed filename, so
+# it stays short-lived and a deploy shows up straight away. HTML is left alone —
+# the Pages default (max-age=0, must-revalidate) is already what we want.
+#
+# If a vendored library is ever swapped for a newer version, change the filename
+# (three.r128.min.js) or add a query string in the page, or returning visitors
+# will keep the old one for up to a month.
+
+# ── vendored, version-pinned: three.js r128, manifold-3d v3 ────────────────
+/freyacad/three.min.js
+  Cache-Control: public, max-age=2592000, immutable
+/freyacad/manifold.js
+  Cache-Control: public, max-age=2592000, immutable
+/freyacad/manifold.wasm
+  Cache-Control: public, max-age=2592000, immutable
+/grid/three.min.js
+  Cache-Control: public, max-age=2592000, immutable
+/grid/manifold.js
+  Cache-Control: public, max-age=2592000, immutable
+/grid/manifold.wasm
+  Cache-Control: public, max-age=2592000, immutable
+
+# ── my own code: unhashed names, so keep it fresh (ETag makes 304s cheap) ──
+#
+# NOTE: the zone's Browser Cache TTL is set to 4 hours, and Cloudflare only
+# honours an origin max-age that is *longer* than that. So this 10 minutes is
+# currently floored to 14400 and a deploy can take up to 4 hours to reach a
+# returning visitor. Set Caching → Configuration → Browser Cache TTL to
+# "Respect Existing Headers" (or add a Cache Rule with Browser TTL = respect
+# origin) and this file becomes the single source of truth.
+/grid/js/*
+  Cache-Control: public, max-age=600, must-revalidate
+
+# ── icons ─────────────────────────────────────────────────────────────────
+/favicon.ico
+  Cache-Control: public, max-age=604800
+/favicon.svg
+  Cache-Control: public, max-age=604800
+/freyacad/favicon.ico
+  Cache-Control: public, max-age=604800
+/freyacad/favicon.svg
+  Cache-Control: public, max-age=604800
+/grid/favicon.ico
+  Cache-Control: public, max-age=604800
+/grid/favicon.svg
+  Cache-Control: public, max-age=604800
+/nextround/favicon.svg
+  Cache-Control: public, max-age=604800
+/stars/favicon.svg
+  Cache-Control: public, max-age=604800
+/zen/favicon.svg
+  Cache-Control: public, max-age=604800
