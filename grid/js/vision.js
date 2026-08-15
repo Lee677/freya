@@ -1,13 +1,13 @@
 /* ============================================================================
  * vision.js — photo -> real-world outline
  *
- * Two ways to get millimetres out of a photograph:
- *   1. ruler mode  — click two points a known distance apart (assumes the
- *                    camera was roughly square-on to the object)
- *   2. frame mode  — click the four corners of a known rectangle (the printed
- *                    target, a sheet of paper). The image is then rectified by
- *                    homography, which removes perspective AND lens tilt, so a
- *                    hand-held phone photo is good enough.
+ * Millimetres come from one known distance: the user clicks two points and says
+ * how far apart they really are. That assumes the camera was square-on to the
+ * object, which is why the UI says so twice.
+ *
+ * (A four-point homography rectification lived here until 2026-08-15 and would
+ * have handled a tilted camera. It was removed with the UI that drove it; see
+ * git history if a perspective-correcting mode is ever wanted back.)
  * ==========================================================================*/
 (function (global) {
   'use strict';
@@ -21,80 +21,7 @@
     }
   };
 
-  /* ---------------- homography ---------------- */
-  // src: 4 [x,y] in image px (TL,TR,BR,BL). dst: same order in output px.
-  function solveH(src, dst) {
-    const A = [], b = [];
-    for (let i = 0; i < 4; i++) {
-      const x = src[i][0], y = src[i][1], u = dst[i][0], w = dst[i][1];
-      A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); b.push(u);
-      A.push([0, 0, 0, x, y, 1, -w * x, -w * y]); b.push(w);
-    }
-    // Gaussian elimination with partial pivoting
-    for (let c = 0; c < 8; c++) {
-      let p = c;
-      for (let r = c + 1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
-      const t = A[c]; A[c] = A[p]; A[p] = t;
-      const tb = b[c]; b[c] = b[p]; b[p] = tb;
-      const d = A[c][c];
-      if (Math.abs(d) < 1e-12) return null;
-      for (let k = c; k < 8; k++) A[c][k] /= d;
-      b[c] /= d;
-      for (let r = 0; r < 8; r++) {
-        if (r === c) continue;
-        const f = A[r][c];
-        if (!f) continue;
-        for (let k = c; k < 8; k++) A[r][k] -= f * A[c][k];
-        b[r] -= f * b[c];
-      }
-    }
-    return [b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], 1];
-  }
-  V.solveH = solveH;
-
-  /* Rectify: quad (image px, TL TR BR BL) -> canvas that is mmW x mmD at
-   * `ppm` pixels per millimetre. */
-  V.rectify = function (bitmap, quad, mmW, mmD, ppm) {
-    ppm = ppm || 4;
-    const W = Math.max(32, Math.round(mmW * ppm)), H = Math.max(32, Math.round(mmD * ppm));
-    const dst = [[0, 0], [W - 1, 0], [W - 1, H - 1], [0, H - 1]];
-    const Hm = solveH(dst, quad);           // output -> input
-    if (!Hm) return null;
-
-    const sc = document.createElement('canvas');
-    sc.width = bitmap.width; sc.height = bitmap.height;
-    const sctx = sc.getContext('2d', { willReadFrequently: true });
-    sctx.drawImage(bitmap, 0, 0);
-    const src = sctx.getImageData(0, 0, sc.width, sc.height);
-    const sd = src.data, sw = sc.width, sh = sc.height;
-
-    const out = document.createElement('canvas');
-    out.width = W; out.height = H;
-    const octx = out.getContext('2d');
-    const od = octx.createImageData(W, H);
-    const dd = od.data;
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        const den = Hm[6] * x + Hm[7] * y + Hm[8];
-        const sx = (Hm[0] * x + Hm[1] * y + Hm[2]) / den;
-        const sy = (Hm[3] * x + Hm[4] * y + Hm[5]) / den;
-        const o = (y * W + x) * 4;
-        if (sx < 0 || sy < 0 || sx >= sw - 1 || sy >= sh - 1) { dd[o + 3] = 255; continue; }
-        const x0 = sx | 0, y0 = sy | 0, fx = sx - x0, fy = sy - y0;
-        const i00 = (y0 * sw + x0) * 4, i10 = i00 + 4, i01 = i00 + sw * 4, i11 = i01 + 4;
-        for (let c = 0; c < 3; c++) {
-          dd[o + c] =
-            sd[i00 + c] * (1 - fx) * (1 - fy) + sd[i10 + c] * fx * (1 - fy) +
-            sd[i01 + c] * (1 - fx) * fy + sd[i11 + c] * fx * fy;
-        }
-        dd[o + 3] = 255;
-      }
-    }
-    octx.putImageData(od, 0, 0);
-    return { canvas: out, ppm: ppm, w: W, h: H };
-  };
-
-  /* Plain scaled copy for ruler mode (no perspective correction). */
+  /* Scaled working copy of the photo, carrying the px-per-mm with it. */
   V.plain = function (bitmap, ppm, maxPx) {
     maxPx = maxPx || 1600;
     const s = Math.min(1, maxPx / Math.max(bitmap.width, bitmap.height));

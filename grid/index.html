@@ -270,9 +270,9 @@
       <!-- ---------- SCAN ---------- -->
       <div class="pane" id="pane-scan">
         <ol class="steps" id="sc-steps">
-          <li id="sc-s1">Photograph the tool on a plain, contrasting background</li>
-          <li id="sc-s2">Set the scale &mdash; click the reference points</li>
-          <li id="sc-s3">Trace the outline</li>
+          <li id="sc-s1">Photograph the tool from straight above, on a plain background, with a ruler beside it</li>
+          <li id="sc-s2">Click the two ends of a known distance, and type that distance in</li>
+          <li id="sc-s3">Trace it, then drag the orange line to fit</li>
           <li id="sc-s4">Send it to the Bin tab</li>
         </ol>
 
@@ -280,54 +280,65 @@
           <input type="file" id="sc-file" accept="image/*" hidden></div>
 
         <fieldset class="grp" style="margin-top:.9rem">
-          <div class="legend">Scale reference</div>
-          <div class="row"><label for="sc-mode">Method</label>
-            <select id="sc-mode">
-              <option value="frame">4 corners of a known rectangle</option>
-              <option value="ruler">2 points on a ruler</option>
-            </select></div>
-          <div class="row" data-scan="frame"><label>Rectangle inside size</label>
-            <span class="two" style="width:9.6rem"><input type="number" id="sc-fw" value="200"><input type="number" id="sc-fd" value="150"></span></div>
-          <div class="row" data-scan="ruler"><label for="sc-len">Distance between the 2 points</label><input type="number" id="sc-len" value="100" step="1"></div>
-          <div class="row"><label>Points picked</label><span class="readout" style="padding:.2rem .45rem" id="sc-pts">0</span></div>
+          <div class="legend">Scale</div>
+          <div class="row"><label for="sc-len">Distance between 2 points (mm)<span class="hint">click both ends of it on the photo</span></label>
+            <input type="number" id="sc-len" value="100" step="1"
+              title="The real-world distance, in millimetres, between the two points you click on the photo. A ruler is easiest — click the 0 mark and the 100 mark and leave this at 100."></div>
+          <div class="row"><label>Points picked</label><span class="readout" style="padding:.2rem .45rem" id="sc-pts">0 / 2</span></div>
           <div class="btns">
             <button class="act" id="sc-clearpts">Clear points</button>
-            <button class="act primary" id="sc-apply" disabled>Apply scale</button>
+            <button class="act primary" id="sc-apply" disabled>Set scale</button>
           </div>
         </fieldset>
 
         <fieldset class="grp">
-          <div class="legend">Outline</div>
-          <div class="row"><label for="sc-auto">Auto threshold</label><input type="checkbox" id="sc-auto" checked></div>
-          <div class="row"><label for="sc-thr">Threshold</label><input type="range" id="sc-thr" min="1" max="254" value="128"></div>
-          <div class="row"><label for="sc-inv">Invert light / dark</label><input type="checkbox" id="sc-inv"></div>
-          <div class="row"><label for="sc-clean">Noise clean-up</label><input type="range" id="sc-clean" min="0" max="6" value="2"></div>
-          <div class="row"><label for="sc-simp">Smoothing (mm)</label><input type="range" id="sc-simp" min="0" max="30" value="4"></div>
-          <div class="row"><label>Drag on the picture to limit the search area</label><span class="hint" id="sc-roi">whole image</span></div>
+          <div class="legend">Trace</div>
+          <div class="row"><label for="sc-auto">Pick the cut-off for me</label>
+            <input type="checkbox" id="sc-auto" checked
+              title="Chooses the brightness cut-off between tool and background automatically. Turn it off to set the cut-off by hand with the slider below."></div>
+          <div class="row"><label for="sc-thr">Cut-off</label>
+            <input type="range" id="sc-thr" min="1" max="254" value="128"
+              title="Anything darker than this counts as the tool, anything lighter as the background. Only used when the checkbox above is off. Slide until the blue shading covers the tool and nothing else."></div>
+          <div class="row"><label for="sc-inv">Swap tool and background</label>
+            <input type="checkbox" id="sc-inv"
+              title="Use this when the trace grabbed the background instead of the tool — for example a light tool on a dark bench."></div>
+          <div class="row"><label for="sc-clean">Ignore speckles</label>
+            <input type="range" id="sc-clean" min="0" max="6" value="2"
+              title="Rubs out flecks of dust and fills pinholes before tracing. Raise it if the outline is chasing bits of grit; lower it to 0 if it is rounding off a genuinely fine detail."></div>
+          <div class="row"><label for="sc-simp">Follow the edge closely</label>
+            <input type="range" id="sc-simp" min="0" max="30" value="4"
+              title="How tightly the outline hugs the pixels, in tenths of a millimetre. Low keeps every wobble, high gives fewer, straighter segments. 0.4 mm suits most tools."></div>
+          <div class="row"><label>Drag a box on the photo to search only there</label><span class="hint" id="sc-roi">whole image</span></div>
           <div class="btns">
             <button class="act primary" id="sc-trace" disabled>Trace outline</button>
-            <button class="act" id="sc-roiclear">Clear area</button>
-            <button class="act" id="sc-use" disabled>Use in bin &rarr;</button>
-            <button class="act" id="sc-svg" disabled>SVG</button>
+            <button class="act" id="sc-roiclear">Clear box</button>
           </div>
         </fieldset>
 
         <fieldset class="grp">
-          <div class="legend">Fine-tune by hand</div>
-          <div class="row"><label>Editing<span class="hint">drag a point to move it &middot; click the line to add one &middot;
-            right-click a point to remove it</span></label></div>
-          <div class="row"><label for="sc-zoom">Photo view<span class="hint">work at actual pixels for fiddly corners</span></label>
-            <select id="sc-zoom"><option value="fit">fit the panel</option><option value="1">actual pixels</option></select></div>
+          <div class="legend">Fix it by dragging</div>
+          <div class="row"><label>Drag the orange line on the photo<span class="hint">it bends toward your cursor &mdash;
+            push it out over anything the trace missed, or in where it grabbed too much</span></label></div>
+          <div class="row"><label for="sc-brush">How much moves at once</label>
+            <input type="range" id="sc-brush" min="10" max="140" value="50"
+              title="The size of the circle you drag with. Small nudges one corner; large sweeps a whole side of the tool."></div>
           <div class="btns">
             <button class="act" id="sc-undo" disabled>Undo</button>
             <button class="act" id="sc-reset" disabled>Back to auto-trace</button>
           </div>
+          <div class="btns">
+            <button class="act primary" id="sc-use" disabled>Use in bin &rarr;</button>
+            <button class="act" id="sc-svg" disabled>SVG</button>
+          </div>
         </fieldset>
         <details class="note"><summary>Getting a good trace</summary>
-          <p>Plain background, no shadow under the tool, camera as square-on as you can manage.
-          A dark tool on white paper (or the reverse) is ideal. If the camera was tilted, use the
-          4-corner method &mdash; it rectifies the perspective, so an ordinary hand-held photo works.
-          The <b>Photo rig</b> tab prints the frame and a stand that holds a phone directly overhead.</p></details>
+          <p>Plain background, no shadow under the tool, and hold the camera <b>square-on from directly
+          above</b> &mdash; the scale comes from one distance on a flat plane, so a tilted photo stretches
+          one end of the tool relative to the other. The <b>Photo rig</b> tab prints a stand that holds a
+          phone overhead for exactly this reason.</p>
+          <p>A dark tool on white paper, or a light one on a dark bench, traces best. If the trace comes
+          out wrong it is usually faster to drag the line into place than to keep fiddling with the
+          sliders.</p></details>
       </div>
 
       <!-- ---------- RIG ---------- -->

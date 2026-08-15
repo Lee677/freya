@@ -66,13 +66,8 @@
     document.querySelectorAll('[data-when]').forEach(function (el) {
       el.style.display = el.dataset.when.split(' ').indexOf(style) >= 0 ? '' : 'none';
     });
-    const mode = $('sc-mode').value;
-    document.querySelectorAll('[data-scan]').forEach(function (el) {
-      el.style.display = el.dataset.scan === mode ? '' : 'none';
-    });
   }
   on('bin-style', 'change', syncVisibility);
-  on('sc-mode', 'change', function () { S.scan.pts = []; drawScan(); syncVisibility(); });
 
   function showMeshes(list) {
     if (!viewer) return;
@@ -253,10 +248,11 @@
       const st = EX.meshStats(mesh);
       readout('Calibration frame · outside <b>' + fmt(r.info.outerW) + ' × ' + fmt(r.info.outerD) +
         ' mm</b>, inside <b>' + fmt(r.info.innerW) + ' × ' + fmt(r.info.innerD) + ' mm</b>\n' +
-        'lay the tool inside, photograph, then click the four inside corners on the Tool scan tab\n' +
+        'lay the tool inside it, photograph from straight above, then use the two inside\n' +
+        'corners of the long edge as your ' + fmt(r.info.innerW, 0) + ' mm scale reference\n' +
         '~' + fmt(st.grams, 0) + ' g of filament');
       $('rig-stl').disabled = $('rig-step').disabled = false;
-      $('sc-fw').value = num('rig-iw'); $('sc-fd').value = num('rig-id');
+      $('sc-len').value = num('rig-iw');   // prefill the scan tab's known distance
     });
   });
   on('rig-stl', 'click', function () { EX.save(EX.stl(S.rig.mesh, 'target'), 'photo-target.stl'); });
@@ -311,7 +307,7 @@
     S.scan.ppm = ppm || null;
     cv.width = canvas.width; cv.height = canvas.height;
     S.scan.contourPx = null; S.scan.mask = null; S.scan.tinted = null;
-    S.scan.undo = []; S.scan.edited = false; S.scan.traced = null; S.scan.hover = -1;
+    S.scan.undo = []; S.scan.edited = false; S.scan.traced = null; S.scan.cursor = null;
     refreshEditButtons();
     drawScan();
   }
@@ -359,20 +355,16 @@
       cx.strokeStyle = '#f0721c'; cx.lineWidth = lw; cx.stroke();
       cx.restore();
 
-      // draggable handles, sized in screen pixels so they stay grabbable
-      if (canEdit()) {
+      // the brush: show exactly how much of the line the next drag will take
+      if (canEdit() && S.scan.cursor) {
         const s = dispScale();
-        const r = 4.6 * s;
         cx.save();
-        cx.lineWidth = 1.6 * s;
-        S.scan.contourPx.forEach(function (p, i) {
-          const active = i === S.scan.hover || (drag && drag.vertex === i);
-          cx.beginPath();
-          cx.arc(p[0], p[1], active ? r * 1.7 : r, 0, 7);
-          cx.fillStyle = active ? '#f0721c' : 'rgba(255,255,255,.92)';
-          cx.strokeStyle = active ? '#fff' : '#f0721c';
-          cx.fill(); cx.stroke();
-        });
+        cx.beginPath();
+        cx.arc(S.scan.cursor[0], S.scan.cursor[1], brushPx(), 0, 7);
+        cx.strokeStyle = drag && drag.brush ? '#f0721c' : 'rgba(240,114,28,.55)';
+        cx.lineWidth = (drag && drag.brush ? 2.4 : 1.6) * s;
+        cx.setLineDash(drag && drag.brush ? [] : [6 * s, 5 * s]);
+        cx.stroke();
         cx.restore();
       }
     }
@@ -385,17 +377,16 @@
       cx.fillText(String(i + 1), p[0], p[1] + 3.5);
       cx.restore();
     });
-    if (S.scan.pts.length >= 2) {
+    if (S.scan.pts.length === 2) {
       cx.save();
-      cx.strokeStyle = acc; cx.lineWidth = 1.5; cx.setLineDash([4, 3]);
+      cx.strokeStyle = acc; cx.lineWidth = 1.5 * dispScale(); cx.setLineDash([4, 3]);
       cx.beginPath();
-      S.scan.pts.forEach(function (p, i) { i ? cx.lineTo(p[0], p[1]) : cx.moveTo(p[0], p[1]); });
-      if (S.scan.pts.length === 4) cx.closePath();
+      cx.moveTo(S.scan.pts[0][0], S.scan.pts[0][1]);
+      cx.lineTo(S.scan.pts[1][0], S.scan.pts[1][1]);
       cx.stroke(); cx.restore();
     }
-    $('sc-pts').textContent = S.scan.pts.length + ($('sc-mode').value === 'frame' ? ' / 4' : ' / 2');
-    const need = $('sc-mode').value === 'frame' ? 4 : 2;
-    $('sc-apply').disabled = S.scan.pts.length !== need || !S.scan.bitmap;
+    $('sc-pts').textContent = S.scan.pts.length + ' / 2';
+    $('sc-apply').disabled = S.scan.pts.length !== 2 || !S.scan.bitmap;
   }
 
   function evPos(e) {
@@ -403,11 +394,15 @@
     return [(e.clientX - r.left) * (cv.width / r.width), (e.clientY - r.top) * (cv.height / r.height)];
   }
 
-  /* ---- outline editing -------------------------------------------------
+  /* ---- reshaping the outline ------------------------------------------
    * Auto-trace gets the silhouette close; this is for the places it does not.
-   * Drag a handle to move it, click the line to add one, right-click to remove.
-   * Every change re-derives the millimetre outline the bin is cut from. */
-  const HIT_PX = 10;                       // grab radius, in screen pixels
+   * There is one gesture: grab the line anywhere and drag. Points inside the
+   * brush follow the cursor, weighted so the pull tapers off at the edges, and
+   * the line bends rather than kinking. No handles to hunt for.
+   *
+   * That only works if the line has points where you grab it, so the traced
+   * polygon is resampled to an even spacing first — the auto-trace can leave a
+   * 200 px straight run with nothing in the middle of it. */
   function dispScale() {
     const r = cv.getBoundingClientRect();
     return r.width ? cv.width / r.width : 1;
@@ -415,26 +410,38 @@
   function canEdit() {
     return !!(S.scan.ppm && S.scan.contourPx && S.scan.contourPx.length > 2);
   }
+  function brushPx() {
+    const el = $('sc-brush');
+    return (el ? +el.value : 50) * dispScale();
+  }
+  function resample(poly, step) {
+    const out = [];
+    let carry = 0;
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length];
+      const dx = b[0] - a[0], dy = b[1] - a[1];
+      const len = Math.hypot(dx, dy);
+      if (len < 1e-9) continue;
+      for (let t = carry; t < len; t += step) out.push([a[0] + dx * t / len, a[1] + dy * t / len]);
+      carry = Math.max(0, carry + step * Math.ceil((len - carry) / step) - len);
+    }
+    return out.length >= 8 ? out : poly;
+  }
   function distToSeg(p, a, b) {
     const vx = b[0] - a[0], vy = b[1] - a[1];
     const len = vx * vx + vy * vy;
     let t = len ? ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / len : 0;
     t = Math.max(0, Math.min(1, t));
-    const qx = a[0] + t * vx, qy = a[1] + t * vy;
-    return { d: Math.hypot(p[0] - qx, p[1] - qy), at: [qx, qy] };
+    return Math.hypot(p[0] - (a[0] + t * vx), p[1] - (a[1] + t * vy));
   }
-  function hitTest(p) {
-    if (!canEdit()) return null;
-    const poly = S.scan.contourPx, n = poly.length, tol = HIT_PX * dispScale();
-    let best = null;
+  // how far the cursor is from the line itself, not from any one point
+  function distToOutline(p) {
+    if (!canEdit()) return Infinity;
+    const poly = S.scan.contourPx, n = poly.length;
+    let best = Infinity;
     for (let i = 0; i < n; i++) {
-      const d = Math.hypot(p[0] - poly[i][0], p[1] - poly[i][1]);
-      if (d <= tol && (!best || d < best.d)) best = { type: 'vertex', i: i, d: d };
-    }
-    if (best) return best;
-    for (let i = 0; i < n; i++) {
-      const s = distToSeg(p, poly[i], poly[(i + 1) % n]);
-      if (s.d <= tol && (!best || s.d < best.d)) best = { type: 'edge', i: i, at: s.at, d: s.d };
+      const d = distToSeg(p, poly[i], poly[(i + 1) % n]);
+      if (d < best) best = d;
     }
     return best;
   }
@@ -452,17 +459,19 @@
     u.disabled = !(S.scan.undo && S.scan.undo.length);
     r.disabled = !(S.scan.traced && S.scan.edited);
   }
-  // push the edited polygon back out as millimetres for the bin builder
+  // push the edited polygon back out as millimetres for the bin builder.
+  // Editing keeps the line densely sampled so it bends smoothly; the exported
+  // shape is thinned back down well below anything a printer can resolve.
   function syncOutline(withStats) {
     if (!canEdit()) return;
-    S.outline = V.toMM(S.scan.contourPx, S.scan.ppm);
+    const tidy = V.rdp(S.scan.contourPx, 0.12 * S.scan.ppm);
+    S.outline = V.toMM(tidy, S.scan.ppm);
     const st = V.polyStats(S.outline);
     $('bin-poly').textContent = fmt(st.w, 1) + ' × ' + fmt(st.d, 1) + ' mm, ' + st.n + ' pts';
     if (withStats) {
       readout('Outline: <b>' + fmt(st.w, 1) + ' × ' + fmt(st.d, 1) + ' mm</b>, ' +
-        fmt(st.area / 100, 1) + ' cm² · ' + st.n + ' points' +
-        (S.scan.edited ? ' · edited by hand' : '') + '\n' +
-        'Drag a point to move it, click the line to add one, right-click a point to remove it.\n' +
+        fmt(st.area / 100, 1) + ' cm²' + (S.scan.edited ? ' · reshaped by hand' : '') + '\n' +
+        'Not covering the tool? Drag the orange line — it bends toward your cursor.\n' +
         'Happy with it? Send it to the Bin tab.');
     }
   }
@@ -471,14 +480,18 @@
   cv.addEventListener('pointerdown', function (e) {
     if (!S.scan.base) return;
     const p = evPos(e);
-    if (e.button === 0) {
-      const h = hitTest(p);
-      if (h) {
-        pushUndo();
-        let i = h.i;
-        if (h.type === 'edge') { i = h.i + 1; S.scan.contourPx.splice(i, 0, h.at); }
-        drag = { vertex: i };
-        S.scan.hover = i;
+    S.scan.cursor = p;
+    // grabbing the line takes priority over drawing a search box
+    if (e.button === 0 && canEdit() && distToOutline(p) <= brushPx()) {
+      pushUndo();
+      const r = brushPx();
+      const grabbed = [];
+      S.scan.contourPx.forEach(function (q, i) {
+        const d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+        if (d <= r) grabbed.push({ i: i, from: [q[0], q[1]], w: 0.5 * (1 + Math.cos(Math.PI * d / r)) });
+      });
+      if (grabbed.length) {
+        drag = { brush: true, start: p, grabbed: grabbed };
         try { cv.setPointerCapture(e.pointerId); } catch (err) { /* synthetic pointer */ }
         drawScan();
         return;
@@ -490,23 +503,28 @@
 
   cv.addEventListener('pointermove', function (e) {
     const p = evPos(e);
-    if (drag && drag.vertex != null) {
-      S.scan.contourPx[drag.vertex] = [
-        Math.max(0, Math.min(cv.width, p[0])),
-        Math.max(0, Math.min(cv.height, p[1]))
-      ];
+    S.scan.cursor = p;
+
+    if (drag && drag.brush) {                       // bend the line toward the cursor
+      const dx = p[0] - drag.start[0], dy = p[1] - drag.start[1];
+      drag.grabbed.forEach(function (g) {
+        S.scan.contourPx[g.i] = [
+          Math.max(0, Math.min(cv.width, g.from[0] + dx * g.w)),
+          Math.max(0, Math.min(cv.height, g.from[1] + dy * g.w))
+        ];
+      });
       syncOutline(false);
       drawScan();
       return;
     }
-    if (!drag) {                                   // hover feedback only
-      if (!canEdit()) return;
-      const h = hitTest(p);
-      const i = h && h.type === 'vertex' ? h.i : -1;
-      cv.style.cursor = h ? (h.type === 'vertex' ? 'grab' : 'copy') : 'crosshair';
-      if (i !== S.scan.hover) { S.scan.hover = i; drawScan(); }
+
+    if (!drag) {                                    // hover: show what we would grab
+      if (!canEdit()) { cv.style.cursor = 'crosshair'; return; }
+      cv.style.cursor = distToOutline(p) <= brushPx() ? 'grab' : 'crosshair';
+      drawScan();
       return;
     }
+
     if (Math.hypot(p[0] - drag.start[0], p[1] - drag.start[1]) > 6) {
       drag.moved = true;
       S.scan.roi = {
@@ -519,39 +537,28 @@
     }
   });
 
+  cv.addEventListener('pointerleave', function () {
+    if (!drag) { S.scan.cursor = null; drawScan(); }
+  });
+
   cv.addEventListener('pointerup', function (e) {
     if (!drag) return;
-    if (drag.vertex != null) {
+    if (drag.brush) {
       syncOutline(true);
     } else if (!drag.moved && !canEdit()) {
-      const need = $('sc-mode').value === 'frame' ? 4 : 2;
-      if (S.scan.pts.length >= need) S.scan.pts = [];
+      if (S.scan.pts.length >= 2) S.scan.pts = [];
       S.scan.pts.push(evPos(e));
       drawScan();
     }
     drag = null;
-  });
-  cv.addEventListener('pointercancel', function () { drag = null; });
-
-  // right-click a handle to delete it
-  cv.addEventListener('contextmenu', function (e) {
-    if (!canEdit()) return;
-    const h = hitTest(evPos(e));
-    if (!h || h.type !== 'vertex') return;
-    e.preventDefault();
-    if (S.scan.contourPx.length <= 4) { status('an outline needs at least four points'); return; }
-    pushUndo();
-    S.scan.contourPx.splice(h.i, 1);
-    S.scan.hover = -1;
-    syncOutline(true);
     drawScan();
   });
+  cv.addEventListener('pointercancel', function () { drag = null; });
 
   function undoEdit() {
     if (!S.scan.undo || !S.scan.undo.length) return;
     S.scan.contourPx = S.scan.undo.pop();
-    S.scan.hover = -1;
-    S.scan.edited = !!S.scan.undo.length || S.scan.edited;
+    S.scan.edited = !!S.scan.undo.length;
     refreshEditButtons();
     syncOutline(true);
     drawScan();
@@ -562,7 +569,6 @@
     pushUndo();
     S.scan.contourPx = S.scan.traced.map(function (p) { return [p[0], p[1]]; });
     S.scan.edited = false;
-    S.scan.hover = -1;
     refreshEditButtons();
     syncOutline(true);
     drawScan();
@@ -571,10 +577,7 @@
     if (S.tab !== 'scan') return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undoEdit(); }
   });
-  on('sc-zoom', 'change', function () {
-    cv.classList.toggle('native', $('sc-zoom').value === '1');
-    drawScan();
-  });
+  on('sc-brush', 'input', function () { if (S.scan.cursor) drawScan(); });
 
   function loadFile(file) {
     if (!file) return;
@@ -594,9 +597,8 @@
       $('sc-roi').textContent = 'whole image';
       status('');
       readout('Photo loaded: <b>' + bm.width + ' × ' + bm.height + '</b> px\n' +
-        ($('sc-mode').value === 'frame'
-          ? 'click the four inside corners of the frame — top-left, top-right, bottom-right, bottom-left'
-          : 'click two points on the ruler a known distance apart'));
+        'Click two points a known distance apart — the ends of a ruler mark are ideal —\n' +
+        'type that distance in millimetres, then press Set scale.');
       selectTab('scan');
     }).catch(function (e) { status('could not read that image: ' + e.message, 'err'); });
   }
@@ -621,31 +623,20 @@
 
   on('sc-apply', 'click', function () {
     busy('rectifying…', function () {
-      const mode = $('sc-mode').value;
       const k = S.scan.srcScale || 1;
       const src = S.scan.pts.map(function (p) { return [p[0] * k, p[1] * k]; });
-      if (mode === 'frame') {
-        const mmW = num('sc-fw'), mmD = num('sc-fd');
-        if (mmW < 10 || mmD < 10) throw new Error('Enter the real size of the rectangle first.');
-        const ppm = Math.min(8, Math.max(2, 1400 / Math.max(mmW, mmD)));
-        const r = V.rectify(S.scan.bitmap, src, mmW, mmD, ppm);
-        if (!r) throw new Error('Those four points are degenerate — pick the corners in order.');
-        S.scan.pts = [];
-        setBase(r.canvas, r.ppm);
-        readout('Rectified to <b>' + fmt(mmW) + ' × ' + fmt(mmD) + ' mm</b> at ' + fmt(r.ppm, 2) +
-          ' px/mm.\nDrag a box around the tool if anything else is in shot, then trace.');
-      } else {
-        const mm = num('sc-len');
-        if (mm <= 0) throw new Error('Enter the distance between the two points.');
-        const d = Math.hypot(src[1][0] - src[0][0], src[1][1] - src[0][1]);
-        const ppmSrc = d / mm;
-        const r = V.plain(S.scan.bitmap, ppmSrc, 1400);
-        S.scan.pts = [];
-        setBase(r.canvas, r.ppm);
-        readout('Scale set: <b>' + fmt(ppmSrc, 2) + ' px/mm</b> in the original photo.\n' +
-          '<span class="w">Perspective is not corrected in ruler mode — keep the camera square-on.</span>\n' +
-          'Drag a box around the tool if anything else is in shot, then trace.');
-      }
+      const mm = num('sc-len');
+      if (mm <= 0) throw new Error('Type the distance between the two points, in millimetres.');
+      const d = Math.hypot(src[1][0] - src[0][0], src[1][1] - src[0][1]);
+      if (d < 20) throw new Error('Those two points are almost on top of each other — pick two further apart.');
+      const ppmSrc = d / mm;
+      const r = V.plain(S.scan.bitmap, ppmSrc, 1400);
+      S.scan.pts = [];
+      setBase(r.canvas, r.ppm);
+      readout('Scale set: <b>' + fmt(mm, 0) + ' mm</b> measured across ' + Math.round(d) + ' px, so ' +
+        fmt(ppmSrc, 2) + ' px/mm.\n' +
+        '<span class="w">The scale assumes the camera was square-on — a tilted photo will not measure true.</span>\n' +
+        'Drag a box around the tool if anything else is in shot, then trace.');
       $('sc-trace').disabled = false;
       $('sc-s2').classList.add('done');
     });
@@ -673,27 +664,27 @@
       if (!raw || raw.length < 8) throw new Error('Nothing found — try inverting, or drag a box around the tool.');
       const smoothMM = Math.max(0.05, num('sc-simp') / 10);
       const simp = V.rdp(raw, smoothMM * S.scan.ppm);
+      // Even spacing along the line, so a drag always has something to grab and
+      // the bend is smooth. Thinned again on the way out to the bin.
+      const dense = resample(simp, Math.max(3, cv.width / 300));
       S.scan.mask = seg.mask;
-      S.scan.contourPx = simp;
-      S.scan.traced = simp.map(function (p) { return [p[0], p[1]]; });  // baseline for Reset
+      S.scan.contourPx = dense;
+      S.scan.traced = dense.map(function (p) { return [p[0], p[1]]; });  // baseline for Reset
       S.scan.undo = [];
       S.scan.edited = false;
-      S.scan.hover = -1;
       refreshEditButtons();
       buildTint();
-      S.outline = V.toMM(simp, S.scan.ppm);
+      syncOutline(false);
       drawScan();
       const st = V.polyStats(S.outline);
       readout('Outline: <b>' + fmt(st.w, 1) + ' × ' + fmt(st.d, 1) + ' mm</b>, ' +
-        fmt(st.area / 100, 1) + ' cm² · ' + st.n + ' points\n' +
-        'threshold ' + seg.threshold + (seg.objDark ? ' (dark object)' : ' (light object)') +
-        ' · smoothing ' + fmt(smoothMM, 2) + ' mm\n' +
-        (seg.clipped ? '<span class="w">the shape runs off the edge of the search area — drag a wider box</span>\n' : '') +
-        'Off the mark anywhere? Drag a point to move it, click the line to add one,\n' +
-        'right-click a point to remove it. Then send it to the Bin tab.');
+        fmt(st.area / 100, 1) + ' cm²\n' +
+        'cut-off ' + seg.threshold + (seg.objDark ? ' (tool darker than background)' : ' (tool lighter than background)') + '\n' +
+        (seg.clipped ? '<span class="w">the shape runs off the edge of the search box — drag a wider one</span>\n' : '') +
+        '<b>Not covering the whole tool?</b> Drag the orange line — it bends toward your\n' +
+        'cursor. Then send it to the Bin tab.');
       $('sc-use').disabled = $('sc-svg').disabled = false;
       $('sc-s3').classList.add('done');
-      $('bin-poly').textContent = fmt(st.w, 1) + ' × ' + fmt(st.d, 1) + ' mm, ' + st.n + ' pts';
     });
   });
   ['sc-thr', 'sc-clean', 'sc-simp', 'sc-inv', 'sc-auto'].forEach(function (id) {
