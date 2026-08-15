@@ -1,13 +1,16 @@
-/* freya-contact — takes the home page's contact form and posts it into my
- * inbox through Cloudflare Email Routing. No third party sees the message.
+/* freya-contact — the Worker behind the forms on freya.co.nz.
  *
- * The recipient never appears in this repo, in the site's HTML, or in any
- * response body: it is a Worker secret, and the reply-to is set to whoever
+ *   POST /api/contact   the "say hello" form on the home page
+ *   POST /api/lead      the free-pilot form on /nextround
+ *
+ * Both post into my inbox through Cloudflare Email Routing, so no third party
+ * sees a message. The recipient never appears in this repo, in the site's HTML,
+ * or in any response body: it is a Worker secret. Reply-To is set to whoever
  * filled the form in, so replying from the inbox goes straight back to them.
  */
 import { EmailMessage } from 'cloudflare:email';
 
-const LIMITS = { name: 120, email: 200, message: 5000 };
+const LIMITS = { name: 120, venue: 160, email: 200, message: 5000 };
 const MIN_FILL_MS = 2500;   // humans do not complete a form this fast
 
 const json = (body, status) => new Response(JSON.stringify(body), {
@@ -19,9 +22,96 @@ const json = (body, status) => new Response(JSON.stringify(body), {
 const header = (s) => String(s == null ? '' : s).replace(/[\r\n]+/g, ' ').trim().slice(0, 200);
 // "Freya <hello@freya.co.nz>" -> "hello@freya.co.nz"
 const bare = (s) => { const m = String(s).match(/<([^>]+)>/); return (m ? m[1] : String(s)).trim(); };
+const clean = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
+const looksLikeEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v);
+
+async function send(env, { subject, text, replyTo }) {
+  const to = env.CONTACT_TO, from = env.CONTACT_FROM;
+  if (!to || !from) return json({ error: 'The form is not connected yet. Try again shortly.' }, 503);
+  const raw =
+    `From: ${header(from)}\r\n` +
+    `To: ${header(to)}\r\n` +
+    `Reply-To: ${header(replyTo)}\r\n` +
+    `Subject: ${header(subject)}\r\n` +
+    `Message-ID: <${crypto.randomUUID()}@freya.co.nz>\r\n` +
+    `Date: ${new Date().toUTCString()}\r\n` +
+    `MIME-Version: 1.0\r\n` +
+    `Content-Type: text/plain; charset=utf-8\r\n` +
+    `Content-Transfer-Encoding: 8bit\r\n\r\n` +
+    text;
+  try {
+    await env.SEB.send(new EmailMessage(bare(from), bare(to), raw));
+    return json({ ok: true });
+  } catch (err) {
+    console.error('send_email', err && err.message);
+    return json({ error: 'The message could not be sent just now. Try again shortly.' }, 502);
+  }
+}
+
+// shared spam handling: an invisible field, and a floor on how fast a form
+// can plausibly be filled in
+function spam(body) {
+  if (clean(body.fax, 200)) return 'drop';
+  const ms = Number(body.elapsed);
+  if (ms >= 0 && ms < MIN_FILL_MS) return 'fast';
+  return null;
+}
+
+async function contact(body, request, env) {
+  const name = clean(body.name, LIMITS.name);
+  const email = clean(body.email, LIMITS.email);
+  const message = clean(body.message, LIMITS.message);
+
+  const s = spam(body);
+  if (s === 'drop') return json({ ok: true });          // quietly accept and drop
+  if (s === 'fast') return json({ error: 'That was quick — give it a moment and send again.' }, 429);
+  if (!looksLikeEmail(email)) return json({ error: 'That email address does not look right.' }, 400);
+  if (message.length < 5) return json({ error: 'A few more words, please.' }, 400);
+
+  return send(env, {
+    replyTo: email,
+    subject: `freya.co.nz — ${name || email}`,
+    text:
+      `${message}\n\n` +
+      `— — —\n` +
+      `from: ${name ? name + ' <' + email + '>' : email}\n` +
+      `sent: ${new Date().toISOString()}\n` +
+      `via:  freya.co.nz/#contact (${request.headers.get('cf-ipcountry') || '??'})\n`
+  });
+}
+
+async function lead(body, request, env) {
+  const name = clean(body.name, LIMITS.name);
+  const venue = clean(body.venue, LIMITS.venue);
+  const email = clean(body.email, LIMITS.email);
+
+  const s = spam(body);
+  if (s === 'drop') return json({ ok: true });
+  if (s === 'fast') return json({ error: 'That was quick — give it a moment and send again.' }, 429);
+  if (!looksLikeEmail(email)) return json({ error: 'That email address does not look right.' }, 400);
+
+  return send(env, {
+    replyTo: email,
+    subject: `NextRound pilot — ${venue || name || email}`,
+    text:
+      `A venue registered for the free pilot.\n\n` +
+      `venue: ${venue || '(not given)'}\n` +
+      `name:  ${name || '(not given)'}\n` +
+      `email: ${email}\n\n` +
+      `— — —\n` +
+      `sent: ${new Date().toISOString()}\n` +
+      `via:  freya.co.nz/nextround (${request.headers.get('cf-ipcountry') || '??'})\n` +
+      `src:  ${clean(body.src, 80) || 'nextround'}\n`
+  });
+}
+
+const ROUTES = { '/api/contact': contact, '/api/lead': lead };
 
 export default {
   async fetch(request, env) {
+    const path = new URL(request.url).pathname.replace(/\/+$/, '') || '/';
+    const handler = ROUTES[path];
+    if (!handler) return json({ error: 'Not found.' }, 404);
     if (request.method !== 'POST') return json({ error: 'POST only.' }, 405);
 
     // same-origin only; a browser always sends Origin on a cross-site POST
@@ -35,48 +125,6 @@ export default {
     let body;
     try { body = await request.json(); } catch { return json({ error: 'Malformed request.' }, 400); }
 
-    const name = String(body.name || '').trim().slice(0, LIMITS.name);
-    const email = String(body.email || '').trim().slice(0, LIMITS.email);
-    const message = String(body.message || '').trim().slice(0, LIMITS.message);
-
-    // honeypot: a real person never sees this field
-    if (String(body.fax || '').trim()) return json({ ok: true });   // quietly accept and drop
-    if (Number(body.elapsed) >= 0 && Number(body.elapsed) < MIN_FILL_MS) {
-      return json({ error: 'That was quick — give it a moment and send again.' }, 429);
-    }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return json({ error: 'That email address does not look right.' }, 400);
-    if (message.length < 5) return json({ error: 'A few more words, please.' }, 400);
-
-    const to = env.CONTACT_TO, from = env.CONTACT_FROM;
-    if (!to || !from) return json({ error: 'The form is not connected yet. Try again shortly.' }, 503);
-
-    const subject = header(`freya.co.nz — ${name || email}`);
-    const country = request.headers.get('cf-ipcountry') || '??';
-    const text =
-      `${message}\n\n` +
-      `— — —\n` +
-      `from: ${name ? name + ' <' + email + '>' : email}\n` +
-      `sent: ${new Date().toISOString()}\n` +
-      `via:  freya.co.nz/#contact (${country})\n`;
-
-    const raw =
-      `From: ${header(from)}\r\n` +
-      `To: ${header(to)}\r\n` +
-      `Reply-To: ${header(email)}\r\n` +
-      `Subject: ${subject}\r\n` +
-      `Message-ID: <${crypto.randomUUID()}@freya.co.nz>\r\n` +
-      `Date: ${new Date().toUTCString()}\r\n` +
-      `MIME-Version: 1.0\r\n` +
-      `Content-Type: text/plain; charset=utf-8\r\n` +
-      `Content-Transfer-Encoding: 8bit\r\n\r\n` +
-      text;
-
-    try {
-      await env.SEB.send(new EmailMessage(bare(from), bare(to), raw));
-      return json({ ok: true });
-    } catch (err) {
-      console.error('send_email', err && err.message);
-      return json({ error: 'The message could not be sent just now. Try again shortly.' }, 502);
-    }
+    return handler(body, request, env);
   }
 };

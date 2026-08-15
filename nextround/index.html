@@ -461,6 +461,8 @@ footer a:hover{color:var(--phos)}
       <div class="fi"><input id="fName" type="text" placeholder="Your name" autocomplete="name"></div>
       <div class="fi"><input id="fVenue" type="text" placeholder="Venue" autocomplete="organization"></div>
       <div class="fi full"><input id="fEmail" type="email" placeholder="Email" autocomplete="email"></div>
+      <input id="fFax" type="text" name="fax" tabindex="-1" autocomplete="off" aria-hidden="true"
+             style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none">
       <div class="full"><button class="btn solid" id="leadBtn">Register your venue — free pilot</button></div>
       <div id="leadMsg" role="status"></div>
       <div class="form-note">ONE HUMAN REPLY · AUCKLAND VENUES FIRST</div>
@@ -992,8 +994,9 @@ const Tlm=(function(){
   }),{threshold:.15});
   document.querySelectorAll('.rv').forEach(el=>io.observe(el));
 
-  const LEAD_ENDPOINT='';        // paste your NextRound Cloudflare Worker URL here
-  const btn=$('#leadBtn'),msg=$('#leadMsg');
+  const LEAD_ENDPOINT='/api/lead';   // freya-contact Worker -> Email Routing
+  const LABEL='Register your venue — free pilot';
+  const btn=$('#leadBtn'),msg=$('#leadMsg'),opened=Date.now();
   btn.addEventListener('click',async()=>{
     const name=$('#fName').value.trim(),venue=$('#fVenue').value.trim(),email=$('#fEmail').value.trim();
     msg.className='';
@@ -1002,15 +1005,14 @@ const Tlm=(function(){
     }
     btn.disabled=true;btn.textContent='SENDING…';
     try{
-      if(LEAD_ENDPOINT){
-        const r=await fetch(LEAD_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({name,venue,email,src:'nextround-puck',ts:Date.now()})});
-        if(!r.ok)throw 0;
-      }
+      const r=await fetch(LEAD_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name,venue,email,src:'nextround-puck',
+          fax:($('#fFax')||{}).value||'',elapsed:Date.now()-opened})});
+      if(!r.ok)throw 0;
       msg.textContent='LOGGED — ONE HUMAN WILL REPLY';msg.className='ok';btn.textContent='RECEIVED';
     }catch(e){
       msg.textContent='COULDN\'T SEND — TRY AGAIN IN A MOMENT';msg.className='err';
-      btn.disabled=false;btn.textContent='REQUEST THE FIRST ROUND';
+      btn.disabled=false;btn.textContent=LABEL;
     }
   });
 })();

@@ -16,7 +16,8 @@ main = "src/index.js"
 compatibility_date = "2026-01-01"
 
 routes = [
-  { pattern = "freya.co.nz/api/contact", zone_name = "freya.co.nz" }
+  { pattern = "freya.co.nz/api/contact", zone_name = "freya.co.nz" },
+  { pattern = "freya.co.nz/api/lead", zone_name = "freya.co.nz" }
 ]
 
 [[send_email]]
