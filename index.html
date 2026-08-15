@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Freya — index</title>
-<meta name="description" content="A small workshop on the web: FreyaCAD, Grid, Star Guide, NextRound, Æther, and Shitehawk Sentinel. Auckland, New Zealand.">
+<title>freya — index</title>
+<meta name="description" content="A small workshop on the web: freyacad, Grid, Star Guide, NextRound, Æther, and Shitehawk Sentinel. Auckland, New Zealand.">
 <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -86,7 +86,7 @@
     color:var(--faint);margin:0 0 1rem;display:flex;align-items:center;gap:.6rem}
   .eyebrow::after{content:"";height:1px;flex:1;background:var(--line)}
   h1.mark{font-family:var(--serif);font-weight:600;font-size:clamp(3.2rem,13vw,5rem);
-    line-height:.95;letter-spacing:-.015em;margin:0;text-wrap:balance;position:relative;display:inline-block}
+    line-height:.95;letter-spacing:-.015em;margin:.16em 0 0;text-wrap:balance;position:relative;display:inline-block}
   /* a pen-plotter underline that draws itself once */
   h1.mark::after{
     content:"";position:absolute;left:0;right:0;bottom:-.12em;height:2px;
@@ -95,6 +95,29 @@
     animation:draw 1.4s cubic-bezier(.2,.7,.2,1) .25s forwards;
   }
   @keyframes draw{to{transform:scaleX(1)}}
+
+  /* ── the mark: a small asterism rising off the wordmark ─────── */
+  .asterism{
+    position:absolute;right:-.46em;top:-.30em;
+    width:1.72em;height:.62em;overflow:visible;pointer-events:none;
+  }
+  .asterism .link{
+    fill:none;stroke:var(--accent);stroke-width:.9;stroke-linecap:round;stroke-linejoin:round;
+    opacity:.55;stroke-dasharray:100;stroke-dashoffset:100;
+    animation:constellate 1.8s cubic-bezier(.2,.7,.2,1) .45s forwards;
+  }
+  @keyframes constellate{to{stroke-dashoffset:0}}
+  .asterism .stars{opacity:0;animation:starrise 1.2s ease .55s forwards}
+  @keyframes starrise{to{opacity:1}}
+  .asterism .s{fill:var(--accent)}
+  .asterism .halo-in{stop-color:var(--accent);stop-opacity:.40}
+  .asterism .halo-mid{stop-color:var(--accent);stop-opacity:.13}
+  .asterism .halo-out{stop-color:var(--accent);stop-opacity:0}
+  .asterism .tw-a{animation:tw-a 6.5s ease-in-out 2.2s infinite}
+  .asterism .tw-b{animation:tw-b 5.2s ease-in-out 3.1s infinite}
+  @keyframes tw-a{0%,100%{opacity:1}55%{opacity:.48}}
+  @keyframes tw-b{0%,100%{opacity:.8}45%{opacity:.34}}
+  @media (max-width:400px){.asterism{width:1.5em;right:-.34em}}
   .lede{font-size:clamp(1.02rem,3.4vw,1.18rem);color:var(--muted);margin:1.4rem 0 0;max-width:44ch;text-wrap:pretty}
   .lede b{color:var(--ink);font-weight:600}
 
@@ -170,6 +193,9 @@
   @media (prefers-reduced-motion:reduce){
     a.row,a.row .go,a.row::before,.name,.glyph,button.send{transition:none}
     h1.mark::after{animation:none;transform:scaleX(1)}
+    .asterism .link{animation:none;stroke-dashoffset:0}
+    .asterism .stars{animation:none;opacity:1}
+    .asterism .tw-a,.asterism .tw-b{animation:none}
     body::after{display:none}
   }
 </style>
@@ -179,7 +205,27 @@
   <div class="wrap">
     <header>
       <p class="eyebrow">Index &middot; freya.co.nz</p>
-      <h1 class="mark">Freya</h1>
+      <h1 class="mark">freya<svg class="asterism" viewBox="0 0 100 36" aria-hidden="true" focusable="false">
+        <defs>
+          <radialGradient id="halo">
+            <stop offset="0%" class="halo-in"/>
+            <stop offset="42%" class="halo-mid"/>
+            <stop offset="100%" class="halo-out"/>
+          </radialGradient>
+        </defs>
+        <polyline class="link" points="5,32 24,24.5 41,28 58,16 79,19.5 92,6"/>
+        <g class="stars">
+          <circle class="s" cx="5" cy="32" r="1.1" opacity=".6"/>
+          <circle class="s tw-b" cx="24" cy="24.5" r="1.5" opacity=".8"/>
+          <circle class="s" cx="41" cy="28" r="1" opacity=".55"/>
+          <circle class="s" cx="58" cy="16" r="1.6" opacity=".85"/>
+          <circle class="s" cx="79" cy="19.5" r="1.1" opacity=".6"/>
+          <circle cx="92" cy="6" r="9" fill="url(#halo)"/>
+          <circle class="s tw-a" cx="92" cy="6" r="2.3"/>
+          <circle class="s" cx="14" cy="9" r=".7" opacity=".3"/>
+          <circle class="s" cx="68" cy="31" r=".6" opacity=".26"/>
+        </g>
+      </svg></h1>
       <p class="lede">A small workshop on the web &mdash; <b>software, hardware, and a little calm</b>. Pick a door. Auckland, New&nbsp;Zealand.</p>
     </header>
 
@@ -191,7 +237,7 @@
         </svg>
         <div class="row-main">
           <div class="row-top"><span class="path">/freyacad</span><span class="tag">CAD engine</span></div>
-          <h2 class="name">FreyaCAD</h2>
+          <h2 class="name">freyacad</h2>
           <p class="desc">Parametric solid modelling in the browser — sketch, extrude, and boolean geometry, powered by Manifold and three.js.</p>
         </div>
         <span class="go" aria-hidden="true">&rarr;</span>
@@ -317,7 +363,7 @@
 
     <footer>
       <span>Auckland, New Zealand</span>
-      <span><a href="#contact">Get in touch</a> &middot; &copy; 2026 Freya</span>
+      <span><a href="#contact">Get in touch</a> &middot; &copy; 2026 freya</span>
     </footer>
   </div>
 

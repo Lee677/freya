@@ -4,6 +4,59 @@
 (function (global) {
   'use strict';
 
+  /* Manifold shares one vertex between every face that meets there, so
+   * computeVertexNormals() averages across 90-degree corners and shades a sharp
+   * internal corner as though it were a large fillet — bins looked wrong inside
+   * while being perfectly correct in CAD. Smooth only across edges gentler than
+   * the crease angle: arcs stay round, corners stay sharp. */
+  const CREASE = Math.cos(35 * Math.PI / 180);
+
+  function creaseGeometry(pos, tris, creaseCos) {
+    const cos = creaseCos == null ? CREASE : creaseCos;
+    const nt = tris.length / 3;
+    const fn = new Float32Array(nt * 3);          // per-face normals
+    for (let i = 0; i < nt; i++) {
+      const a = tris[i * 3] * 3, b = tris[i * 3 + 1] * 3, c = tris[i * 3 + 2] * 3;
+      const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+      const wx = pos[c] - pos[a], wy = pos[c + 1] - pos[a + 1], wz = pos[c + 2] - pos[a + 2];
+      let nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
+      const l = Math.hypot(nx, ny, nz) || 1;
+      fn[i * 3] = nx / l; fn[i * 3 + 1] = ny / l; fn[i * 3 + 2] = nz / l;
+    }
+    // faces meeting at each vertex
+    const nv = pos.length / 3;
+    const count = new Uint32Array(nv);
+    for (let i = 0; i < tris.length; i++) count[tris[i]]++;
+    const start = new Uint32Array(nv + 1);
+    for (let v = 0; v < nv; v++) start[v + 1] = start[v] + count[v];
+    const fill = start.slice(0, nv);
+    const inc = new Uint32Array(tris.length);
+    for (let i = 0; i < nt; i++) {
+      for (let e = 0; e < 3; e++) inc[fill[tris[i * 3 + e]]++] = i;
+    }
+    // one normal per triangle corner, averaged only over near-coplanar neighbours
+    const outPos = new Float32Array(nt * 9), outNrm = new Float32Array(nt * 9);
+    for (let i = 0; i < nt; i++) {
+      for (let e = 0; e < 3; e++) {
+        const v = tris[i * 3 + e];
+        let nx = 0, ny = 0, nz = 0;
+        for (let k = start[v]; k < start[v + 1]; k++) {
+          const j = inc[k];
+          if (fn[i * 3] * fn[j * 3] + fn[i * 3 + 1] * fn[j * 3 + 1] + fn[i * 3 + 2] * fn[j * 3 + 2] < cos) continue;
+          nx += fn[j * 3]; ny += fn[j * 3 + 1]; nz += fn[j * 3 + 2];
+        }
+        const l = Math.hypot(nx, ny, nz) || 1;
+        const o = (i * 3 + e) * 3;
+        outPos[o] = pos[v * 3]; outPos[o + 1] = pos[v * 3 + 1]; outPos[o + 2] = pos[v * 3 + 2];
+        outNrm[o] = nx / l; outNrm[o + 1] = ny / l; outNrm[o + 2] = nz / l;
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(outPos, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(outNrm, 3));
+    return g;
+  }
+
   function Viewer(host) {
     const dark = matchMedia('(prefers-color-scheme: dark)').matches;
     this.host = host;
@@ -117,11 +170,7 @@
         y0 = Math.min(y0, pos[i + 1]); y1 = Math.max(y1, pos[i + 1]);
         z0 = Math.min(z0, pos[i + 2]); z1 = Math.max(z1, pos[i + 2]);
       }
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-      g.setIndex(new THREE.BufferAttribute(new Uint32Array(m.tris), 1));
-      g.computeVertexNormals();
-      this.group.add(new THREE.Mesh(g, this.material));
+      this.group.add(new THREE.Mesh(creaseGeometry(pos, m.tris), this.material));
     }
     if (!isFinite(x0)) return;
     const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, cz = (z0 + z1) / 2;

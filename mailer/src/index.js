@@ -20,7 +20,7 @@ const json = (body, status) => new Response(JSON.stringify(body), {
 
 // a header value must never carry a newline, or a sender could inject headers
 const header = (s) => String(s == null ? '' : s).replace(/[\r\n]+/g, ' ').trim().slice(0, 200);
-// "Freya <hello@freya.co.nz>" -> "hello@freya.co.nz"
+// "freya <hello@freya.co.nz>" -> "hello@freya.co.nz"
 const bare = (s) => { const m = String(s).match(/<([^>]+)>/); return (m ? m[1] : String(s)).trim(); };
 const clean = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
 const looksLikeEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v);

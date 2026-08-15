@@ -375,6 +375,25 @@
       <!-- ---------- DOC ---------- -->
       <div class="pane" id="pane-doc">
         <div class="prose">
+          <h3>What this is</h3>
+          <p>A generator for the <b>Gridfinity</b> storage system &mdash; a 42 mm grid, invented by
+            Zack Freedman, that lets bins from anywhere sit in a tray from anywhere. You give it a
+            drawer and it gives you the plate; you give it a photograph of a tool and it gives you a
+            bin with that tool&rsquo;s shape cut into it.</p>
+          <p><b>Magnet-free</b> means exactly that: no magnet bores, no screw counterbores, nothing to
+            glue in, nothing to order. Bins are held by the 45&deg; wedge of the standard profile
+            alone &mdash; which is what actually stops them sliding when a drawer is shut.</p>
+
+          <h3>The three tabs</h3>
+          <p><b>Baseplate</b> &mdash; type in your drawer, get the tray. Leftover space becomes a solid
+            skirt so the plate fills the drawer rather than rattling in it, and anything too big for
+            your printer is split into tiles that cut on grid lines and go back together exactly.</p>
+          <p><b>Bin</b> &mdash; any footprint, any height, with or without a stacking lip, hollow or
+            divided into compartments.</p>
+          <p><b>Tool scan</b> &mdash; photograph the tool from straight above with a ruler beside it,
+            drag along a known distance to set the scale, and the outline is traced for you. Where the
+            trace is wrong, drag the orange line and it bends. Then it becomes a pocket.</p>
+
           <h3>Profile</h3>
           <p>Standard Gridfinity, magnet-free. Everything is generated from these numbers:</p>
           <table class="spec">
@@ -386,11 +405,12 @@
             <tr><td>Socket clearance</td><td>0.25 mm per side</td></tr>
           </table>
           <h3>Height, honestly</h3>
-          <p>A bin&rsquo;s body is <code>7 mm &times; units</code>. The stacking lip sits on top of that and
-          the foot of the bin above sinks 4.75 mm back into it, so a stack grows by exactly
-          <code>7 mm &times; units</code> per bin. If your existing bins were made by a generator that counts
-          the lip inside the 7 mm module, switch <em>Height counts</em> to <em>total incl. lip</em> and they
-          will match.</p>
+          <p>A bin&rsquo;s body is <code>7 mm &times; units</code>. The stacking lip sits on top of that, and
+          the foot of the bin above sinks 4.75 mm back into it &mdash; so a stack grows by exactly
+          <code>7 mm &times; units</code> per bin, which is the whole point of the number.</p>
+          <p>Generators disagree about this. If your existing bins came from one that counts the lip
+          <em>inside</em> the 7 mm module, they will be 4.75 mm shorter than these. Switch
+          <em>Height counts</em> to <em>total incl. lip</em> and they will match.</p>
           <h3>STEP files</h3>
           <p>The STEP export is a real solid B-rep, not a mesh wrapper: coplanar triangles are merged back
           into single planar faces with proper inner and outer loops, so a wall arrives in SOLIDWORKS or
@@ -400,7 +420,10 @@
           <p>Plates and bins print flat on the bed with no supports. Bins are strongest at 3 perimeters
           and 15&nbsp;% infill; the plate is fine at 2 perimeters. Nothing here needs magnets, screws or glue.</p>
           <h3>Everything happens on your machine</h3>
-          <p>No upload, no server, no account. The photograph never leaves the browser.</p>
+          <p>No upload, no server, no account. The photograph never leaves the browser &mdash;
+            it&rsquo;s the freya way.</p>
+          <p>The geometry is built here too, by a solid-modelling kernel compiled to WebAssembly and
+            running in this tab. Close it and nothing of yours is anywhere else.</p>
         </div>
       </div>
     </section>
@@ -426,10 +449,10 @@
      fetches code that matches this markup. Without it, a cached app.js drives
      fresh HTML after a deploy, reads an element that no longer exists, and the
      page dies on the first click — which is exactly what happened once. -->
-<script src="./js/core.js?v=20260815b"></script>
-<script src="./js/exporters.js?v=20260815b"></script>
-<script src="./js/vision.js?v=20260815b"></script>
-<script src="./js/viewer.js?v=20260815b"></script>
-<script src="./js/app.js?v=20260815b"></script>
+<script src="./js/core.js?v=20260815c"></script>
+<script src="./js/exporters.js?v=20260815c"></script>
+<script src="./js/vision.js?v=20260815c"></script>
+<script src="./js/viewer.js?v=20260815c"></script>
+<script src="./js/app.js?v=20260815c"></script>
 </body>
 </html>
