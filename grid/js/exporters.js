@@ -522,39 +522,6 @@
       { type: 'image/svg+xml' });
   };
 
-  // Printable paper calibration target (exact mm when printed at 100%).
-  EX.targetSVG = function (innerW, innerD, pageW, pageH) {
-    pageW = pageW || 210; pageH = pageH || 297;
-    const cx = pageW / 2, cy = pageH / 2;
-    const x0 = cx - innerW / 2, y0 = cy - innerD / 2;
-    const mark = 14, s = [];
-    s.push('<svg xmlns="http://www.w3.org/2000/svg" width="' + pageW + 'mm" height="' + pageH +
-      'mm" viewBox="0 0 ' + pageW + ' ' + pageH + '">');
-    s.push('<rect width="100%" height="100%" fill="#fff"/>');
-    // corner L-marks; the inner corner of each L is the reference point
-    for (let i = 0; i < 4; i++) {
-      const sx = i & 1 ? 1 : -1, sy = i & 2 ? 1 : -1;
-      const px = i & 1 ? x0 + innerW : x0, py = i & 2 ? y0 + innerD : y0;
-      s.push('<path d="M' + (px - sx * mark) + ' ' + py + ' L' + px + ' ' + py + ' L' + px + ' ' + (py - sy * mark) +
-        '" fill="none" stroke="#000" stroke-width="1.2"/>');
-      s.push('<circle cx="' + px + '" cy="' + py + '" r="1.1" fill="#000"/>');
-    }
-    s.push('<rect x="' + x0 + '" y="' + y0 + '" width="' + innerW + '" height="' + innerD +
-      '" fill="none" stroke="#bbb" stroke-width="0.25" stroke-dasharray="3 3"/>');
-    // 100 mm verification ruler
-    const rx = cx - 50, ry = y0 + innerD + 16;
-    s.push('<path d="M' + rx + ' ' + ry + ' h100" stroke="#000" stroke-width="0.6" fill="none"/>');
-    for (let i = 0; i <= 100; i += 10) {
-      s.push('<path d="M' + (rx + i) + ' ' + ry + ' v' + (i % 50 === 0 ? 5 : 3) + '" stroke="#000" stroke-width="0.4"/>');
-    }
-    s.push('<text x="' + cx + '" y="' + (ry + 12) + '" font-family="sans-serif" font-size="4" text-anchor="middle">' +
-      'this bar must measure exactly 100 mm — print at 100%, no page scaling</text>');
-    s.push('<text x="' + cx + '" y="' + (y0 - 8) + '" font-family="sans-serif" font-size="4.5" text-anchor="middle">' +
-      'Freya Gridfinity target &#183; inner corners ' + innerW + ' &#215; ' + innerD + ' mm</text>');
-    s.push('</svg>');
-    return new Blob([s.join('\n')], { type: 'image/svg+xml' });
-  };
-
   EX.save = function (blob, filename) {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);

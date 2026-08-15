@@ -23,16 +23,16 @@
 /grid/manifold.wasm
   Cache-Control: public, max-age=2592000, immutable
 
-# ── my own code: unhashed names, so keep it fresh (ETag makes 304s cheap) ──
+# ── my own code ────────────────────────────────────────────────────────────
 #
-# NOTE: the zone's Browser Cache TTL is set to 4 hours, and Cloudflare only
-# honours an origin max-age that is *longer* than that. So this 10 minutes is
-# currently floored to 14400 and a deploy can take up to 4 hours to reach a
-# returning visitor. Set Caching → Configuration → Browser Cache TTL to
-# "Respect Existing Headers" (or add a Cache Rule with Browser TTL = respect
-# origin) and this file becomes the single source of truth.
+# These MUST NOT outlive the HTML that loads them. index.html revalidates on
+# every visit, so any max-age here opens a window where fresh markup is driven
+# by stale code — which broke the tool scan on 2026-08-15: the new page had no
+# #sc-mode element, ten-minute-old app.js still read it, and every click threw.
+# The filenames carry no content hash, so the only safe TTL is zero. Revalidation
+# is one conditional request per file, answered 304 from the edge.
 /grid/js/*
-  Cache-Control: public, max-age=600, must-revalidate
+  Cache-Control: public, max-age=0, must-revalidate
 
 # ── icons ─────────────────────────────────────────────────────────────────
 /favicon.ico

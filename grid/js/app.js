@@ -13,8 +13,6 @@
     tab: 'bp',
     bp: null,        // {whole:mesh, tiles:[{name,mesh,offset}], info}
     bin: null,
-    rig: null,
-    stand: null,
     outline: null,   // mm polygon, centred
     scan: {
       bitmap: null, base: null, ppm: null, pts: [], roi: null,
@@ -55,7 +53,6 @@
     if (!photo && viewer) viewer.resize();
     if (t === 'bp' && S.bp) showBaseplate();
     if (t === 'bin' && S.bin) showMeshes([S.bin.mesh]);
-    if (t === 'rig' && S.rig) showMeshes([S.rig.mesh]);
   }
   document.querySelectorAll('nav.tabs button').forEach(function (b) {
     b.addEventListener('click', function () { selectTab(b.dataset.tab); });
@@ -230,71 +227,6 @@
     busy('writing STEP…', function () {
       const r = EX.step(S.bin.mesh, binName().replace(/-/g, '_'));
       EX.save(r.blob, binName() + '.step');
-    });
-  });
-
-  /* ------------------------------------------------------------------ rig */
-  on('rig-build', 'click', function () {
-    busy('building frame…', function () {
-      GF.flush();
-      const r = GF.buildTarget({
-        innerW: num('rig-iw'), innerD: num('rig-id'),
-        frameW: num('rig-fw'), thickness: num('rig-t')
-      });
-      const mesh = EX.toMesh(r.solid);
-      GF.flush();
-      S.rig = { mesh: mesh, info: r.info };
-      showMeshes([mesh]);
-      const st = EX.meshStats(mesh);
-      readout('Calibration frame · outside <b>' + fmt(r.info.outerW) + ' × ' + fmt(r.info.outerD) +
-        ' mm</b>, inside <b>' + fmt(r.info.innerW) + ' × ' + fmt(r.info.innerD) + ' mm</b>\n' +
-        'lay the tool inside it, photograph from straight above, then use the two inside\n' +
-        'corners of the long edge as your ' + fmt(r.info.innerW, 0) + ' mm scale reference\n' +
-        '~' + fmt(st.grams, 0) + ' g of filament');
-      $('rig-stl').disabled = $('rig-step').disabled = false;
-      $('sc-len').value = num('rig-iw');   // prefill the scan tab's known distance
-    });
-  });
-  on('rig-stl', 'click', function () { EX.save(EX.stl(S.rig.mesh, 'target'), 'photo-target.stl'); });
-  on('rig-step', 'click', function () {
-    busy('writing STEP…', function () { EX.save(EX.step(S.rig.mesh, 'photo_target').blob, 'photo-target.step'); });
-  });
-  on('rig-svg', 'click', function () {
-    EX.save(EX.targetSVG(num('rig-iw'), num('rig-id')), 'photo-target-A4.svg');
-    status('printed at 100 % the bar must measure 100 mm — check before you trust it');
-  });
-
-  on('st-build', 'click', function () {
-    busy('building stand…', function () {
-      GF.flush();
-      const r = GF.buildStand({
-        height: num('st-h'), reach: num('st-reach'),
-        phoneW: num('st-pw'), phoneT: num('st-pt'),
-        lensX: num('st-lx'), lensY: num('st-ly'), lensD: num('st-ld'),
-        bedZ: num('st-bedz')
-      });
-      const parts = r.parts.map(function (p) { return { name: p.name, qty: p.qty, mesh: EX.toMesh(p.solid) }; });
-      GF.flush();
-      S.stand = { parts: parts, info: r.info };
-      let x = 0;
-      showMeshes(parts.map(function (p) {
-        const st = EX.meshStats(p.mesh);
-        const off = [x - st.min[0], 0, 0];
-        x += st.x + 20;
-        return { verts: p.mesh.verts, tris: p.mesh.tris, offset: off };
-      }));
-      readout('Overhead stand · camera at <b>' + fmt(r.info.height, 0) + ' mm</b>\n' +
-        parts.map(function (p) { return p.qty + ' × ' + p.name; }).join('\n') + '\n' +
-        'column prints in ' + r.info.segments + ' segment(s) of ' + fmt(r.info.segH, 0) + ' mm');
-      $('st-zip').disabled = false;
-    });
-  });
-  on('st-zip', 'click', function () {
-    busy('zipping…', function () {
-      const files = S.stand.parts.map(function (p) {
-        return { name: p.name + (p.qty > 1 ? '_x' + p.qty : '') + '.stl', blob: EX.stl(p.mesh, p.name) };
-      });
-      EX.zip(files).then(function (z) { EX.save(z, 'photo-stand.zip'); });
     });
   });
 
@@ -481,6 +413,16 @@
     if (!S.scan.base) return;
     const p = evPos(e);
     S.scan.cursor = p;
+
+    // Before the scale is set the canvas does one thing only: mark the two ends
+    // of a known distance. Dragging from one to the other is the gesture people
+    // reach for, so accept that as well as two separate clicks.
+    if (!S.scan.ppm) {
+      drag = { scale: true, start: p, was: S.scan.pts.slice(), moved: false };
+      try { cv.setPointerCapture(e.pointerId); } catch (err) { /* synthetic pointer */ }
+      return;
+    }
+
     // grabbing the line takes priority over drawing a search box
     if (e.button === 0 && canEdit() && distToOutline(p) <= brushPx()) {
       pushUndo();
@@ -504,6 +446,15 @@
   cv.addEventListener('pointermove', function (e) {
     const p = evPos(e);
     S.scan.cursor = p;
+
+    if (drag && drag.scale) {                       // rubber-band the scale line
+      if (Math.hypot(p[0] - drag.start[0], p[1] - drag.start[1]) > 6) {
+        drag.moved = true;
+        S.scan.pts = [drag.start, p];
+        drawScan();
+      }
+      return;
+    }
 
     if (drag && drag.brush) {                       // bend the line toward the cursor
       const dx = p[0] - drag.start[0], dy = p[1] - drag.start[1];
@@ -543,12 +494,15 @@
 
   cv.addEventListener('pointerup', function (e) {
     if (!drag) return;
-    if (drag.brush) {
+    if (drag.scale) {
+      if (drag.moved) {
+        S.scan.pts = [drag.start, evPos(e)];        // dragged across the distance
+      } else {
+        const was = drag.was.length >= 2 ? [] : drag.was;   // a click: place one end
+        S.scan.pts = was.concat([evPos(e)]);
+      }
+    } else if (drag.brush) {
       syncOutline(true);
-    } else if (!drag.moved && !canEdit()) {
-      if (S.scan.pts.length >= 2) S.scan.pts = [];
-      S.scan.pts.push(evPos(e));
-      drawScan();
     }
     drag = null;
     drawScan();

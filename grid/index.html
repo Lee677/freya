@@ -165,7 +165,6 @@
     <button role="tab" data-tab="bp" aria-selected="true">Baseplate</button>
     <button role="tab" data-tab="bin" aria-selected="false">Bin</button>
     <button role="tab" data-tab="scan" aria-selected="false">Tool scan</button>
-    <button role="tab" data-tab="rig" aria-selected="false">Photo rig</button>
     <button role="tab" data-tab="doc" aria-selected="false">Notes</button>
   </nav>
 
@@ -271,7 +270,7 @@
       <div class="pane" id="pane-scan">
         <ol class="steps" id="sc-steps">
           <li id="sc-s1">Photograph the tool from straight above, on a plain background, with a ruler beside it</li>
-          <li id="sc-s2">Click the two ends of a known distance, and type that distance in</li>
+          <li id="sc-s2">Drag across a known distance on the ruler, and type that distance in</li>
           <li id="sc-s3">Trace it, then drag the orange line to fit</li>
           <li id="sc-s4">Send it to the Bin tab</li>
         </ol>
@@ -281,7 +280,7 @@
 
         <fieldset class="grp" style="margin-top:.9rem">
           <div class="legend">Scale</div>
-          <div class="row"><label for="sc-len">Distance between 2 points (mm)<span class="hint">click both ends of it on the photo</span></label>
+          <div class="row"><label for="sc-len">Distance between 2 points (mm)<span class="hint">on the photo, drag from one end to the other &mdash; or click each end</span></label>
             <input type="number" id="sc-len" value="100" step="1"
               title="The real-world distance, in millimetres, between the two points you click on the photo. A ruler is easiest — click the 0 mark and the 100 mark and leave this at 100."></div>
           <div class="row"><label>Points picked</label><span class="readout" style="padding:.2rem .45rem" id="sc-pts">0 / 2</span></div>
@@ -334,51 +333,12 @@
         <details class="note"><summary>Getting a good trace</summary>
           <p>Plain background, no shadow under the tool, and hold the camera <b>square-on from directly
           above</b> &mdash; the scale comes from one distance on a flat plane, so a tilted photo stretches
-          one end of the tool relative to the other. The <b>Photo rig</b> tab prints a stand that holds a
-          phone overhead for exactly this reason.</p>
+          one end of the tool relative to the other. Lay the ruler flat beside the tool, not on top of it,
+          and keep both near the middle of the frame where lens distortion is smallest.</p>
           <p>A dark tool on white paper, or a light one on a dark bench, traces best. If the trace comes
           out wrong it is usually faster to drag the line into place than to keep fiddling with the
           sliders.</p></details>
       </div>
-
-      <!-- ---------- RIG ---------- -->
-      <div class="pane" id="pane-rig">
-        <fieldset class="grp">
-          <div class="legend">Calibration frame</div>
-          <div class="row"><label>Inside size X &times; Y</label>
-            <span class="two" style="width:9.6rem"><input type="number" id="rig-iw" value="200"><input type="number" id="rig-id" value="150"></span></div>
-          <div class="row"><label for="rig-fw">Frame width</label><input type="number" id="rig-fw" value="12" step="1"></div>
-          <div class="row"><label for="rig-t">Thickness</label><input type="number" id="rig-t" value="3" step="0.5"></div>
-          <div class="btns">
-            <button class="act primary" id="rig-build">Preview frame</button>
-            <button class="act" id="rig-stl" disabled>STL</button>
-            <button class="act" id="rig-step" disabled>STEP</button>
-            <button class="act" id="rig-svg">Paper version (SVG)</button>
-          </div>
-        </fieldset>
-
-        <fieldset class="grp">
-          <div class="legend">Overhead phone stand</div>
-          <div class="row"><label for="st-h">Camera height</label><input type="number" id="st-h" value="320" step="10"></div>
-          <div class="row"><label for="st-reach">Arm reach</label><input type="number" id="st-reach" value="120" step="5"></div>
-          <div class="row"><label>Phone width / thickness</label>
-            <span class="two" style="width:9.6rem"><input type="number" id="st-pw" value="78"><input type="number" id="st-pt" value="11"></span></div>
-          <div class="row"><label>Lens window: in from left / back</label>
-            <span class="two" style="width:9.6rem"><input type="number" id="st-lx" value="22"><input type="number" id="st-ly" value="20"></span></div>
-          <div class="row"><label for="st-ld">Lens window size</label><input type="number" id="st-ld" value="34" step="1"></div>
-          <div class="row"><label for="st-bedz">Max print height</label><input type="number" id="st-bedz" value="250" step="10"></div>
-          <div class="btns">
-            <button class="act primary" id="st-build">Preview stand</button>
-            <button class="act" id="st-zip" disabled>All parts (.zip)</button>
-          </div>
-        </fieldset>
-        <details class="note"><summary>Do I need the stand?</summary>
-          <p>No &mdash; the 4-corner method already removes perspective, so a hand-held photo of a tool
-          inside the frame is enough for a pocket that fits. The stand helps when you are scanning a lot
-          of tools in a row, or when the tool is deep and you want the outline at its true silhouette
-          rather than a slightly oblique one.</p></details>
-      </div>
-
       <!-- ---------- DOC ---------- -->
       <div class="pane" id="pane-doc">
         <div class="prose">
@@ -428,10 +388,15 @@
 </div>
 
 <!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "bf566b1bebe84eaa8c4f3d6a83251b4a"}'></script><!-- End Cloudflare Web Analytics -->
-<script src="./js/core.js"></script>
-<script src="./js/exporters.js"></script>
-<script src="./js/vision.js"></script>
-<script src="./js/viewer.js"></script>
-<script src="./js/app.js"></script>
+<!-- BUMP ?v= WHENEVER ANY FILE IN js/ CHANGES.
+     index.html is never cached, so a new token here guarantees the browser
+     fetches code that matches this markup. Without it, a cached app.js drives
+     fresh HTML after a deploy, reads an element that no longer exists, and the
+     page dies on the first click — which is exactly what happened once. -->
+<script src="./js/core.js?v=20260815a"></script>
+<script src="./js/exporters.js?v=20260815a"></script>
+<script src="./js/vision.js?v=20260815a"></script>
+<script src="./js/viewer.js?v=20260815a"></script>
+<script src="./js/app.js?v=20260815a"></script>
 </body>
 </html>

@@ -24,8 +24,7 @@ files only, no build step and no server.
 | --- | --- |
 | Baseplate | A plate sized to a drawer, in millimetres or inches. Leftover space becomes a solid skirt, or the plate is trimmed to the grid. Optional solid floor, optional corner relief for radiused drawers. Splits itself into bed-sized tiles that cut on grid lines and reassemble exactly. |
 | Bin | Any footprint and height. Stacking lip, compartments, scoop, or a pocket in the shape of a scanned tool, repeated in a row or a grid, with a finger dish. |
-| Tool scan | Photo → outline in millimetres. Either click four corners of a known rectangle (perspective is removed by homography, so a hand-held phone photo works) or two points on a ruler. |
-| Photo rig | A printable calibration frame with known inside corners, the same target as an A4 page, and an overhead phone stand. |
+| Tool scan | Photo → outline in millimetres. Click two points a known distance apart to set the scale, trace, then drag the line where the trace missed. Shoot square-on: the scale is one distance on a flat plane, so tilt is not corrected. |
 
 ## Geometry
 
