@@ -310,24 +310,35 @@
     S.scan.base = canvas;
     S.scan.ppm = ppm || null;
     cv.width = canvas.width; cv.height = canvas.height;
-    S.scan.contourPx = null; S.scan.mask = null;
+    S.scan.contourPx = null; S.scan.mask = null; S.scan.tinted = null;
+    S.scan.undo = []; S.scan.edited = false; S.scan.traced = null; S.scan.hover = -1;
+    refreshEditButtons();
     drawScan();
+  }
+
+  /* The mask tint costs a full-frame getImageData/putImageData, which is far
+   * too slow to redo on every pointermove while dragging a handle. Bake it once
+   * into an offscreen canvas and blit that instead. */
+  function buildTint() {
+    if (!S.scan.mask) { S.scan.tinted = null; return; }
+    const t = document.createElement('canvas');
+    t.width = cv.width; t.height = cv.height;
+    const g = t.getContext('2d', { willReadFrequently: true });
+    g.drawImage(S.scan.base, 0, 0);
+    const img = g.getImageData(0, 0, t.width, t.height);
+    const d = img.data, m = S.scan.mask;
+    for (let i = 0; i < m.length; i++) {
+      if (m[i]) { d[i * 4] = d[i * 4] * 0.72 + 22; d[i * 4 + 1] = d[i * 4 + 1] * 0.72 + 40; d[i * 4 + 2] = d[i * 4 + 2] * 0.72 + 92; }
+    }
+    g.putImageData(img, 0, 0);
+    S.scan.tinted = t;
   }
 
   function drawScan() {
     if (!S.scan.base) return;
     cx.clearRect(0, 0, cv.width, cv.height);
-    cx.drawImage(S.scan.base, 0, 0);
+    cx.drawImage(S.scan.tinted || S.scan.base, 0, 0);
     const acc = getComputedStyle(document.body).getPropertyValue('--accent').trim() || '#3a5bd0';
-    // mask tint
-    if (S.scan.mask) {
-      const img = cx.getImageData(0, 0, cv.width, cv.height);
-      const d = img.data, m = S.scan.mask;
-      for (let i = 0; i < m.length; i++) {
-        if (m[i]) { d[i * 4] = d[i * 4] * 0.72 + 22; d[i * 4 + 1] = d[i * 4 + 1] * 0.72 + 40; d[i * 4 + 2] = d[i * 4 + 2] * 0.72 + 92; }
-      }
-      cx.putImageData(img, 0, 0);
-    }
     // roi
     if (S.scan.roi) {
       const r = S.scan.roi;
@@ -347,6 +358,23 @@
       cx.strokeStyle = 'rgba(255,255,255,.85)'; cx.lineWidth = lw * 2.2; cx.stroke();
       cx.strokeStyle = '#f0721c'; cx.lineWidth = lw; cx.stroke();
       cx.restore();
+
+      // draggable handles, sized in screen pixels so they stay grabbable
+      if (canEdit()) {
+        const s = dispScale();
+        const r = 4.6 * s;
+        cx.save();
+        cx.lineWidth = 1.6 * s;
+        S.scan.contourPx.forEach(function (p, i) {
+          const active = i === S.scan.hover || (drag && drag.vertex === i);
+          cx.beginPath();
+          cx.arc(p[0], p[1], active ? r * 1.7 : r, 0, 7);
+          cx.fillStyle = active ? '#f0721c' : 'rgba(255,255,255,.92)';
+          cx.strokeStyle = active ? '#fff' : '#f0721c';
+          cx.fill(); cx.stroke();
+        });
+        cx.restore();
+      }
     }
     // picked points
     S.scan.pts.forEach(function (p, i) {
@@ -375,35 +403,177 @@
     return [(e.clientX - r.left) * (cv.width / r.width), (e.clientY - r.top) * (cv.height / r.height)];
   }
 
-  let dragging = null;
+  /* ---- outline editing -------------------------------------------------
+   * Auto-trace gets the silhouette close; this is for the places it does not.
+   * Drag a handle to move it, click the line to add one, right-click to remove.
+   * Every change re-derives the millimetre outline the bin is cut from. */
+  const HIT_PX = 10;                       // grab radius, in screen pixels
+  function dispScale() {
+    const r = cv.getBoundingClientRect();
+    return r.width ? cv.width / r.width : 1;
+  }
+  function canEdit() {
+    return !!(S.scan.ppm && S.scan.contourPx && S.scan.contourPx.length > 2);
+  }
+  function distToSeg(p, a, b) {
+    const vx = b[0] - a[0], vy = b[1] - a[1];
+    const len = vx * vx + vy * vy;
+    let t = len ? ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / len : 0;
+    t = Math.max(0, Math.min(1, t));
+    const qx = a[0] + t * vx, qy = a[1] + t * vy;
+    return { d: Math.hypot(p[0] - qx, p[1] - qy), at: [qx, qy] };
+  }
+  function hitTest(p) {
+    if (!canEdit()) return null;
+    const poly = S.scan.contourPx, n = poly.length, tol = HIT_PX * dispScale();
+    let best = null;
+    for (let i = 0; i < n; i++) {
+      const d = Math.hypot(p[0] - poly[i][0], p[1] - poly[i][1]);
+      if (d <= tol && (!best || d < best.d)) best = { type: 'vertex', i: i, d: d };
+    }
+    if (best) return best;
+    for (let i = 0; i < n; i++) {
+      const s = distToSeg(p, poly[i], poly[(i + 1) % n]);
+      if (s.d <= tol && (!best || s.d < best.d)) best = { type: 'edge', i: i, at: s.at, d: s.d };
+    }
+    return best;
+  }
+  function pushUndo() {
+    if (!S.scan.contourPx) return;
+    S.scan.undo = S.scan.undo || [];
+    S.scan.undo.push(S.scan.contourPx.map(function (p) { return [p[0], p[1]]; }));
+    if (S.scan.undo.length > 40) S.scan.undo.shift();
+    S.scan.edited = true;
+    refreshEditButtons();
+  }
+  function refreshEditButtons() {
+    const u = $('sc-undo'), r = $('sc-reset');
+    if (!u || !r) return;
+    u.disabled = !(S.scan.undo && S.scan.undo.length);
+    r.disabled = !(S.scan.traced && S.scan.edited);
+  }
+  // push the edited polygon back out as millimetres for the bin builder
+  function syncOutline(withStats) {
+    if (!canEdit()) return;
+    S.outline = V.toMM(S.scan.contourPx, S.scan.ppm);
+    const st = V.polyStats(S.outline);
+    $('bin-poly').textContent = fmt(st.w, 1) + ' × ' + fmt(st.d, 1) + ' mm, ' + st.n + ' pts';
+    if (withStats) {
+      readout('Outline: <b>' + fmt(st.w, 1) + ' × ' + fmt(st.d, 1) + ' mm</b>, ' +
+        fmt(st.area / 100, 1) + ' cm² · ' + st.n + ' points' +
+        (S.scan.edited ? ' · edited by hand' : '') + '\n' +
+        'Drag a point to move it, click the line to add one, right-click a point to remove it.\n' +
+        'Happy with it? Send it to the Bin tab.');
+    }
+  }
+
+  let drag = null;
   cv.addEventListener('pointerdown', function (e) {
     if (!S.scan.base) return;
-    dragging = { start: evPos(e), moved: false };
+    const p = evPos(e);
+    if (e.button === 0) {
+      const h = hitTest(p);
+      if (h) {
+        pushUndo();
+        let i = h.i;
+        if (h.type === 'edge') { i = h.i + 1; S.scan.contourPx.splice(i, 0, h.at); }
+        drag = { vertex: i };
+        S.scan.hover = i;
+        try { cv.setPointerCapture(e.pointerId); } catch (err) { /* synthetic pointer */ }
+        drawScan();
+        return;
+      }
+    }
+    drag = { start: p, moved: false };
     try { cv.setPointerCapture(e.pointerId); } catch (err) { /* synthetic pointer */ }
   });
+
   cv.addEventListener('pointermove', function (e) {
-    if (!dragging) return;
     const p = evPos(e);
-    if (Math.hypot(p[0] - dragging.start[0], p[1] - dragging.start[1]) > 6) {
-      dragging.moved = true;
+    if (drag && drag.vertex != null) {
+      S.scan.contourPx[drag.vertex] = [
+        Math.max(0, Math.min(cv.width, p[0])),
+        Math.max(0, Math.min(cv.height, p[1]))
+      ];
+      syncOutline(false);
+      drawScan();
+      return;
+    }
+    if (!drag) {                                   // hover feedback only
+      if (!canEdit()) return;
+      const h = hitTest(p);
+      const i = h && h.type === 'vertex' ? h.i : -1;
+      cv.style.cursor = h ? (h.type === 'vertex' ? 'grab' : 'copy') : 'crosshair';
+      if (i !== S.scan.hover) { S.scan.hover = i; drawScan(); }
+      return;
+    }
+    if (Math.hypot(p[0] - drag.start[0], p[1] - drag.start[1]) > 6) {
+      drag.moved = true;
       S.scan.roi = {
-        x0: Math.min(dragging.start[0], p[0]), y0: Math.min(dragging.start[1], p[1]),
-        x1: Math.max(dragging.start[0], p[0]), y1: Math.max(dragging.start[1], p[1])
+        x0: Math.min(drag.start[0], p[0]), y0: Math.min(drag.start[1], p[1]),
+        x1: Math.max(drag.start[0], p[0]), y1: Math.max(drag.start[1], p[1])
       };
       $('sc-roi').textContent = 'search area ' + Math.round(S.scan.roi.x1 - S.scan.roi.x0) + ' × ' +
         Math.round(S.scan.roi.y1 - S.scan.roi.y0) + ' px';
       drawScan();
     }
   });
+
   cv.addEventListener('pointerup', function (e) {
-    if (!dragging) return;
-    if (!dragging.moved) {
+    if (!drag) return;
+    if (drag.vertex != null) {
+      syncOutline(true);
+    } else if (!drag.moved && !canEdit()) {
       const need = $('sc-mode').value === 'frame' ? 4 : 2;
       if (S.scan.pts.length >= need) S.scan.pts = [];
       S.scan.pts.push(evPos(e));
       drawScan();
     }
-    dragging = null;
+    drag = null;
+  });
+  cv.addEventListener('pointercancel', function () { drag = null; });
+
+  // right-click a handle to delete it
+  cv.addEventListener('contextmenu', function (e) {
+    if (!canEdit()) return;
+    const h = hitTest(evPos(e));
+    if (!h || h.type !== 'vertex') return;
+    e.preventDefault();
+    if (S.scan.contourPx.length <= 4) { status('an outline needs at least four points'); return; }
+    pushUndo();
+    S.scan.contourPx.splice(h.i, 1);
+    S.scan.hover = -1;
+    syncOutline(true);
+    drawScan();
+  });
+
+  function undoEdit() {
+    if (!S.scan.undo || !S.scan.undo.length) return;
+    S.scan.contourPx = S.scan.undo.pop();
+    S.scan.hover = -1;
+    S.scan.edited = !!S.scan.undo.length || S.scan.edited;
+    refreshEditButtons();
+    syncOutline(true);
+    drawScan();
+  }
+  on('sc-undo', 'click', undoEdit);
+  on('sc-reset', 'click', function () {
+    if (!S.scan.traced) return;
+    pushUndo();
+    S.scan.contourPx = S.scan.traced.map(function (p) { return [p[0], p[1]]; });
+    S.scan.edited = false;
+    S.scan.hover = -1;
+    refreshEditButtons();
+    syncOutline(true);
+    drawScan();
+  });
+  addEventListener('keydown', function (e) {
+    if (S.tab !== 'scan') return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undoEdit(); }
+  });
+  on('sc-zoom', 'change', function () {
+    cv.classList.toggle('native', $('sc-zoom').value === '1');
+    drawScan();
   });
 
   function loadFile(file) {
@@ -505,6 +675,12 @@
       const simp = V.rdp(raw, smoothMM * S.scan.ppm);
       S.scan.mask = seg.mask;
       S.scan.contourPx = simp;
+      S.scan.traced = simp.map(function (p) { return [p[0], p[1]]; });  // baseline for Reset
+      S.scan.undo = [];
+      S.scan.edited = false;
+      S.scan.hover = -1;
+      refreshEditButtons();
+      buildTint();
       S.outline = V.toMM(simp, S.scan.ppm);
       drawScan();
       const st = V.polyStats(S.outline);
@@ -513,14 +689,20 @@
         'threshold ' + seg.threshold + (seg.objDark ? ' (dark object)' : ' (light object)') +
         ' · smoothing ' + fmt(smoothMM, 2) + ' mm\n' +
         (seg.clipped ? '<span class="w">the shape runs off the edge of the search area — drag a wider box</span>\n' : '') +
-        'Happy with it? Send it to the Bin tab.');
+        'Off the mark anywhere? Drag a point to move it, click the line to add one,\n' +
+        'right-click a point to remove it. Then send it to the Bin tab.');
       $('sc-use').disabled = $('sc-svg').disabled = false;
       $('sc-s3').classList.add('done');
       $('bin-poly').textContent = fmt(st.w, 1) + ' × ' + fmt(st.d, 1) + ' mm, ' + st.n + ' pts';
     });
   });
   ['sc-thr', 'sc-clean', 'sc-simp', 'sc-inv', 'sc-auto'].forEach(function (id) {
-    on(id, 'change', function () { if (S.scan.contourPx) $('sc-trace').click(); });
+    on(id, 'change', function () {
+      if (!S.scan.contourPx) return;
+      // a re-trace throws away hand edits, so make that a deliberate act
+      if (S.scan.edited) { status('press Trace outline to re-run — your edits will be replaced', 'busy'); return; }
+      $('sc-trace').click();
+    });
   });
 
   on('sc-use', 'click', function () {

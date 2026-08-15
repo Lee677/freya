@@ -90,7 +90,8 @@
   #view canvas{display:block;width:100%;height:100%}
   #photo{border:1px solid var(--line);border-radius:12px;overflow:auto;background:var(--surface);padding:.5rem;
     max-height:clamp(340px,62vh,700px);position:relative}
-  #photo canvas{display:block;max-width:100%;cursor:crosshair;border-radius:6px}
+  #photo canvas{display:block;max-width:100%;cursor:crosshair;border-radius:6px;touch-action:none}
+  #photo canvas.native{max-width:none}
   .hide{display:none !important}
 
   .readout{font-family:var(--mono);font-size:.74rem;line-height:1.55;color:var(--muted);
@@ -308,6 +309,18 @@
             <button class="act" id="sc-roiclear">Clear area</button>
             <button class="act" id="sc-use" disabled>Use in bin &rarr;</button>
             <button class="act" id="sc-svg" disabled>SVG</button>
+          </div>
+        </fieldset>
+
+        <fieldset class="grp">
+          <div class="legend">Fine-tune by hand</div>
+          <div class="row"><label>Editing<span class="hint">drag a point to move it &middot; click the line to add one &middot;
+            right-click a point to remove it</span></label></div>
+          <div class="row"><label for="sc-zoom">Photo view<span class="hint">work at actual pixels for fiddly corners</span></label>
+            <select id="sc-zoom"><option value="fit">fit the panel</option><option value="1">actual pixels</option></select></div>
+          <div class="btns">
+            <button class="act" id="sc-undo" disabled>Undo</button>
+            <button class="act" id="sc-reset" disabled>Back to auto-trace</button>
           </div>
         </fieldset>
         <details class="note"><summary>Getting a good trace</summary>
