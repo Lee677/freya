@@ -19,7 +19,7 @@ own path.
 | [`/freyacad`](https://freya.co.nz/freyacad) | **FreyaCAD** | Parametric solid modelling in the browser — sketch, extrude, and boolean geometry, powered by [Manifold](https://github.com/elalish/manifold) and three.js. |
 | [`/grid`](https://freya.co.nz/grid) | **Grid** | Magnet-free Gridfinity for any drawer — baseplates sized to the millimetre, bins in any shape, and pockets cut from a photograph of the tool. STL or STEP. |
 | [`/stars`](https://freya.co.nz/stars) | **Star Guide** | An interactive map of the night sky — constellations, their figures, and the planets overhead. |
-| [`/nextround`](https://freya.co.nz/nextround) | **NextRound** | A one-press service button for every table — guests tap, the bar knows in 84 ms. No app, no venue Wi-Fi. *(Private — access code required.)* |
+| [`/nextround`](https://freya.co.nz/nextround) | **NextRound** | A one-press service button for every table — guests tap, the bar knows in 84 ms. No app, no venue Wi-Fi. |
 | [`/zen`](https://freya.co.nz/zen) | **Æther** | A living daily companion — a generative sky that shifts with the hour, a focus timer, a breathing guide, and a private on-device journal. |
 | [`/flow`](https://freya.co.nz/flow) | **Flow** | A tiny hand-typed p5.js generative-art sketch, rebuilt for the web. Original piece by [@yuruyurau](https://x.com/yuruyurau?s=11). |
 | [`/sentinel`](https://freya.co.nz/sentinel) | **Shitehawk Sentinel** | An autonomous pan-tilt gull-deterrence turret — ESP32-CAM motion tracking, below-horizon laser lock, 0% AI. |
