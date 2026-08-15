@@ -53,3 +53,9 @@
   Cache-Control: public, max-age=604800
 /zen/favicon.svg
   Cache-Control: public, max-age=604800
+
+# ── link-preview cards ────────────────────────────────────────────────────
+# Static, and refetched by every scraper that sees a shared link. Regenerated
+# only by tools/og.py, so a week of staleness is the worst case.
+/og/*
+  Cache-Control: public, max-age=604800
