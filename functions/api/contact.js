@@ -1,15 +1,18 @@
 /* POST /api/contact — takes the form on the home page and mails it to me.
  *
  * The destination address is never in this repo and never in the HTML; it lives
- * in the Pages project's environment variables. Configure ONE of:
+ * in the Pages project's secrets. CONTACT_TO and CONTACT_FROM are already set.
+ * What remains is a way to actually put the message in a mailbox — set either:
  *
- *   a) Cloudflare Email Routing, no third party, nothing to sign up for:
- *      add a "send_email" binding named SEB whose destination address is the
- *      verified address you want the mail to land in, plus CONTACT_FROM
- *      (an address on freya.co.nz) and CONTACT_TO (the same verified address).
+ *   RESEND_API_KEY  — encrypted secret; sender must be a verified domain
+ *                     (freya.co.nz), which is what CONTACT_FROM is for.
  *
- *   b) Resend: set RESEND_API_KEY (encrypted), CONTACT_FROM (a verified sender
- *      on freya.co.nz, e.g. "Freya <hello@freya.co.nz>") and CONTACT_TO.
+ *   MAILER          — a service binding to a small Worker that holds a
+ *                     send_email binding. Pages Functions cannot carry a
+ *                     send_email binding themselves, so Cloudflare Email
+ *                     Routing has to be reached through a Worker. Not wired up
+ *                     yet; the branch below is deliberately absent rather than
+ *                     present-and-broken.
  *
  * With neither set the endpoint answers 503 and says so plainly, rather than
  * pretending a message was delivered.
@@ -66,19 +69,16 @@ export async function onRequestPost({ request, env }) {
     `via:  freya.co.nz/#contact (${country})\n`;
 
   try {
-    if (env.SEB) {
-      const { EmailMessage } = await import('cloudflare:email');
-      const raw =
-        `From: ${header(from)}\r\n` +
-        `To: ${header(to)}\r\n` +
-        `Reply-To: ${header(email)}\r\n` +
-        `Subject: ${subject}\r\n` +
-        `Message-ID: <${crypto.randomUUID()}@freya.co.nz>\r\n` +
-        `Date: ${new Date().toUTCString()}\r\n` +
-        `MIME-Version: 1.0\r\n` +
-        `Content-Type: text/plain; charset=utf-8\r\n\r\n` +
-        text;
-      await env.SEB.send(new EmailMessage(addressOnly(from), addressOnly(to), raw));
+    if (env.MAILER) {
+      const r = await env.MAILER.fetch('https://mailer/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ from, to, replyTo: email, subject, text })
+      });
+      if (!r.ok) {
+        console.error('mailer', r.status, await r.text().catch(() => ''));
+        return json({ error: 'The message could not be sent just now. Try again shortly.' }, 502);
+      }
       return json({ ok: true });
     }
 
@@ -103,12 +103,6 @@ export async function onRequestPost({ request, env }) {
   }
 
   return json({ error: 'The form is not connected yet. Try again shortly.' }, 503);
-}
-
-// "Freya <hello@freya.co.nz>" -> "hello@freya.co.nz"
-function addressOnly(s) {
-  const m = String(s).match(/<([^>]+)>/);
-  return (m ? m[1] : String(s)).trim();
 }
 
 export const onRequestGet = () => json({ error: 'POST only.' }, 405);
