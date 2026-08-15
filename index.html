@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Freya — index</title>
-<meta name="description" content="A small workshop on the web: FreyaCAD, Star Guide, NextRound, Æther, and Shitehawk Sentinel. Auckland, New Zealand.">
+<meta name="description" content="A small workshop on the web: FreyaCAD, Grid, Star Guide, NextRound, Æther, and Shitehawk Sentinel. Auckland, New Zealand.">
 <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -18,9 +18,14 @@
     --line:rgba(20,25,34,.12);
     --line-soft:rgba(20,25,34,.07);
     --surface:rgba(255,255,255,.6);
+    --field:rgba(255,255,255,.75);
     --accent:#3a5bd0;
     --accent-ink:#3a5bd0;
+    --accent-soft:rgba(58,91,208,.10);
+    --ok:#1f7a4d;
+    --warn:#a4571b;
     --grid:rgba(20,25,34,.045);
+    --grid-fine:rgba(58,91,208,.16);
     --serif:"Palatino Linotype","Book Antiqua",Palatino,Georgia,"Times New Roman",serif;
     --sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",sans-serif;
     --mono:ui-monospace,"Cascadia Code","Cascadia Mono",Consolas,"SFMono-Regular",Menlo,monospace;
@@ -34,9 +39,14 @@
       --line:rgba(255,255,255,.13);
       --line-soft:rgba(255,255,255,.07);
       --surface:rgba(255,255,255,.035);
+      --field:rgba(255,255,255,.05);
       --accent:#8aa2ff;
       --accent-ink:#a9bcff;
+      --accent-soft:rgba(138,162,255,.12);
+      --ok:#5fd39a;
+      --warn:#e0a45c;
       --grid:rgba(255,255,255,.04);
+      --grid-fine:rgba(138,162,255,.20);
     }
   }
   *{box-sizing:border-box}
@@ -56,6 +66,18 @@
     -webkit-mask-image:radial-gradient(120% 90% at 50% 0%,#000 55%,transparent 100%);
     mask-image:radial-gradient(120% 90% at 50% 0%,#000 55%,transparent 100%);
   }
+  /* a finer grid, revealed only under the pointer — the drawing board lighting up */
+  body::after{
+    content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+    background-image:
+      linear-gradient(var(--grid-fine) 1px,transparent 1px),
+      linear-gradient(90deg,var(--grid-fine) 1px,transparent 1px);
+    background-size:26px 26px;
+    opacity:0;transition:opacity .5s ease;
+    -webkit-mask-image:radial-gradient(240px 240px at var(--mx,50%) var(--my,12%),#000 0%,rgba(0,0,0,.35) 45%,transparent 72%);
+    mask-image:radial-gradient(240px 240px at var(--mx,50%) var(--my,12%),#000 0%,rgba(0,0,0,.35) 45%,transparent 72%);
+  }
+  body.lit::after{opacity:1}
   .wrap{position:relative;z-index:1;max-width:720px;margin:0 auto;
     padding:clamp(2.6rem,8vw,5rem) clamp(1.2rem,5vw,2rem) 3rem;}
 
@@ -64,12 +86,20 @@
     color:var(--faint);margin:0 0 1rem;display:flex;align-items:center;gap:.6rem}
   .eyebrow::after{content:"";height:1px;flex:1;background:var(--line)}
   h1.mark{font-family:var(--serif);font-weight:600;font-size:clamp(3.2rem,13vw,5rem);
-    line-height:.95;letter-spacing:-.015em;margin:0;text-wrap:balance}
-  .lede{font-size:clamp(1.02rem,3.4vw,1.18rem);color:var(--muted);margin:1.1rem 0 0;max-width:44ch;text-wrap:pretty}
+    line-height:.95;letter-spacing:-.015em;margin:0;text-wrap:balance;position:relative;display:inline-block}
+  /* a pen-plotter underline that draws itself once */
+  h1.mark::after{
+    content:"";position:absolute;left:0;right:0;bottom:-.12em;height:2px;
+    background:linear-gradient(90deg,var(--accent),transparent);
+    transform-origin:left;transform:scaleX(0);
+    animation:draw 1.4s cubic-bezier(.2,.7,.2,1) .25s forwards;
+  }
+  @keyframes draw{to{transform:scaleX(1)}}
+  .lede{font-size:clamp(1.02rem,3.4vw,1.18rem);color:var(--muted);margin:1.4rem 0 0;max-width:44ch;text-wrap:pretty}
   .lede b{color:var(--ink);font-weight:600}
 
   .list{border-top:1px solid var(--line)}
-  a.row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:1.2rem;
+  a.row{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:1.1rem;
     text-decoration:none;color:inherit;border-bottom:1px solid var(--line);
     padding:clamp(1.15rem,4vw,1.6rem) .4rem clamp(1.15rem,4vw,1.6rem) 0;
     position:relative;transition:background .25s,padding-left .25s;}
@@ -77,6 +107,9 @@
     background:var(--accent);transform:scaleY(0);transform-origin:top;transition:transform .25s}
   a.row:hover,a.row:focus-visible{background:var(--surface);padding-left:1rem;outline:none}
   a.row:hover::before,a.row:focus-visible::before{transform:scaleY(1)}
+  .glyph{width:30px;height:30px;flex:none;color:var(--faint);opacity:.75;
+    transition:color .25s,opacity .25s,transform .35s cubic-bezier(.2,.7,.2,1)}
+  a.row:hover .glyph,a.row:focus-visible .glyph{color:var(--accent);opacity:1;transform:translateY(-2px) rotate(-3deg)}
   .row-top{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:.5rem}
   .path{font-family:var(--mono);font-size:.78rem;color:var(--accent-ink);letter-spacing:.01em}
   .tag{font-family:var(--mono);font-size:.62rem;letter-spacing:.16em;text-transform:uppercase;
@@ -89,17 +122,56 @@
   .go{font-family:var(--serif);font-size:1.6rem;color:var(--faint);transition:transform .25s,color .2s;line-height:1}
   a.row:hover .go,a.row:focus-visible .go{color:var(--accent);transform:translateX(5px)}
 
+  /* ── contact ───────────────────────────────────────────────── */
+  section.contact{margin-top:clamp(2.6rem,8vw,4rem)}
+  .contact h2{font-family:var(--serif);font-weight:600;font-size:clamp(1.8rem,6vw,2.4rem);
+    line-height:1.05;margin:0;letter-spacing:-.01em}
+  .contact .blurb{color:var(--muted);margin:.7rem 0 1.6rem;max-width:46ch;text-wrap:pretty}
+  form{display:grid;gap:.9rem}
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:.9rem}
+  @media (max-width:520px){.pair{grid-template-columns:1fr}}
+  .field{display:flex;flex-direction:column;gap:.35rem}
+  .field label{font-family:var(--mono);font-size:.68rem;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+  .field input,.field textarea{
+    font:inherit;font-size:.95rem;color:var(--ink);background:var(--field);
+    border:1px solid var(--line);border-radius:9px;padding:.6rem .7rem;width:100%;
+    transition:border-color .2s,box-shadow .2s,background .2s;resize:vertical}
+  .field textarea{min-height:8.5rem;line-height:1.5}
+  .field input:hover,.field textarea:hover{border-color:var(--faint)}
+  .field input:focus,.field textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .field input[aria-invalid="true"],.field textarea[aria-invalid="true"]{border-color:var(--warn)}
+  .hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none}
+  .actions{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-top:.2rem}
+  button.send{
+    appearance:none;font:inherit;font-size:.92rem;cursor:pointer;border-radius:9px;
+    border:1px solid var(--accent);background:var(--accent);color:#fff;
+    padding:.6rem 1.3rem;display:inline-flex;align-items:center;gap:.55rem;
+    transition:filter .2s,transform .12s,opacity .2s}
+  button.send:hover{filter:brightness(1.08)}
+  button.send:active{transform:translateY(1px)}
+  button.send[disabled]{opacity:.55;cursor:progress}
+  button.send svg{width:1em;height:1em}
+  .cstatus{font-family:var(--mono);font-size:.76rem;margin:0;color:var(--muted);min-height:1.3em}
+  .cstatus.ok{color:var(--ok)}
+  .cstatus.err{color:var(--warn)}
+  .sent{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:1.4rem 1.5rem}
+  .sent h3{font-family:var(--serif);font-weight:600;font-size:1.35rem;margin:0 0 .4rem}
+  .sent p{color:var(--muted);margin:0;font-size:.95rem}
+
   footer{margin-top:clamp(2.4rem,7vw,3.5rem);display:flex;justify-content:space-between;flex-wrap:wrap;gap:.6rem;
-    font-family:var(--mono);font-size:.72rem;letter-spacing:.04em;color:var(--faint)}
+    font-family:var(--mono);font-size:.72rem;letter-spacing:.04em;color:var(--faint);
+    border-top:1px solid var(--line-soft);padding-top:1.2rem}
   footer a{color:var(--faint);text-decoration:none;border-bottom:1px solid var(--line)}
   footer a:hover{color:var(--accent)}
 
   @media (max-width:440px){
     .go{display:none}
-    a.row{grid-template-columns:1fr}
+    a.row{grid-template-columns:auto 1fr}
   }
   @media (prefers-reduced-motion:reduce){
-    a.row,a.row .go,a.row::before,.name{transition:none}
+    a.row,a.row .go,a.row::before,.name,.glyph,button.send{transition:none}
+    h1.mark::after{animation:none;transform:scaleX(1)}
+    body::after{display:none}
   }
 </style>
 <!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "bf566b1bebe84eaa8c4f3d6a83251b4a"}'></script><!-- End Cloudflare Web Analytics -->
@@ -115,6 +187,9 @@
     <nav class="list" aria-label="Projects">
 
       <a class="row" href="/freyacad">
+        <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3 20.5 7.6v8.8L12 21l-8.5-4.6V7.6z"/><path d="M12 3v18M3.5 7.6 12 12l8.5-4.4"/>
+        </svg>
         <div class="row-main">
           <div class="row-top"><span class="path">/freyacad</span><span class="tag">CAD engine</span></div>
           <h2 class="name">FreyaCAD</h2>
@@ -124,15 +199,22 @@
       </a>
 
       <a class="row" href="/grid">
+        <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <rect x="3.5" y="3.5" width="7.4" height="7.4" rx="2"/><rect x="13.1" y="3.5" width="7.4" height="7.4" rx="2"/>
+          <rect x="3.5" y="13.1" width="7.4" height="7.4" rx="2"/><rect x="13.1" y="13.1" width="7.4" height="7.4" rx="2" fill="currentColor" opacity=".18"/>
+        </svg>
         <div class="row-main">
           <div class="row-top"><span class="path">/grid</span><span class="tag">Gridfinity</span></div>
           <h2 class="name">Grid</h2>
-          <p class="desc">Magnet-free Gridfinity for any drawer &mdash; baseplates sized to the millimetre, bins in any shape, and pockets cut from a photograph of the tool. STL or STEP.</p>
+          <p class="desc">Magnet-free Gridfinity for any drawer — baseplates sized to the millimetre, bins in any shape, and pockets cut from a photograph of the tool. STL or STEP.</p>
         </div>
         <span class="go" aria-hidden="true">&rarr;</span>
       </a>
 
       <a class="row" href="/nextround">
+        <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"/>
+        </svg>
         <div class="row-main">
           <div class="row-top"><span class="path">/nextround</span><span class="tag">Hospitality &middot; private</span></div>
           <h2 class="name">NextRound
@@ -144,6 +226,10 @@
       </a>
 
       <a class="row" href="/stars">
+        <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3.5 13.9 9l5.6.3-4.4 3.5 1.5 5.4L12 15.1 7.4 18.2l1.5-5.4L4.5 9.3 10.1 9z"/>
+          <circle cx="19.5" cy="4.6" r=".9" fill="currentColor" stroke="none"/><circle cx="4.6" cy="19.4" r=".7" fill="currentColor" stroke="none"/>
+        </svg>
         <div class="row-main">
           <div class="row-top"><span class="path">/stars</span><span class="tag">Sky map</span></div>
           <h2 class="name">Star Guide</h2>
@@ -153,6 +239,10 @@
       </a>
 
       <a class="row" href="/zen">
+        <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3.2"/><path d="M12 5.4a6.6 6.6 0 0 1 6.6 6.6"/><path d="M12 18.6A6.6 6.6 0 0 1 5.4 12"/>
+          <path d="M12 1.8a10.2 10.2 0 0 1 10.2 10.2M12 22.2A10.2 10.2 0 0 1 1.8 12" opacity=".45"/>
+        </svg>
         <div class="row-main">
           <div class="row-top"><span class="path">/zen</span><span class="tag">Wellbeing</span></div>
           <h2 class="name">Æther</h2>
@@ -162,6 +252,10 @@
       </a>
 
       <a class="row" href="/flow">
+        <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+          <path d="M2.5 15.5c3.2 0 3.2-7 6.4-7s3.2 7 6.4 7 3.2-7 6.2-7"/>
+          <path d="M2.5 19.2c3.2 0 3.2-7 6.4-7s3.2 7 6.4 7 3.2-7 6.2-7" opacity=".4"/>
+        </svg>
         <div class="row-main">
           <div class="row-top"><span class="path">/flow</span><span class="tag">Generative art</span></div>
           <h2 class="name">Flow</h2>
@@ -171,6 +265,10 @@
       </a>
 
       <a class="row" href="/sentinel">
+        <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M5 20.5h9"/><path d="M9.5 20.5v-5"/><rect x="6.4" y="9.6" width="6.2" height="5.4" rx="1.4"/>
+          <path d="M12.6 11.6 21 7.2"/><circle cx="9.5" cy="12.3" r="1.3"/>
+        </svg>
         <div class="row-main">
           <div class="row-top"><span class="path">/sentinel</span><span class="tag">Hardware &middot; deterrence</span></div>
           <h2 class="name">Shitehawk Sentinel</h2>
@@ -181,10 +279,134 @@
 
     </nav>
 
+    <section class="contact" id="contact">
+      <p class="eyebrow">Contact the creator</p>
+      <h2>Say hello</h2>
+      <p class="blurb">A question about any of the above, a bug you have found, or something you would like built —
+        write below and it lands in my inbox. No newsletter, no list, no third party.</p>
+
+      <form id="cform" novalidate>
+        <div class="pair">
+          <div class="field">
+            <label for="c-name">Your name</label>
+            <input id="c-name" name="name" autocomplete="name" maxlength="120" placeholder="optional">
+          </div>
+          <div class="field">
+            <label for="c-email">Your email</label>
+            <input id="c-email" name="email" type="email" autocomplete="email" maxlength="200" required placeholder="so I can reply">
+          </div>
+        </div>
+        <div class="field">
+          <label for="c-msg">Message</label>
+          <textarea id="c-msg" name="message" maxlength="5000" required placeholder="Say as much or as little as you like."></textarea>
+        </div>
+        <input class="hp" type="text" name="fax" tabindex="-1" autocomplete="off" aria-hidden="true">
+        <div class="actions">
+          <button class="send" type="submit" id="c-send">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 3 10.5 13.5M21 3l-6.8 18-3.7-7.5L3 9.8z"/>
+            </svg>
+            Send
+          </button>
+          <p class="cstatus" id="c-status" role="status" aria-live="polite"></p>
+        </div>
+      </form>
+
+      <div class="sent" id="c-sent" hidden>
+        <h3>Sent — thank you.</h3>
+        <p>I read everything myself and usually reply within a day or two.</p>
+      </div>
+    </section>
+
     <footer>
       <span>Auckland, New Zealand</span>
-      <span>&copy; 2026 Freya</span>
+      <span><a href="#contact">Get in touch</a> &middot; &copy; 2026 Freya</span>
     </footer>
   </div>
+
+<script>
+(function(){
+  'use strict';
+  var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* the drawing board lights up under the pointer */
+  if (!reduce && matchMedia('(hover: hover)').matches) {
+    var root = document.documentElement, body = document.body;
+    var tx = innerWidth / 2, ty = innerHeight * 0.15, cx = tx, cy = ty, raf = 0;
+    addEventListener('pointermove', function (e) {
+      tx = e.clientX; ty = e.clientY;
+      body.classList.add('lit');
+      if (!raf) raf = requestAnimationFrame(tick);
+    }, { passive: true });
+    addEventListener('pointerleave', function () { body.classList.remove('lit'); });
+    function tick() {
+      cx += (tx - cx) * 0.14; cy += (ty - cy) * 0.14;
+      root.style.setProperty('--mx', cx.toFixed(1) + 'px');
+      root.style.setProperty('--my', cy.toFixed(1) + 'px');
+      raf = (Math.abs(tx - cx) > 0.5 || Math.abs(ty - cy) > 0.5) ? requestAnimationFrame(tick) : 0;
+    }
+  }
+
+  /* contact form */
+  var form = document.getElementById('cform');
+  var statusEl = document.getElementById('c-status');
+  var sendBtn = document.getElementById('c-send');
+  var sentEl = document.getElementById('c-sent');
+  var opened = Date.now();
+
+  function say(msg, cls) {
+    statusEl.textContent = msg || '';
+    statusEl.className = 'cstatus' + (cls ? ' ' + cls : '');
+  }
+  function mark(el, bad) {
+    el.setAttribute('aria-invalid', bad ? 'true' : 'false');
+    if (bad) el.focus();
+  }
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var name = document.getElementById('c-name');
+    var email = document.getElementById('c-email');
+    var msg = document.getElementById('c-msg');
+    mark(email, false); mark(msg, false);
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.value.trim())) {
+      say('That email address does not look right.', 'err'); mark(email, true); return;
+    }
+    if (msg.value.trim().length < 5) {
+      say('A few more words, please.', 'err'); mark(msg, true); return;
+    }
+
+    sendBtn.disabled = true;
+    say('Sending…');
+
+    fetch('/api/contact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name.value.trim(),
+        email: email.value.trim(),
+        message: msg.value.trim(),
+        fax: form.fax.value,
+        elapsed: Date.now() - opened
+      })
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (d) { return { ok: r.ok, d: d }; });
+    }).then(function (res) {
+      if (res.ok) {
+        form.hidden = true;
+        sentEl.hidden = false;
+        sentEl.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
+        return;
+      }
+      sendBtn.disabled = false;
+      say(res.d.error || 'That did not go through. Try again in a moment.', 'err');
+    }).catch(function () {
+      sendBtn.disabled = false;
+      say('No connection. Try again in a moment.', 'err');
+    });
+  });
+})();
+</script>
 </body>
 </html>
