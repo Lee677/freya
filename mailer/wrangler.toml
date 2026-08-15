@@ -1,0 +1,26 @@
+# freya-contact — the Worker behind the contact form on the home page.
+#
+# It lives here rather than in the Pages project because Pages Functions cannot
+# carry a send_email binding, and this route is claimed on the zone so it runs
+# in front of Pages for that one path.
+#
+# No address appears in this file on purpose. The send_email binding is left
+# unrestricted, so it may send to any address verified in Email Routing on the
+# account, and the actual recipient is a secret:
+#
+#   npx wrangler secret put CONTACT_TO     # the inbox that receives enquiries
+#   npx wrangler secret put CONTACT_FROM   # Freya <hello@freya.co.nz>
+
+name = "freya-contact"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+routes = [
+  { pattern = "freya.co.nz/api/contact", zone_name = "freya.co.nz" }
+]
+
+[[send_email]]
+name = "SEB"
+
+[observability]
+enabled = true
