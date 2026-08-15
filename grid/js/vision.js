@@ -59,12 +59,34 @@
     return thr;
   };
 
-  /* opts: {threshold, invert, roi:{x0,y0,x1,y1}, clean} -> Uint8Array mask
+  /* Sample the average colour in a small patch — one pixel is too noisy to
+   * represent "the grey of the tool". */
+  V.sampleColor = function (img, x, y, rad) {
+    rad = rad || 3;
+    const w = img.width, h = img.height, d = img.data;
+    let r = 0, g = 0, b = 0, n = 0;
+    for (let yy = Math.max(0, y - rad); yy <= Math.min(h - 1, y + rad); yy++) {
+      for (let xx = Math.max(0, x - rad); xx <= Math.min(w - 1, x + rad); xx++) {
+        const o = (yy * w + xx) * 4;
+        r += d[o]; g += d[o + 1]; b += d[o + 2]; n++;
+      }
+    }
+    return n ? [Math.round(r / n), Math.round(g / n), Math.round(b / n)] : [0, 0, 0];
+  };
+
+  /* opts: {threshold, invert, roi:{x0,y0,x1,y1}, clean,
+   *        colors:{tool:[[r,g,b],...], bg:[[r,g,b],...]}} -> Uint8Array mask
    *
-   * Polarity is not guessed from the background brightness — that fails as soon
-   * as the frame edge creeps into the picture. Both polarities are segmented and
-   * the one whose blob does NOT run off the edge of the search area wins, which
-   * is what actually distinguishes a tool from the surface under it. */
+   * With colours, each pixel simply joins whichever list it is closest to. That
+   * beats a brightness cut-off whenever tool and background are similarly light
+   * but different hues — a grey-and-white tool on a pale blue bench is the case
+   * that motivated it, and no single threshold separates those at all. Several
+   * samples per side is normal: a two-tone tool wants one of each.
+   *
+   * Without colours it falls back to brightness. Polarity is then not guessed
+   * from the background level — that fails as soon as an edge creeps into the
+   * picture — but decided by segmenting both ways and keeping the blob that does
+   * NOT run off the edge of the search area. */
   V.segment = function (img, opts) {
     opts = opts || {};
     const w = img.width, h = img.height;
@@ -76,14 +98,7 @@
     const roiArea = Math.max(1, (rx1 - rx0 + 1) * (ry1 - ry0 + 1));
     const k = opts.clean == null ? 2 : opts.clean;
 
-    function build(dark) {
-      const m = new Uint8Array(w * h);
-      for (let y = ry0; y <= ry1; y++) {
-        for (let x = rx0; x <= rx1; x++) {
-          const i = y * w + x;
-          m[i] = (dark ? g[i] < thr : g[i] > thr) ? 1 : 0;
-        }
-      }
+    function finish(m) {
       if (k > 0) { erode(m, w, h, k); dilate(m, w, h, k); dilate(m, w, h, k); erode(m, w, h, k); }
       const area = keepLargest(m, w, h);
       // the opening step clears a k-pixel skin, so probe just inside that
@@ -93,7 +108,50 @@
       let touch = 0;
       for (let x = tx0; x <= tx1; x++) { if (m[ty0 * w + x]) touch++; if (m[ty1 * w + x]) touch++; }
       for (let y = ty0; y <= ty1; y++) { if (m[y * w + tx0]) touch++; if (m[y * w + tx1]) touch++; }
-      return { mask: m, area: area, touch: touch, dark: dark };
+      return { mask: m, area: area, touch: touch };
+    }
+    function build(dark) {
+      const m = new Uint8Array(w * h);
+      for (let y = ry0; y <= ry1; y++) {
+        for (let x = rx0; x <= rx1; x++) {
+          const i = y * w + x;
+          m[i] = (dark ? g[i] < thr : g[i] > thr) ? 1 : 0;
+        }
+      }
+      const res = finish(m);
+      res.dark = dark;
+      return res;
+    }
+
+    /* ---- colour classification, when the user has sampled both sides ---- */
+    const col = opts.colors || {};
+    let tool = col.tool || [], back = col.bg || [];
+    if (opts.invert) { const t = tool; tool = back; back = t; }
+    if (tool.length && back.length) {
+      const d = img.data;
+      const m = new Uint8Array(w * h);
+      for (let y = ry0; y <= ry1; y++) {
+        for (let x = rx0; x <= rx1; x++) {
+          const i = y * w + x, o = i * 4;
+          const R = d[o], G = d[o + 1], B = d[o + 2];
+          let dt = Infinity, db = Infinity;
+          for (let s = 0; s < tool.length; s++) {
+            const c = tool[s], e = (R - c[0]) * (R - c[0]) + (G - c[1]) * (G - c[1]) + (B - c[2]) * (B - c[2]);
+            if (e < dt) dt = e;
+          }
+          for (let s = 0; s < back.length; s++) {
+            const c = back[s], e = (R - c[0]) * (R - c[0]) + (G - c[1]) * (G - c[1]) + (B - c[2]) * (B - c[2]);
+            if (e < db) db = e;
+          }
+          m[i] = dt < db ? 1 : 0;
+        }
+      }
+      const res = finish(m);
+      fillHoles(res.mask, w, h);
+      return {
+        mask: res.mask, w: w, h: h, threshold: null, objDark: null, mode: 'colour',
+        area: res.area, clipped: res.touch > 0
+      };
     }
 
     const cands = [build(true), build(false)];

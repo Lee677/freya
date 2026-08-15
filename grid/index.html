@@ -113,6 +113,11 @@
   .steps li.done::before{background:var(--accent);border-color:var(--accent);color:#fff}
   .drop{border:1.5px dashed var(--line);border-radius:10px;padding:1rem;text-align:center;color:var(--faint);font-size:.86rem;cursor:pointer}
   .drop.over{border-color:var(--accent);color:var(--accent)}
+  .swatches{display:flex;flex-wrap:wrap;gap:.3rem;font-size:.74rem;color:var(--faint);grid-column:1/-1}
+  .swatch{width:1.5rem;height:1.5rem;border-radius:5px;border:1px solid var(--line);cursor:pointer;padding:0;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.5)}
+  .swatch:hover{outline:2px solid var(--warn);outline-offset:1px}
+  button.act.armed{background:var(--accent);border-color:var(--accent);color:#fff}
   .prose{max-width:70ch}
   .prose h3{font-family:var(--serif);font-size:1.15rem;margin:1.4rem 0 .3rem}
   .prose p,.prose li{color:var(--muted);font-size:.9rem}
@@ -250,12 +255,12 @@
         <fieldset class="grp" data-when="pocket">
           <div class="legend">Tool pocket</div>
           <div class="row"><label>Outline</label><span class="readout" style="padding:.2rem .4rem" id="bin-poly">none yet</span></div>
-          <div class="row"><label for="bin-pclear">Clearance around tool</label><input type="number" id="bin-pclear" value="0.5" step="0.1"></div>
+          <div class="row"><label for="bin-pclear">Extra room all round<span class="hint">set on the Tool scan tab, where you can see it</span></label>
+            <input type="number" id="bin-pclear" value="0.5" step="0.1"></div>
           <div class="row"><label for="bin-pdepth">Pocket depth</label><input type="number" id="bin-pdepth" value="12" step="0.5"></div>
           <div class="row"><label>Copies X &times; Y</label>
             <span class="two" style="width:9.6rem"><input type="number" id="bin-pcols" value="1" min="1" max="20"><input type="number" id="bin-prows" value="1" min="1" max="20"></span></div>
           <div class="row"><label for="bin-pspace">Gap between copies</label><input type="number" id="bin-pspace" value="4" step="0.5"></div>
-          <div class="row"><label for="bin-pfinger">Finger dish radius<span class="hint">round dip in the pocket floor, 0 = none</span></label><input type="number" id="bin-pfinger" value="9" step="1" min="0"></div>
           <div class="row"><label for="bin-pauto">Auto-size the bin</label><input type="checkbox" id="bin-pauto" checked></div>
         </fieldset>
 
@@ -288,6 +293,20 @@
             <button class="act" id="sc-clearpts">Clear points</button>
             <button class="act primary" id="sc-apply" disabled>Set scale</button>
           </div>
+        </fieldset>
+
+        <fieldset class="grp">
+          <div class="legend">Colours</div>
+          <div class="row"><label>Tool colours<span class="hint">click the tool on the photo &mdash; add one per shade,
+            e.g. the grey and the white</span></label>
+            <button class="act" id="sc-pick-tool" title="Arms colour picking. Every click on the photo samples a small patch of the tool. Add one for each distinct shade the tool has.">Pick</button></div>
+          <div class="row"><span class="swatches" id="sc-sw-tool">none yet</span></div>
+          <div class="row"><label>Background colours<span class="hint">click the surface the tool is lying on</span></label>
+            <button class="act" id="sc-pick-bg" title="Arms colour picking for the background. Sample the bench, paper or mat the tool is sitting on — one per shade if it is not even.">Pick</button></div>
+          <div class="row"><span class="swatches" id="sc-sw-bg">none yet</span></div>
+          <div class="row"><label>&nbsp;<span class="hint">with colours on both sides the trace ignores brightness entirely &mdash;
+            which is the only thing that works for a pale tool on a pale background</span></label>
+            <button class="act" id="sc-clearcols">Clear</button></div>
         </fieldset>
 
         <fieldset class="grp">
@@ -325,6 +344,20 @@
             <button class="act" id="sc-undo" disabled>Undo</button>
             <button class="act" id="sc-reset" disabled>Back to auto-trace</button>
           </div>
+        </fieldset>
+
+        <fieldset class="grp">
+          <div class="legend">Room and finger holes</div>
+          <div class="row"><label for="sc-clear">Extra room all round (mm)<span class="hint">the dashed line is what actually
+            gets cut &mdash; give a snug tool a little so it drops in</span></label>
+            <input type="range" id="sc-clear" min="0" max="40" value="5"
+              title="Grows the pocket outwards from the tool outline, in tenths of a millimetre. 0.5 mm suits most tools; go bigger for something you want to grab quickly, smaller for a tool that should not rattle."></div>
+          <div class="row"><label for="sc-fingerr">Finger hole size<span class="hint">half-round notch cut into the pocket edge</span></label>
+            <input type="range" id="sc-fingerr" min="4" max="20" value="9"
+              title="Radius of each finger hole, in millimetres. It is cut deeper than the pocket floor so you can get a fingertip under the tool and lift it out."></div>
+          <div class="row"><label>Finger holes<span class="hint" id="sc-fingern">none &mdash; press Add, then click the outline
+            wherever you want to lift the tool from</span></label>
+            <button class="act" id="sc-addfinger" title="Arms finger-hole placement. Click the orange outline to add a half-round notch there; click an existing one to take it away. Press again to stop.">Add</button></div>
           <div class="btns">
             <button class="act primary" id="sc-use" disabled>Use in bin &rarr;</button>
             <button class="act" id="sc-svg" disabled>SVG</button>
@@ -393,10 +426,10 @@
      fetches code that matches this markup. Without it, a cached app.js drives
      fresh HTML after a deploy, reads an element that no longer exists, and the
      page dies on the first click — which is exactly what happened once. -->
-<script src="./js/core.js?v=20260815a"></script>
-<script src="./js/exporters.js?v=20260815a"></script>
-<script src="./js/vision.js?v=20260815a"></script>
-<script src="./js/viewer.js?v=20260815a"></script>
-<script src="./js/app.js?v=20260815a"></script>
+<script src="./js/core.js?v=20260815b"></script>
+<script src="./js/exporters.js?v=20260815b"></script>
+<script src="./js/vision.js?v=20260815b"></script>
+<script src="./js/viewer.js?v=20260815b"></script>
+<script src="./js/app.js?v=20260815b"></script>
 </body>
 </html>

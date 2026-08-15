@@ -486,13 +486,17 @@
         const x = (i - (cols - 1) / 2) * pitchX;
         const y = (j - (rows - 1) / 2) * pitchY;
         let solid = keep(keep(M.Manifold.extrude(cs, height)).translate([x, y, zBot]));
-        if (p.fingerR > 0) {
-          // a round dish in the middle of the pocket, cut deeper than the tool
-          // sits, so a finger can get under it — kept inside the pocket walls
-          const r = Math.max(3, Math.min(p.fingerR, bb.d / 2 + clearance));
-          const dz = Math.min(r * 0.9, Math.max(0, zBot - (floorZ || 0) - 0.8));
-          if (dz > 0.3) {
-            const cyl = keep(M.Manifold.cylinder(height + dz, r, r, 48, false).translate([x, y, zBot - dz]));
+
+        // Finger holes: a cylinder centred ON the outline reads as a half-round
+        // notch in plan — the inner half is already pocket. Cut deeper than the
+        // pocket floor so a fingertip gets under the tool rather than merely
+        // beside it, but never through the floor.
+        if (p.fingers && p.fingers.length) {
+          for (const f of p.fingers) {
+            const fr = Math.max(2, f.r || 9);
+            const dz = Math.min(fr * 0.9, Math.max(0, zBot - (floorZ || 0) - 0.8));
+            const cyl = keep(M.Manifold.cylinder(height + dz, fr, fr, 48, false)
+              .translate([x + f.x, y + f.y, zBot - dz]));
             solid = keep(solid.add(cyl));
           }
         }
@@ -502,10 +506,19 @@
     return out;
   };
 
-  /* Grid units needed to hold a pocket layout. */
+  /* Grid units needed to hold a pocket layout. Finger holes stick out past the
+   * outline, so they count towards the space needed. */
   GF.pocketFootprint = function (p, wall, edge) {
     const S = SPEC;
     const bb = GF.polyBBox(p.poly);
+    if (p.fingers) {
+      for (const f of p.fingers) {
+        const fr = Math.max(2, f.r || 9);
+        bb.x0 = Math.min(bb.x0, f.x - fr); bb.x1 = Math.max(bb.x1, f.x + fr);
+        bb.y0 = Math.min(bb.y0, f.y - fr); bb.y1 = Math.max(bb.y1, f.y + fr);
+      }
+      bb.w = bb.x1 - bb.x0; bb.d = bb.y1 - bb.y0;
+    }
     const clearance = p.clearance == null ? 0.4 : p.clearance;
     const cols = Math.max(1, p.cols | 0 || 1), rows = Math.max(1, p.rows | 0 || 1);
     const spacing = p.spacing == null ? 4 : p.spacing;

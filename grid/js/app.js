@@ -16,7 +16,10 @@
     outline: null,   // mm polygon, centred
     scan: {
       bitmap: null, base: null, ppm: null, pts: [], roi: null,
-      contourPx: null, mask: null, work: null
+      contourPx: null, mask: null, work: null,
+      colors: { tool: [], bg: [] },   // sampled rgb, drives the trace
+      fingers: [],                    // {x,y,r} in canvas px, r in mm
+      arm: null                       // 'tool' | 'bg' | 'finger' while placing
     }
   };
 
@@ -179,7 +182,7 @@
       o.pocket = {
         poly: S.outline, depth: num('bin-pdepth'), clearance: num('bin-pclear'),
         cols: int('bin-pcols'), rows: int('bin-prows'), spacing: num('bin-pspace'),
-        fingerR: num('bin-pfinger')
+        fingers: S.fingers || []
       };
       if ($('bin-pauto').checked) {
         const f = GF.pocketFootprint(o.pocket, o.wall, 1.5);
@@ -240,6 +243,8 @@
     cv.width = canvas.width; cv.height = canvas.height;
     S.scan.contourPx = null; S.scan.mask = null; S.scan.tinted = null;
     S.scan.undo = []; S.scan.edited = false; S.scan.traced = null; S.scan.cursor = null;
+    S.scan.fingers = []; S.fingers = [];
+    if ($('sc-fingern')) updateFingerCount();
     refreshEditButtons();
     drawScan();
   }
@@ -287,8 +292,37 @@
       cx.strokeStyle = '#f0721c'; cx.lineWidth = lw; cx.stroke();
       cx.restore();
 
+      // what actually gets cut: the outline grown by the clearance
+      const clr = clearanceMM() * S.scan.ppm;
+      if (clr > 0.5) {
+        cx.save();
+        cx.strokeStyle = 'rgba(240,114,28,.85)';
+        cx.lineWidth = clr * 2;              // a band of exactly the clearance
+        cx.lineJoin = cx.lineCap = 'round';
+        cx.globalAlpha = 0.22;
+        cx.beginPath();
+        S.scan.contourPx.forEach(function (p, i) { i ? cx.lineTo(p[0], p[1]) : cx.moveTo(p[0], p[1]); });
+        cx.closePath(); cx.stroke();
+        cx.restore();
+      }
+
+      // finger holes, drawn as the half-round notch they cut
+      if (S.scan.fingers.length) {
+        const s = dispScale();
+        cx.save();
+        S.scan.fingers.forEach(function (f) {
+          cx.beginPath();
+          cx.arc(f.x, f.y, f.r * S.scan.ppm, 0, 7);
+          cx.fillStyle = 'rgba(240,114,28,.25)';
+          cx.strokeStyle = '#f0721c';
+          cx.lineWidth = 1.8 * s;
+          cx.fill(); cx.stroke();
+        });
+        cx.restore();
+      }
+
       // the brush: show exactly how much of the line the next drag will take
-      if (canEdit() && S.scan.cursor) {
+      if (canEdit() && !S.scan.arm && S.scan.cursor) {
         const s = dispScale();
         cx.save();
         cx.beginPath();
@@ -391,21 +425,108 @@
     u.disabled = !(S.scan.undo && S.scan.undo.length);
     r.disabled = !(S.scan.traced && S.scan.edited);
   }
+  function clearanceMM() { const el = $('sc-clear'); return el ? +el.value / 10 : 0.5; }
+  function fingerR() { const el = $('sc-fingerr'); return el ? +el.value : 9; }
+
   // push the edited polygon back out as millimetres for the bin builder.
   // Editing keeps the line densely sampled so it bends smoothly; the exported
   // shape is thinned back down well below anything a printer can resolve.
+  // Finger holes ride the same transform, or they would land somewhere else.
   function syncOutline(withStats) {
     if (!canEdit()) return;
-    const tidy = V.rdp(S.scan.contourPx, 0.12 * S.scan.ppm);
-    S.outline = V.toMM(tidy, S.scan.ppm);
+    const ppm = S.scan.ppm;
+    const tidy = V.rdp(S.scan.contourPx, 0.12 * ppm);
+    const mm = tidy.map(function (p) { return [p[0] / ppm, -p[1] / ppm]; });
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of mm) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }
+    const cx0 = (x0 + x1) / 2, cy0 = (y0 + y1) / 2;
+    S.outline = mm.map(function (p) { return [p[0] - cx0, p[1] - cy0]; });
+    S.fingers = S.scan.fingers.map(function (f) {
+      return { x: f.x / ppm - cx0, y: -f.y / ppm - cy0, r: f.r };
+    });
+    $('bin-pclear').value = fmt(clearanceMM(), 2);
     const st = V.polyStats(S.outline);
     $('bin-poly').textContent = fmt(st.w, 1) + ' × ' + fmt(st.d, 1) + ' mm, ' + st.n + ' pts';
     if (withStats) {
+      const c = clearanceMM();
       readout('Outline: <b>' + fmt(st.w, 1) + ' × ' + fmt(st.d, 1) + ' mm</b>, ' +
         fmt(st.area / 100, 1) + ' cm²' + (S.scan.edited ? ' · reshaped by hand' : '') + '\n' +
-        'Not covering the tool? Drag the orange line — it bends toward your cursor.\n' +
+        'pocket cut ' + fmt(c, 2) + ' mm larger all round → <b>' +
+        fmt(st.w + 2 * c, 1) + ' × ' + fmt(st.d + 2 * c, 1) + ' mm</b>' +
+        (S.fingers && S.fingers.length ? ' · ' + S.fingers.length + ' finger hole' + (S.fingers.length > 1 ? 's' : '') : '') + '\n' +
         'Happy with it? Send it to the Bin tab.');
     }
+  }
+
+  /* ---- colour sampling and finger holes -------------------------------- */
+  function armTool(which) {
+    S.scan.arm = S.scan.arm === which ? null : which;
+    $('sc-pick-tool').classList.toggle('armed', S.scan.arm === 'tool');
+    $('sc-pick-bg').classList.toggle('armed', S.scan.arm === 'bg');
+    $('sc-addfinger').classList.toggle('armed', S.scan.arm === 'finger');
+    status(S.scan.arm === 'tool' ? 'click the tool in the photo — one click per shade'
+      : S.scan.arm === 'bg' ? 'click the surface the tool is lying on'
+        : S.scan.arm === 'finger' ? 'click the outline where you want to lift the tool from'
+          : '');
+    cv.style.cursor = S.scan.arm ? 'crosshair' : 'default';
+    drawScan();
+  }
+  on('sc-pick-tool', 'click', function () { armTool('tool'); });
+  on('sc-pick-bg', 'click', function () { armTool('bg'); });
+  on('sc-addfinger', 'click', function () { armTool('finger'); });
+  on('sc-clearcols', 'click', function () {
+    S.scan.colors = { tool: [], bg: [] };
+    renderSwatches();
+    status('colours cleared — the trace is back to using brightness');
+  });
+  addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && S.scan.arm) armTool(S.scan.arm);
+  });
+
+  function renderSwatches() {
+    [['tool', 'sc-sw-tool'], ['bg', 'sc-sw-bg']].forEach(function (pair) {
+      const list = S.scan.colors[pair[0]], host = $(pair[1]);
+      host.innerHTML = '';
+      if (!list.length) { host.textContent = 'none yet'; return; }
+      list.forEach(function (c, i) {
+        const b = document.createElement('button');
+        b.className = 'swatch';
+        b.style.background = 'rgb(' + c.join(',') + ')';
+        b.title = 'rgb(' + c.join(', ') + ') — click to remove';
+        b.addEventListener('click', function () { list.splice(i, 1); renderSwatches(); });
+        host.appendChild(b);
+      });
+    });
+  }
+
+  function sampleAt(p) {
+    const c2 = document.createElement('canvas');
+    c2.width = cv.width; c2.height = cv.height;
+    const g2 = c2.getContext('2d', { willReadFrequently: true });
+    g2.drawImage(S.scan.base, 0, 0);
+    const img = g2.getImageData(0, 0, cv.width, cv.height);
+    return V.sampleColor(img, Math.round(p[0]), Math.round(p[1]), Math.max(2, Math.round(dispScale() * 2)));
+  }
+
+  function fingerHitPx() { return fingerR() * (S.scan.ppm || 1); }
+  function addFinger(p) {
+    // clicking an existing hole removes it
+    for (let i = 0; i < S.scan.fingers.length; i++) {
+      const f = S.scan.fingers[i];
+      if (Math.hypot(p[0] - f.x, p[1] - f.y) <= f.r * (S.scan.ppm || 1)) {
+        S.scan.fingers.splice(i, 1);
+        syncOutline(true); updateFingerCount(); drawScan();
+        return;
+      }
+    }
+    S.scan.fingers.push({ x: p[0], y: p[1], r: fingerR() });
+    syncOutline(true); updateFingerCount(); drawScan();
+  }
+  function updateFingerCount() {
+    const n = S.scan.fingers.length;
+    $('sc-fingern').textContent = n
+      ? n + ' placed — click one again to take it away'
+      : 'none — press Add, then click the outline wherever you want to lift the tool from';
   }
 
   let drag = null;
@@ -413,6 +534,34 @@
     if (!S.scan.base) return;
     const p = evPos(e);
     S.scan.cursor = p;
+
+    // an armed tool claims the click outright
+    if (S.scan.arm === 'tool' || S.scan.arm === 'bg') {
+      const c = sampleAt(p);
+      const other = S.scan.colors[S.scan.arm === 'tool' ? 'bg' : 'tool'];
+      // A sample that matches the opposite list is almost always a mis-click on
+      // the wrong side of the edge. Taken silently it makes the trace worse in a
+      // way that looks like the feature not working, so refuse it.
+      const clash = other.some(function (o) {
+        return Math.hypot(c[0] - o[0], c[1] - o[1], c[2] - o[2]) < 30;
+      });
+      if (clash) {
+        status('that is the colour you already gave as ' +
+          (S.scan.arm === 'tool' ? 'background' : 'tool') + ' — click further inside the ' +
+          (S.scan.arm === 'tool' ? 'tool' : 'background'), 'err');
+        return;
+      }
+      S.scan.colors[S.scan.arm].push(c);
+      renderSwatches();
+      status(S.scan.arm === 'tool' ? 'tool colour added — click another shade, or press Pick again to stop'
+        : 'background colour added — press Pick again to stop');
+      return;
+    }
+    if (S.scan.arm === 'finger') {
+      if (!canEdit()) { status('trace an outline first', 'err'); return; }
+      addFinger(p);
+      return;
+    }
 
     // Before the scale is set the canvas does one thing only: mark the two ends
     // of a known distance. Dragging from one to the other is the gesture people
@@ -532,6 +681,12 @@
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undoEdit(); }
   });
   on('sc-brush', 'input', function () { if (S.scan.cursor) drawScan(); });
+  on('sc-clear', 'input', function () { if (canEdit()) { syncOutline(true); drawScan(); } });
+  on('sc-fingerr', 'input', function () {
+    // resize any hole that has not been individually placed since
+    S.scan.fingers.forEach(function (f) { f.r = fingerR(); });
+    if (canEdit()) { syncOutline(true); drawScan(); }
+  });
 
   function loadFile(file) {
     if (!file) return;
@@ -609,6 +764,7 @@
         threshold: $('sc-auto').checked ? null : int('sc-thr'),
         invert: $('sc-inv').checked,
         clean: int('sc-clean'),
+        colors: S.scan.colors,
         roi: S.scan.roi ? {
           x0: Math.round(S.scan.roi.x0), y0: Math.round(S.scan.roi.y0),
           x1: Math.round(S.scan.roi.x1), y1: Math.round(S.scan.roi.y1)
@@ -633,7 +789,10 @@
       const st = V.polyStats(S.outline);
       readout('Outline: <b>' + fmt(st.w, 1) + ' × ' + fmt(st.d, 1) + ' mm</b>, ' +
         fmt(st.area / 100, 1) + ' cm²\n' +
-        'cut-off ' + seg.threshold + (seg.objDark ? ' (tool darker than background)' : ' (tool lighter than background)') + '\n' +
+        (seg.mode === 'colour'
+          ? 'matched on the ' + S.scan.colors.tool.length + ' tool and ' +
+            S.scan.colors.bg.length + ' background colours you picked\n'
+          : 'cut-off ' + seg.threshold + (seg.objDark ? ' (tool darker than background)' : ' (tool lighter than background)') + '\n') +
         (seg.clipped ? '<span class="w">the shape runs off the edge of the search box — drag a wider one</span>\n' : '') +
         '<b>Not covering the whole tool?</b> Drag the orange line — it bends toward your\n' +
         'cursor. Then send it to the Bin tab.');
