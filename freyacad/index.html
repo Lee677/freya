@@ -45,29 +45,35 @@ if(!window.THREE){
 </script>
 
 <script type="module">
+  /* Open CASCADE (the kernel FreeCAD uses) compiled to WASM — real B-rep
+   * solids, so fillets are genuine kernel blend surfaces, not mesh tricks.
+   * The .wasm is ~48 MB raw (~11 MB compressed over the wire) and too big for
+   * Cloudflare Pages' per-file limit, so it comes from a CDN and is cached by
+   * the browser after the first visit. All modelling still runs locally. */
   const SOURCES = [
-    './manifold.js',
-    'https://cdn.jsdelivr.net/npm/manifold-3d@3/manifold.js',
-    'https://unpkg.com/manifold-3d@3/manifold.js'
+    'https://cdn.jsdelivr.net/npm/opencascade.js@2.0.0-beta.b5ff984/dist/',
+    'https://unpkg.com/opencascade.js@2.0.0-beta.b5ff984/dist/'
   ];
   async function go(){
-    let Module=null, base='';
-    for(const src of SOURCES){
+    let oc=null, lastErr=null;
+    for(const base of SOURCES){
       try{
-        const mod = await import(/* @vite-ignore */ src);
-        if(mod && mod.default){ Module = mod.default; base = src.replace(/manifold\.js(?:\?.*)?$/, ''); break; }
-      }catch(_){ /* try next source */ }
+        const mod = await import(/* @vite-ignore */ base + 'opencascade.full.js');
+        if(mod && mod.default){
+          oc = await mod.default({ locateFile: (p)=> base + p });
+          break;
+        }
+      }catch(e){ lastErr = e; }
     }
-    if(!Module) throw new Error('manifold-3d could not be loaded from the local file or any CDN.');
-    const wasm = await Module({ locateFile: (p)=> p.endsWith('.wasm') ? (base + 'manifold.wasm') : p });
-    if(typeof wasm.setup === 'function') wasm.setup();
-    window.MANIFOLD = wasm;
-    window.dispatchEvent(new Event('manifold-ready'));
+    if(!oc) throw new Error('Open CASCADE could not be loaded from any CDN. '
+      +(lastErr&&lastErr.message||''));
+    window.OCCT = oc;
+    window.dispatchEvent(new Event('kernel-ready'));
   }
   go().catch(err=>{
     window.dispatchEvent(new ErrorEvent('error', { message:
-      'Could not start the 3D boolean engine (manifold-3d). On a restricted '
-      +'network, place manifold.js AND manifold.wasm next to index.html. ('+(err&&err.message||err)+')' }));
+      'Could not start the CAD kernel (Open CASCADE). Check your network — the '
+      +'kernel loads from a CDN on first visit. ('+(err&&err.message||err)+')' }));
   });
 </script>
 <style>
@@ -81,6 +87,8 @@ if(!window.THREE){
     --radius: 8px;
     --mono: "Fira Code", ui-monospace, "SF Mono", "JetBrains Mono", monospace;
     --sans: "Google Sans", "Product Sans", "Inter", system-ui, sans-serif;
+    --serif: "Palatino Linotype", "Book Antiqua", Palatino, Georgia, "Times New Roman", serif;
+    --accent-f: #8aa2ff; /* the home-page accent, dark-mode variant */
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;overflow:hidden}
@@ -90,10 +98,20 @@ if(!window.THREE){
   /* toolbar */
   .toolbar{grid-column:1/3;display:flex;align-items:center;gap:12px;padding:0 14px;height:50px;
     background:linear-gradient(180deg,var(--panel),#080a0f);border-bottom:2px solid var(--g-blue);box-shadow:0 0 15px rgba(66,133,244,0.25);z-index:30}
-  .brand{display:flex;align-items:baseline;gap:8px;user-select:none}
-  .brand .mark{font-family:var(--mono);font-weight:700;letter-spacing:.16em;font-size:14px;text-shadow:0 0 8px rgba(255,255,255,0.2)}
-  .brand .mark b{color:var(--g-red);text-shadow:0 0 10px var(--g-red)}
-  .brand .ver{font-family:var(--mono);font-size:10px;color:var(--g-yellow);letter-spacing:.08em;text-shadow:0 0 6px rgba(251,188,5,0.5)}
+  /* the home-page freya wordmark, inverted for the dark UI */
+  a.brand{display:flex;align-items:center;user-select:none;text-decoration:none;color:var(--text)}
+  .brand .mark{font-family:var(--serif);font-weight:600;font-size:21px;letter-spacing:-.015em;line-height:1;position:relative;display:inline-block;padding:2px .6em 3px 0}
+  .brand .mark::after{content:"";position:absolute;left:0;right:.6em;bottom:-2px;height:2px;background:linear-gradient(90deg,var(--accent-f),transparent)}
+  .brand .asterism{position:absolute;right:.02em;top:-.30em;width:1.72em;height:.62em;overflow:visible;pointer-events:none}
+  .brand .asterism .link{fill:none;stroke:var(--accent-f);stroke-width:.9;stroke-linecap:round;stroke-linejoin:round;opacity:.55}
+  .brand .asterism .s{fill:var(--accent-f)}
+  .brand .asterism .halo-in{stop-color:var(--accent-f);stop-opacity:.40}
+  .brand .asterism .halo-mid{stop-color:var(--accent-f);stop-opacity:.13}
+  .brand .asterism .halo-out{stop-color:var(--accent-f);stop-opacity:0}
+  .brand .asterism .tw-a{animation:tw-a 6.5s ease-in-out 2.2s infinite}
+  .brand .asterism .tw-b{animation:tw-b 5.2s ease-in-out 3.1s infinite}
+  @keyframes tw-a{0%,100%{opacity:1}55%{opacity:.48}}
+  @keyframes tw-b{0%,100%{opacity:.8}45%{opacity:.34}}
   .sep{width:1px;height:22px;background:var(--line);flex:0 0 auto}
   .tb-spacer{flex:1}
   .tb-group{display:flex;align-items:center;gap:7px}
@@ -184,6 +202,10 @@ if(!window.THREE){
   .hint.show{opacity:1}
   .hint kbd{font-family:var(--mono);font-size:10px;color:var(--g-yellow);background:var(--panel-2);border:1px solid var(--g-yellow);border-radius:4px;padding:1px 6px;box-shadow:0 0 4px rgba(251,188,5,0.2)}
   .hint .pip{width:6px;height:6px;border-radius:50%;background:var(--g-yellow);box-shadow:0 0 8px var(--g-yellow)}
+  .demo-btn{position:absolute;bottom:58px;left:50%;transform:translateX(-50%);z-index:8;
+    background:rgba(13,17,23,.85);backdrop-filter:blur(6px);border:1px solid var(--g-blue);border-radius:999px;
+    padding:8px 16px;font-size:12px;box-shadow:0 0 15px rgba(66,133,244,.2)}
+  .demo-btn:hover{background:rgba(66,133,244,.18);box-shadow:0 0 20px rgba(66,133,244,.45)}
   .axis-tag{position:absolute;bottom:13px;left:15px;font-family:var(--mono);font-size:10px;color:var(--muted-2);letter-spacing:.1em;pointer-events:none}
   .axis-tag b{color:var(--g-green);text-shadow:0 0 4px var(--g-green)}
 
@@ -195,13 +217,24 @@ if(!window.THREE){
   .status-fill{flex:1}
   .status-coords{padding:0 15px}.status-coords .v{color:var(--text)}
 
-  .menu{position:absolute;background:rgba(18,22,30,0.95);backdrop-filter:blur(10px);border:1px solid var(--g-blue);border-radius:9px;padding:6px;z-index:50;box-shadow:0 18px 40px -10px rgba(0,0,0,.9),0 0 20px rgba(66,133,244,0.15);min-width:178px;display:none}
+  .menu{position:absolute;background:rgba(18,22,30,0.95);backdrop-filter:blur(10px);border:1px solid var(--g-blue);border-radius:9px;padding:6px;z-index:50;box-shadow:0 18px 40px -10px rgba(0,0,0,.9),0 0 20px rgba(66,133,244,0.15);min-width:178px;width:max-content;display:none;max-height:min(78vh,620px);overflow-y:auto}
   .menu.open{display:block}
   .menu-sect{font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:var(--g-blue);padding:7px 9px 4px;text-transform:uppercase;text-shadow:0 0 4px rgba(66,133,244,0.4)}
-  .menu button{width:100%;justify-content:flex-start;background:transparent;border:0;padding:8px 9px;font-size:12.5px;border-radius:6px;box-shadow:none}
+  .menu button{display:flex;width:100%;justify-content:flex-start;background:transparent;border:0;padding:7px 9px;font-size:12.5px;border-radius:6px;box-shadow:none;gap:9px}
   .menu button:hover{background:rgba(66,133,244,.15)}
   .menu button .fi{color:var(--muted)}
   .menu button[disabled]{opacity:.3}
+
+  /* svg pictograms */
+  .fi.ic-s{width:20px;height:20px;display:inline-flex;flex:0 0 auto}
+  .fi.ic-s svg{width:100%;height:100%}
+  .feat .fi.ic-s{width:19px;height:19px}
+  .dock button .fi.ic-s{width:21px;height:21px}
+  .toolbar button .fi.ic-s{width:18px;height:18px}
+  /* icons-only mode: labels collapse, pictograms remain */
+  body.icons-only .toolbar button .lbl,body.icons-only .dock button .lbl{display:none}
+  body.icons-only .toolbar button,body.icons-only .dock button{padding:7px 8px}
+  #btn-labels.active{background:rgba(66,133,244,.2);border-color:var(--g-blue)}
 
   @media (max-width:900px){
     #app{grid-template-columns:0 1fr}
@@ -232,7 +265,27 @@ if(!window.THREE){
 <body>
 <div id="app">
   <header class="toolbar">
-    <div class="brand"><span class="mark"><b>F</b>REYA</span></div>
+    <a class="brand" href="/" title="freya.co.nz — home"><span class="mark">freya<svg class="asterism" viewBox="0 0 100 36" aria-hidden="true" focusable="false">
+      <defs>
+        <radialGradient id="bhalo">
+          <stop offset="0%" class="halo-in"/>
+          <stop offset="42%" class="halo-mid"/>
+          <stop offset="100%" class="halo-out"/>
+        </radialGradient>
+      </defs>
+      <polyline class="link" points="5,32 24,24.5 41,28 58,16 79,19.5 92,6"/>
+      <g class="stars">
+        <circle class="s" cx="5" cy="32" r="1.1" opacity=".6"/>
+        <circle class="s tw-b" cx="24" cy="24.5" r="1.5" opacity=".8"/>
+        <circle class="s" cx="41" cy="28" r="1" opacity=".55"/>
+        <circle class="s" cx="58" cy="16" r="1.6" opacity=".85"/>
+        <circle class="s" cx="79" cy="19.5" r="1.1" opacity=".6"/>
+        <circle cx="92" cy="6" r="9" fill="url(#bhalo)"/>
+        <circle class="s tw-a" cx="92" cy="6" r="2.3"/>
+        <circle class="s" cx="14" cy="9" r=".7" opacity=".3"/>
+        <circle class="s" cx="68" cy="31" r=".6" opacity=".26"/>
+      </g>
+    </svg></span></a>
     <div class="sep"></div>
     <div class="tb-group" id="tb-main">
       <button id="btn-add" class="btn-primary"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 3v10M3 8h10"/></svg>Add feature</button>
@@ -249,10 +302,12 @@ if(!window.THREE){
       <input type="file" id="file-load" style="display:none" accept=".json,.sketchcad">
       <div class="sep"></div>
       <button id="btn-units" class="btn-ghost">Units: mm</button>
+      <button id="btn-labels" class="btn-ghost" title="Show or hide button labels — icons only">Aa</button>
       <button id="btn-iso" class="btn-ghost">Iso view</button>
       <button id="btn-fit" class="btn-ghost">Fit</button>
       <div class="sep"></div>
       <button id="btn-export" disabled>Export STL</button>
+      <button id="btn-step" disabled title="True B-rep STEP straight from the Open CASCADE kernel — real planes, cylinders and blend surfaces, not tessellated facets.">STEP</button>
       <button id="btn-new" class="btn-ghost btn-danger">New part</button>
     </div>
   </header>
@@ -277,23 +332,29 @@ if(!window.THREE){
       <button data-tool="erase">Erase</button>
     </div>
     <div class="hint" id="hint"></div>
+    <button id="btn-demo" class="demo-btn" style="display:none" title="Builds an 11-feature pillow-block bearing mount — explore or edit every step in the feature tree">⚙ Load the demo part — a pillow-block bearing</button>
   </main>
 
   <div class="menu" id="menu">
     <div class="menu-sect">Sketch</div>
-    <button data-add="sketch-top"><span class="fi">▦</span>Sketch · Top plane</button>
-    <button data-add="sketch-front"><span class="fi">▤</span>Sketch · Front plane</button>
-    <button data-add="sketch-right"><span class="fi">▥</span>Sketch · Right plane</button>
-    <button data-add="sketch-face"><span class="fi">◈</span>Sketch · on a face</button>
+    <button data-add="sketch-top" data-ic="sketch">Sketch · Top plane</button>
+    <button data-add="sketch-front" data-ic="sketch">Sketch · Front plane</button>
+    <button data-add="sketch-right" data-ic="sketch">Sketch · Right plane</button>
+    <button data-add="sketch-face" data-ic="face-sketch">Sketch · on a face</button>
     <div class="menu-sect">Features</div>
-    <button data-add="extrude"><span class="fi">⬓</span>Extrude boss</button>
-    <button data-add="cut"><span class="fi">⬒</span>Extrude cut</button>
-    <button data-add="fillet"><span class="fi">◜</span>Fillet</button>
-    <button data-add="chamfer"><span class="fi">◝</span>Chamfer</button>
+    <button data-add="extrude" data-ic="extrude">Extrude boss</button>
+    <button data-add="cut" data-ic="cut">Extrude cut</button>
+    <button data-add="revolve" data-ic="revolve">Revolve boss</button>
+    <button data-add="rcut" data-ic="rcut">Revolve cut</button>
+    <button data-add="fillet" data-ic="fillet">Fillet</button>
+    <button data-add="chamfer" data-ic="chamfer">Chamfer</button>
     <div class="menu-sect">Transform</div>
-    <button data-add="mirror"><span class="fi">⧉</span>Mirror</button>
-    <button data-add="lpattern"><span class="fi">⋯</span>Linear pattern</button>
-    <button data-add="cpattern"><span class="fi">❋</span>Circular pattern</button>
+    <button data-add="mirror" data-ic="mirror">Mirror</button>
+    <button data-add="lpattern" data-ic="lpattern">Linear pattern</button>
+    <button data-add="cpattern" data-ic="cpattern">Circular pattern</button>
+    <div class="menu-sect">Reference</div>
+    <button data-add="dplane" data-ic="dplane">Add plane</button>
+    <button data-add="daxis" data-ic="daxis">Add axis</button>
   </div>
 </div>
 
@@ -484,6 +545,89 @@ const CSG = (function(){
   };
   function frameClone(f){return {o:f.o.clone(),u:f.u.clone(),v:f.v.clone(),n:f.n.clone()};}
 
+  /* ---- clickable datum planes, shown while the part is empty ---- */
+  const datumGroup=new THREE.Group(); datumGroup.visible=false; scene.add(datumGroup);
+  const datumPlanes=[];
+  let hoveredDatum=null;
+  (function buildDatumPlanes(){
+    const SZ=9;
+    function label(text){
+      const c=document.createElement('canvas');c.width=256;c.height=64;
+      const g=c.getContext('2d');
+      g.font='600 34px "Fira Code",Consolas,monospace';g.textAlign='center';g.textBaseline='middle';
+      g.fillStyle='#8ab0f8';g.fillText(text.toUpperCase(),128,34);
+      const t=new THREE.CanvasTexture(c);t.minFilter=THREE.LinearFilter;
+      const s=new THREE.Sprite(new THREE.SpriteMaterial({map:t,transparent:true,depthTest:false,opacity:0.9}));
+      s.scale.set(3.4,0.85,1); s.renderOrder=4; return s;
+    }
+    for(const name of ['Top','Front','Right']){
+      const fr=DATUM[name];
+      const m=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
+        new THREE.MeshBasicMaterial({color:0x4285F4,transparent:true,opacity:0.06,side:THREE.DoubleSide,depthWrite:false}));
+      m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(fr.u,fr.v,fr.n));
+      m.position.copy(fr.o);
+      m.userData.plane=name; m.renderOrder=1;
+      const cor=[[-SZ/2,-SZ/2],[SZ/2,-SZ/2],[SZ/2,SZ/2],[-SZ/2,SZ/2]]
+        .map(([a,b])=>fr.o.clone().addScaledVector(fr.u,a).addScaledVector(fr.v,b));
+      const border=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(cor),
+        new THREE.LineBasicMaterial({color:0x4285F4,transparent:true,opacity:0.45}));
+      border.renderOrder=2; m.userData.border=border;
+      const lb=label(name);
+      lb.position.copy(fr.o).addScaledVector(fr.u,SZ/2-1.7).addScaledVector(fr.v,SZ/2-0.65);
+      datumGroup.add(m); datumGroup.add(border); datumGroup.add(lb);
+      datumPlanes.push(m);
+    }
+  })();
+  function setDatumHover(m){
+    if(hoveredDatum===m)return;
+    if(hoveredDatum){
+      hoveredDatum.material.color.set(0x4285F4);hoveredDatum.material.opacity=0.06;
+      hoveredDatum.userData.border.material.color.set(0x4285F4);hoveredDatum.userData.border.material.opacity=0.45;
+    }
+    hoveredDatum=m;
+    if(m){
+      m.material.color.set(0xFBBC05);m.material.opacity=0.16;
+      m.userData.border.material.color.set(0xFBBC05);m.userData.border.material.opacity=1;
+    }
+  }
+  function pickDatum(e){
+    const r=canvas.getBoundingClientRect();ndc.x=((e.clientX-r.left)/r.width)*2-1;ndc.y=-((e.clientY-r.top)/r.height)*2+1;
+    raycaster.setFromCamera(ndc,camera);
+    const h=raycaster.intersectObjects(datumPlanes,false)[0];
+    return h?h.object:null;
+  }
+  function updateDatumVis(){
+    datumGroup.visible=(mode==='model')&&features.length===0;
+    if(!datumGroup.visible)setDatumHover(null);
+    const db=$('btn-demo'); if(db)db.style.display=datumGroup.visible?'':'none';
+  }
+
+  /* ---- demo part: an 11-feature pillow-block bearing mount ----
+     Built with the app itself; the fillet/chamfer seeds are real mesh-edge
+     descriptors captured from that session, matched to B-rep edges on load. */
+  const DEMO_PART=[
+    {"id":1,"type":"sketch","name":"Base profile","plane":{"kind":"datum","name":"Top"},"entities":[{"type":"rect","a":{"x":-7,"y":-4.5},"b":{"x":7,"y":4.5}}],"fillet":0,"chamfer":0,"suppressed":false},
+    {"id":2,"type":"extrude","name":"Base","sketchId":1,"depth":2.5,"symmetric":false,"flip":false,"merge":true,"suppressed":false},
+    {"id":3,"type":"fillet","name":"Corner fillets","kind":"fillet","r":1.2,"propagate":true,"seeds":[{"mid":[-7,1.25,4.5],"dir":[0,-1,0]},{"mid":[7,1.25,4.5],"dir":[0,1,0]},{"mid":[7,1.25,-4.5],"dir":[0,1,0]},{"mid":[-7,1.25,-4.5],"dir":[0,1,0]}],"suppressed":false},
+    {"id":4,"type":"sketch","name":"Boss profile","plane":{"kind":"datum","name":"Front"},"entities":[{"type":"circle","c":{"x":0,"y":4.5},"r":3}],"fillet":0,"chamfer":0,"suppressed":false},
+    {"id":5,"type":"extrude","name":"Bearing boss","sketchId":4,"depth":5,"symmetric":true,"flip":false,"merge":true,"suppressed":false},
+    {"id":6,"type":"fillet","name":"Boss blend","kind":"fillet","r":0.6,"propagate":true,"seeds":[{"mid":[-2.23607,2.5,0],"dir":[0,0,1]},{"mid":[0,2.5,-2.5],"dir":[-1,0,0]},{"mid":[2.23607,2.5,0],"dir":[0,0,1]},{"mid":[0,2.5,2.5],"dir":[-1,0,0]}],"suppressed":false},
+    {"id":7,"type":"sketch","name":"Bore profile","plane":{"kind":"datum","name":"Front"},"entities":[{"type":"circle","c":{"x":0,"y":4.5},"r":1.8}],"fillet":0,"chamfer":0,"suppressed":false},
+    {"id":8,"type":"cut","name":"Bore","sketchId":7,"depth":3,"through":true,"flip":true,"suppressed":false},
+    {"id":9,"type":"fillet","name":"Bore chamfers","kind":"chamfer","r":0.35,"propagate":true,"seeds":[{"mid":[-1.24047,3.20446,2.5],"dir":[-0.72229,0.69159,0]},{"mid":[-1.24047,3.20446,-2.5],"dir":[0.72229,-0.69159,0]}],"suppressed":false},
+    {"id":10,"type":"sketch","name":"Bolt holes","plane":{"kind":"datum","name":"Top"},"entities":[{"type":"circle","c":{"x":-5.5,"y":0},"r":0.8},{"type":"circle","c":{"x":5.5,"y":0},"r":0.8}],"fillet":0,"chamfer":0,"suppressed":false},
+    {"id":11,"type":"cut","name":"Bolt holes cut","sketchId":10,"depth":3,"through":true,"flip":true,"suppressed":false}
+  ];
+  function loadDemo(){
+    features=JSON.parse(JSON.stringify(DEMO_PART));
+    uid=Math.max(...features.map(f=>f.id))+1;
+    rollbackIndex=features.length;
+    selId=null; editing=null; selectedEdges=[]; hoveredEdge=null; closeProps(); setMode('model');
+    rebuild();
+    controls.target.set(0,2.6,0); controls.sph.set(26,1.05,0.7); controls.unlock(); controls.update();
+    setHint('Pillow-block bearing — double-click any feature in the tree to edit it');
+  }
+
   /* ============================ FEATURE MODEL ============================ */
   let features=[];        
   let rollbackIndex=0;    
@@ -496,6 +640,7 @@ const CSG = (function(){
   const sketchData={};    
   const sketchOverlay=new THREE.Group(); scene.add(sketchOverlay);
   const previewOverlay=new THREE.Group(); scene.add(previewOverlay);
+  const refOverlay=new THREE.Group(); scene.add(refOverlay);
 
   /* ---- sketch -> geometry helpers ---- */
   function polyArea(p){let a=0;for(let i=0;i<p.length;i++){const q=p[(i+1)%p.length];a+=p[i].x*q.y-q.x*p[i].y;}return a/2;}
@@ -762,6 +907,279 @@ const CSG = (function(){
     return g;
   }
 
+  /* ===================== OPEN CASCADE KERNEL ADAPTER =====================
+   * Everything below builds real B-rep solids with OCCT. The mesh pipeline
+   * (display, edge picking, STL) hangs off tessellations of these shapes.
+   * The old mesh-CSG fillet machinery further down is dead code kept only to
+   * minimise churn; nothing calls it any more. */
+  let resultShapes = [];
+  function OC(){ const o = window.OCCT; if(!o) throw new Error('CAD kernel not ready'); return o; }
+  function fpt(frame, x, y, w){
+    const p = frame.o.clone().addScaledVector(frame.u, x).addScaledVector(frame.v, y);
+    if(w) p.addScaledVector(frame.n, w);
+    return p;
+  }
+  const OCK = {};
+  OCK.wireFromPts = function(pts2, frame, zoff){
+    const oc = OC();
+    const mp = new oc.BRepBuilderAPI_MakePolygon_1();
+    for(const q of pts2){ const p = fpt(frame, q.x, q.y, zoff); mp.Add_1(new oc.gp_Pnt_3(p.x, p.y, p.z)); }
+    mp.Close();
+    return mp.Wire();
+  };
+  OCK.circleWire = function(c, r, frame, zoff){
+    const oc = OC();
+    const o3 = fpt(frame, c.x, c.y, zoff);
+    const ax = new oc.gp_Ax2_3(new oc.gp_Pnt_3(o3.x, o3.y, o3.z), new oc.gp_Dir_4(frame.n.x, frame.n.y, frame.n.z));
+    const edge = new oc.BRepBuilderAPI_MakeEdge_8(new oc.gp_Circ_2(ax, r)).Edge();
+    return new oc.BRepBuilderAPI_MakeWire_2(edge).Wire();
+  };
+  /* Sketch entities -> planar faces (outer loops + holes), placed in world.
+   * Circles stay REAL circles so extrusions get true cylindrical walls and
+   * fillets can run all the way round them. */
+  OCK.facesFromSketch = function(sk, zoff){
+    const oc = OC(); const frame = sk.frame;
+    const items = [];
+    for(const e of sk.entities){
+      if(e.type === 'circle'){
+        const segs = 24, poly = [];
+        for(let i = 0; i < segs; i++){ const a = i/segs*2*Math.PI; poly.push({x: e.c.x + e.r*Math.cos(a), y: e.c.y + e.r*Math.sin(a)}); }
+        items.push({ poly, area: Math.PI*e.r*e.r, mk: (hole)=>{ const w = OCK.circleWire(e.c, e.r, frame, zoff); if(hole) w.Reverse(); return w; } });
+      } else {
+        let L = null;
+        if(e.type === 'polygon'){
+          L = []; for(let i = 0; i < e.sides; i++){ const a = e.rot + i/e.sides*Math.PI*2; L.push({x: e.c.x + e.r*Math.cos(a), y: e.c.y + e.r*Math.sin(a)}); }
+        } else if(e.type === 'rect'){
+          L = [{x:e.a.x,y:e.a.y},{x:e.b.x,y:e.a.y},{x:e.b.x,y:e.b.y},{x:e.a.x,y:e.b.y}];
+        } else if(e.type === 'poly' && e.closed && e.pts.length >= 3){
+          L = e.pts;
+        }
+        if(!L) continue;
+        L = applyCorner(sk, L, true);
+        items.push({ poly: L, area: Math.abs(polyArea(L)),
+          mk: (hole)=> OCK.wireFromPts(hole ? cw(L) : ccw(L), frame, zoff) });
+      }
+    }
+    if(!items.length) throw new Error('sketch has no closed profile');
+    items.sort((a,b)=>b.area-a.area);
+    const used = items.map(()=>false), faces = [];
+    for(let i = 0; i < items.length; i++){
+      if(used[i]) continue; used[i] = true;
+      const mf = new oc.BRepBuilderAPI_MakeFace_15(items[i].mk(false), true);
+      for(let j = i+1; j < items.length; j++){
+        if(used[j]) continue;
+        if(pointInPoly(items[j].poly[0], items[i].poly)){ used[j] = true; mf.Add(items[j].mk(true)); }
+      }
+      faces.push(mf.Face());
+    }
+    return faces;
+  };
+  OCK.fuse = function(a, b){
+    const oc = OC();
+    const op = new oc.BRepAlgoAPI_Fuse_3(a, b, new oc.Message_ProgressRange_1());
+    op.Build(new oc.Message_ProgressRange_1());
+    const s = op.Shape();
+    if(s.IsNull()) throw new Error('boolean union failed');
+    return s;
+  };
+  OCK.cut = function(a, b){
+    const oc = OC();
+    const op = new oc.BRepAlgoAPI_Cut_3(a, b, new oc.Message_ProgressRange_1());
+    op.Build(new oc.Message_ProgressRange_1());
+    const s = op.Shape();
+    if(s.IsNull()) throw new Error('boolean cut failed');
+    return s;
+  };
+  OCK.bounds = function(s){
+    const oc = OC();
+    const box = new oc.Bnd_Box_1();
+    oc.BRepBndLib.Add(s, box, false);
+    const mn = box.CornerMin(), mx = box.CornerMax();
+    return { min: [mn.X(), mn.Y(), mn.Z()], max: [mx.X(), mx.Y(), mx.Z()] };
+  };
+  OCK.hit = function(a, b){
+    const A = OCK.bounds(a), B = OCK.bounds(b);
+    return A.max[0] >= B.min[0] && A.min[0] <= B.max[0] &&
+           A.max[1] >= B.min[1] && A.min[1] <= B.max[1] &&
+           A.max[2] >= B.min[2] && A.min[2] <= B.max[2];
+  };
+  OCK.hasSolid = function(s){
+    const oc = OC();
+    return new oc.TopExp_Explorer_2(s, oc.TopAbs_ShapeEnum.TopAbs_SOLID, oc.TopAbs_ShapeEnum.TopAbs_SHAPE).More();
+  };
+  OCK.unionInto = function(shapes, tool){
+    let merged = tool; const keep = [];
+    for(const s of shapes){ if(OCK.hit(s, merged)) merged = OCK.fuse(merged, s); else keep.push(s); }
+    keep.push(merged); return keep;
+  };
+  OCK.subtractFrom = function(shapes, tool){
+    const out = [];
+    for(const s of shapes){
+      if(OCK.hit(s, tool)){ const r = OCK.cut(s, tool); if(OCK.hasSolid(r)) out.push(r); }
+      else out.push(s);
+    }
+    return out;
+  };
+  OCK.extrude = function(sk, depth, opt){
+    const oc = OC(); opt = opt || {};
+    const eps = opt.overhang ? 0.05 : 0;
+    let base = 0; if(opt.symmetric) base = -depth/2; else if(opt.flip) base = -depth;
+    const faces = OCK.facesFromSketch(sk, base - eps);
+    const n = sk.frame.n, d = depth + 2*eps;
+    const vec = new oc.gp_Vec_4(n.x*d, n.y*d, n.z*d);
+    let out = null;
+    for(const f of faces){
+      const s = new oc.BRepPrimAPI_MakePrism_1(f, vec, false, true).Shape();
+      out = out ? OCK.fuse(out, s) : s;
+    }
+    return out;
+  };
+  OCK.revolve = function(sk, angleDeg, axis){
+    const oc = OC();
+    const ang = Math.PI*2*Math.min(360, Math.max(1, angleDeg))/360;
+    const faces = OCK.facesFromSketch(sk, 0);
+    let o = sk.frame.o, dir;
+    if(axis && typeof axis === 'object' && axis.d){ o = axis.o; dir = axis.d; }
+    else dir = axis === 'v' ? sk.frame.v : sk.frame.u;
+    const ax = new oc.gp_Ax1_2(new oc.gp_Pnt_3(o.x, o.y, o.z), new oc.gp_Dir_4(dir.x, dir.y, dir.z));
+    let out = null;
+    for(const f of faces){
+      const s = new oc.BRepPrimAPI_MakeRevol_1(f, ax, ang, true).Shape();
+      out = out ? OCK.fuse(out, s) : s;
+    }
+    return out;
+  };
+  OCK.transformed = function(s, setup){
+    const oc = OC();
+    const t = new oc.gp_Trsf_1();
+    setup(t, oc);
+    return new oc.BRepBuilderAPI_Transform_2(s, t, true).Shape();
+  };
+  OCK.mirror = (s, o, n)=> OCK.transformed(s, (t, oc)=> t.SetMirror_3(
+    new oc.gp_Ax2_3(new oc.gp_Pnt_3(o.x, o.y, o.z), new oc.gp_Dir_4(n.x, n.y, n.z))));
+  OCK.translate = (s, v)=> OCK.transformed(s, (t, oc)=> t.SetTranslation_1(new oc.gp_Vec_4(v[0], v[1], v[2])));
+  OCK.rotate = (s, axis, ang, pt)=> OCK.transformed(s, (t, oc)=> t.SetRotation_1(
+    new oc.gp_Ax1_2(new oc.gp_Pnt_3(pt?pt[0]:0, pt?pt[1]:0, pt?pt[2]:0), new oc.gp_Dir_4(axis[0], axis[1], axis[2])), ang));
+  OCK.uniqueEdges = function(shape){
+    const oc = OC(); const out = [];
+    const ex = new oc.TopExp_Explorer_2(shape, oc.TopAbs_ShapeEnum.TopAbs_EDGE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+    while(ex.More()){
+      const e = oc.TopoDS.Edge_1(ex.Current());
+      if(!oc.BRep_Tool.Degenerated(e) && !out.some(o=>o.edge.IsSame(e))){
+        const c = new oc.BRepAdaptor_Curve_2(e);
+        const t0 = c.FirstParameter(), t1 = c.LastParameter(), pts = [];
+        for(let i = 0; i <= 24; i++){ const p = c.Value(t0 + (t1-t0)*i/24); pts.push([p.X(), p.Y(), p.Z()]); }
+        out.push({edge: e, pts});
+      }
+      ex.Next();
+    }
+    return out;
+  };
+  /* Match a picked seed (midpoint + direction of a tessellated display edge)
+   * to the real B-rep edge it lies on: distance to the sampled POLYLINE (not
+   * just the sample points — a circle chord midpoint can sit well off sparse
+   * samples), with a direction preference so e.g. a cylinder's vertical seam
+   * never steals a click meant for the top circle. */
+  OCK.matchEdges = function(shape, seeds, tol){
+    tol = tol || 0.8;
+    const infos = OCK.uniqueEdges(shape), hits = [];
+    for(const s of seeds){
+      let best = null, bd = 1e9;
+      for(const info of infos){
+        let d = 1e9, segDir = null;
+        for(let i = 0; i + 1 < info.pts.length; i++){
+          const a = info.pts[i], b = info.pts[i+1];
+          const abx=b[0]-a[0], aby=b[1]-a[1], abz=b[2]-a[2];
+          const L2 = abx*abx+aby*aby+abz*abz || 1;
+          let t = ((s.mid[0]-a[0])*abx + (s.mid[1]-a[1])*aby + (s.mid[2]-a[2])*abz) / L2;
+          t = Math.max(0, Math.min(1, t));
+          const dd = Math.hypot(s.mid[0]-(a[0]+abx*t), s.mid[1]-(a[1]+aby*t), s.mid[2]-(a[2]+abz*t));
+          if(dd < d){ d = dd; const L = Math.sqrt(L2); segDir = [abx/L, aby/L, abz/L]; }
+        }
+        if(d >= tol) continue;
+        let score = d;
+        if(s.dir && segDir){
+          const dot = Math.abs(s.dir[0]*segDir[0] + s.dir[1]*segDir[1] + s.dir[2]*segDir[2]);
+          score += (1 - dot) * 0.5;
+        }
+        if(score < bd){ bd = score; best = info; }
+      }
+      if(best && !hits.includes(best)) hits.push(best);
+    }
+    return hits;
+  };
+  /* Real kernel fillets and chamfers: BRepFilletAPI builds true blend
+   * surfaces, handles corners of any shape, and propagates along tangent
+   * chains on its own. This is the whole reason for the kernel swap. */
+  OCK.edgeTreat = function(shapes, seeds, r, kind, previewOnly){
+    const oc = OC(); let any = false;
+    const out = shapes.map(s=>{
+      const hits = OCK.matchEdges(s, seeds);
+      if(!hits.length) return s;
+      any = true;
+      const mk = kind === 'chamfer'
+        ? new oc.BRepFilletAPI_MakeChamfer(s)
+        : new oc.BRepFilletAPI_MakeFillet(s, oc.ChFi3d_FilletShape.ChFi3d_Rational);
+      for(const h of hits) mk.Add_2(r, h.edge);
+      let res;
+      try { res = mk.Shape(); }
+      catch(e){ throw new Error((kind==='chamfer'?'Chamfer':'Fillet')+' of '+r+' failed — usually the radius is too big for this geometry. Try smaller.'); }
+      if(res.IsNull()) throw new Error((kind==='chamfer'?'Chamfer':'Fillet')+' failed on this geometry.');
+      return res;
+    });
+    if(!any){
+      if(previewOnly) return shapes;
+      throw new Error('edge not found (geometry changed)');
+    }
+    return out;
+  };
+  OCK.mesh = function(shape){
+    const oc = OC();
+    const b = OCK.bounds(shape);
+    const diag = Math.hypot(b.max[0]-b.min[0], b.max[1]-b.min[1], b.max[2]-b.min[2]) || 1;
+    const defl = Math.min(0.8, Math.max(0.02, diag*0.004));
+    new oc.BRepMesh_IncrementalMesh_2(shape, defl, false, 0.35, false);
+    const pos = [], idx = [];
+    const fx = new oc.TopExp_Explorer_2(shape, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+    while(fx.More()){
+      const face = oc.TopoDS.Face_1(fx.Current());
+      const loc = new oc.TopLoc_Location_1();
+      const th = oc.BRep_Tool.Triangulation(face, loc, 0);
+      if(!th.IsNull()){
+        const tri = th.get(), trsf = loc.Transformation();
+        const off = pos.length/3, nn = tri.NbNodes();
+        for(let i = 1; i <= nn; i++){ const p = tri.Node(i).Transformed(trsf); pos.push(p.X(), p.Y(), p.Z()); }
+        const rev = face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED;
+        const nt = tri.NbTriangles();
+        for(let i = 1; i <= nt; i++){
+          const t = tri.Triangle(i);
+          const a = t.Value(1)-1+off, b2 = t.Value(2)-1+off, c = t.Value(3)-1+off;
+          if(rev) idx.push(a, c, b2); else idx.push(a, b2, c);
+        }
+      }
+      fx.Next();
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    geo.userData.isCSG = true;
+    return geo;
+  };
+  OCK.stepBlob = function(shapes, name){
+    const oc = OC();
+    const comp = new oc.TopoDS_Compound();
+    const bld = new oc.BRep_Builder();
+    bld.MakeCompound(comp);
+    for(const s of shapes) bld.Add(comp, s);
+    const w = new oc.STEPControl_Writer_1();
+    w.Transfer(comp, oc.STEPControl_StepModelType.STEPControl_AsIs, true, new oc.Message_ProgressRange_1());
+    w.Write(name);
+    const data = oc.FS.readFile(name, {encoding: 'utf8'});
+    oc.FS.unlink(name);
+    return new Blob([data], {type: 'application/step'});
+  };
+
   /* ===================== EDGE TREATMENT (Subtractive Solidworks style) ===================== */
   const vsub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
   const vadd=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
@@ -811,8 +1229,23 @@ const CSG = (function(){
   function parallel(d1,d2){return Math.abs(vdot(d1,d2))>0.94;}
   function ptClose(a,b,t){return Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2])<t;}
   function matchEdge(seed,list){
+    // Score by distance to the SEGMENT, not the midpoint: a seed picked on a
+    // filleted or cut solid often corresponds to a base edge that is longer
+    // than the edge it was picked on, so its midpoint sits far from the base
+    // midpoint while still lying exactly ON the base edge. Midpoint scoring
+    // silently broke fillet grouping whenever an earlier fillet had shortened
+    // the edge by more than 0.6 units.
     let best=null,bd=1e9;
-    for(const e of list){ if(!parallel(seed.dir,e.dir))continue; const d=Math.hypot(seed.mid[0]-e.mid[0],seed.mid[1]-e.mid[1],seed.mid[2]-e.mid[2]); if(d<bd){bd=d;best=e;} }
+    for(const e of list){
+      if(!parallel(seed.dir,e.dir))continue;
+      const ab=vsub(e.b,e.a), L2=vdot(ab,ab)||1;
+      let t=vdot(vsub(seed.mid,e.a),ab)/L2; t=Math.max(0,Math.min(1,t));
+      const q=vadd(e.a,vscale(ab,t));
+      const dSeg=Math.hypot(seed.mid[0]-q[0],seed.mid[1]-q[1],seed.mid[2]-q[2]);
+      const dMid=Math.hypot(seed.mid[0]-e.mid[0],seed.mid[1]-e.mid[1],seed.mid[2]-e.mid[2]);
+      const d=dSeg+0.05*dMid;      // tie-break collinear splits toward the nearer piece
+      if(d<bd){bd=d;best=e;}
+    }
     return bd<0.6?best:null;
   }
   function expandChain(seed,list){
@@ -853,7 +1286,7 @@ const CSG = (function(){
   // rolling-ball cylinder. The cylinder itself is built in applyEdgeTreatment so
   // it can be trimmed to stop exactly at each corner sphere's centre (the capsule
   // join) — extending it past the vertex makes fat tubes that bulge the corner.
-  function buildEdgePieces(e, r, kind){
+  function buildEdgePieces(e, r, kind, overA, overB){
     const M = e.mid, t = vnorm(e.dir);
     const n1 = vnorm(e.n1), n2 = vnorm(e.n2);
     const cosT = Math.max(-1, Math.min(1, vdot(n1, n2)));
@@ -880,12 +1313,13 @@ const CSG = (function(){
     for(let i=1;i<3;i++) shape.lineTo(pts[i][0], pts[i][1]);
     shape.closePath();
 
-    // Overhang so the wedge covers the sharp corner tip up to where the sphere
-    // takes over (corner rounding is the sphere; the wedge just clears the tip).
-    const over = (kind==='fillet') ? r*1.0 : pad;
-    const ext  = e.len + 2*over;
+    // Per-end overhang: the caller says how far past each end of the edge the
+    // wedge may cut (edge a = overA, edge b = overB). Chamfers stay flush.
+    const oA = (kind==='fillet') ? (overA!=null?overA:r) : pad;
+    const oB = (kind==='fillet') ? (overB!=null?overB:r) : pad;
+    const ext  = e.len + oA + oB;
     const geo  = new THREE.ExtrudeGeometry(shape, {depth:ext, bevelEnabled:false, curveSegments:1});
-    geo.translate(0, 0, -ext/2);
+    geo.translate(0, 0, -(e.len/2 + oA));   // a sits at −len/2 along t, b at +len/2
     geo.applyMatrix4(new THREE.Matrix4().makeBasis(
         new THREE.Vector3(...ex), new THREE.Vector3(...ey), new THREE.Vector3(...t)
     ).setPosition(new THREE.Vector3(...O)));
@@ -967,12 +1401,13 @@ const CSG = (function(){
   // with) so they can be re-solved together on the ORIGINAL shape. The earlier
   // features stay in the tree; their rounding is just recomputed as part of this
   // group so the blend is clean instead of stacking a round on a curved face.
-  // Connected fillets are forced to share a radius. Conservative: only groups a
-  // contiguous tail of fillet features that all connect to this one; otherwise
-  // behaves exactly like a normal single-feature fillet.
+  // Every member keeps its OWN radius — each seed carries its r through the
+  // re-solve. Conservative: only groups a contiguous tail of fillet features
+  // that all connect to this one; otherwise behaves exactly like a normal
+  // single-feature fillet.
   function filletGroup(f){
     const idx=features.findIndex(x=>x.id===f.id);
-    const fallback={base:(f._inputGeoms||resultGeoms), seeds:f.seeds.slice(), r:f.r};
+    const fallback={base:(f._inputGeoms||resultGeoms), seeds:f.seeds.map(s=>({mid:s.mid,dir:s.dir,r:f.r}))};
     if(idx<0 || !f._inputGeoms) return fallback;
     const run=[];
     for(let j=idx-1;j>=0;j--){ const p=features[j];
@@ -981,9 +1416,13 @@ const CSG = (function(){
       run.unshift(p);
     }
     if(!run.length) return fallback;
-    const base=run[0]._inputGeoms;
+    // While a member is open in the props panel its draft carries the live
+    // values; use those, or editing that member's radius would not preview —
+    // the group re-solve would keep applying the stale committed radius.
+    const eff=p=>(propsFeat && draftFeat && p.id===propsFeat.id)?draftFeat:p;
+    const base=eff(run[0])._inputGeoms;
     const all=[]; base.forEach(g=>{for(const e of featureEdges(g)) all.push(e);});
-    const feats=[...run,f];
+    const feats=[...run,f].map(eff);
     const ept=feat=>{const pts=[];for(const s of feat.seeds){const m=matchEdge(s,all);if(m){pts.push(m.a,m.b);}}return pts;};
     const pts=feats.map(ept);
     const share=(A,B)=>A.some(p=>B.some(q=>ptClose(p,q,0.05)));
@@ -994,26 +1433,42 @@ const CSG = (function(){
     let start=N-1; while(start-1>=0 && comp.has(start-1)) start--;   // contiguous connected tail
     const members=feats.slice(start);
     if(members.length<2) return fallback;
-    const r=members[0].r;                              // earliest radius wins
-    let seeds=[]; for(const m of members){ m.r=r; for(const s of m.seeds) seeds.push(s); }
-    return {base:members[0]._inputGeoms, seeds, r};
+    // Only equal radii re-solve as one group — that is the case the corner
+    // sphere is exact for. Mixed radii apply sequentially instead: a combined
+    // cutter is unsound there (each fillet's cylinder shields part of the
+    // other fillet's wedge), while sequential application with tangent
+    // propagation lets the smaller fillet follow the bigger fillet's rim.
+    if(members.some(m=>Math.abs(m.r-members[0].r)>1e-9)) return fallback;
+    const seeds=[]; for(const m of members) for(const s of m.seeds) seeds.push({mid:s.mid,dir:s.dir,r:m.r});
+    return {base:eff(members[0])._inputGeoms, seeds};
   }
 
   function applyEdgeTreatment(f){
     const grp=filletGroup(f);
-    resultGeoms = edgeTreatmentCore(grp.base, grp.seeds, grp.r, f.kind, f.propagate, (f===propsFeat?f:null));
+    resultGeoms = edgeTreatmentCore(grp.base, grp.seeds, f.r, f.kind, f.propagate,
+      (f===propsFeat||f===draftFeat)?f:null);
   }
 
   function edgeTreatmentCore(inGeoms, seeds, fr, kind, propagate, previewFeat){
     const all=[];inGeoms.forEach((g,bi)=>{for(const e of featureEdges(g)){e.body=bi;all.push(e);}});
     if(!all.length)throw new Error('no edges to treat');
+    // Each edge is treated at its own radius: seeds carry r (per fillet feature
+    // in a group), chains inherit the radius of the seed that reached them
+    // first, and seeded edges always keep their own.
     let targets=[];
-    for(const seed of seeds){const m=matchEdge(seed,all);if(m)targets.push(m);}
+    for(const seed of seeds){
+      const m=matchEdge(seed,all);
+      if(m && !targets.includes(m)){ m.r = seed.r!=null ? seed.r : fr; targets.push(m); }
+    }
     if(!targets.length) {
         if(previewFeat) return inGeoms;
         throw new Error('edge not found (geometry changed)');
     }
-    if(propagate){const set=new Set();for(const tgt of targets)for(const c of expandChain(tgt,all))set.add(c);targets=[...set];}
+    if(propagate){
+      const rmap=new Map();
+      for(const tgt of targets) for(const c of expandChain(tgt,all)) if(!rmap.has(c)) rmap.set(c, tgt.r);
+      targets=[...rmap.keys()]; targets.forEach(e=>{ e.r=rmap.get(e); });
+    }
 
     let removeRegion=null, roundedSolid=null;
     const addRem = c => { removeRegion = removeRegion ? removeRegion.union(c) : c; };
@@ -1029,7 +1484,9 @@ const CSG = (function(){
         const ed = vnorm(e.dir);
         for(const P of [e.a, e.b]){
           const k = qv(P);
-          let rec = vmap.get(k); if(!rec){ rec={V:P, normals:[], dirs:[]}; vmap.set(k,rec); }
+          let rec = vmap.get(k); if(!rec){ rec={V:P, normals:[], dirs:[], rmin:Infinity, rmax:0}; vmap.set(k,rec); }
+          rec.rmin = Math.min(rec.rmin, e.r);
+          rec.rmax = Math.max(rec.rmax, e.r);
           if(!rec.dirs.some(d=>Math.abs(vdot(d,ed))>0.98)) rec.dirs.push(ed);
           for(const n of [e.n1, e.n2]){ const un=vnorm(n);
             if(!rec.normals.some(m=>vdot(m,un)>0.99)) rec.normals.push(un); }
@@ -1037,25 +1494,163 @@ const CSG = (function(){
       }
       for(const [k,rec] of vmap){
         if(rec.dirs.length < 2 || rec.normals.length < 3) continue;   // a real corner
-        const info = cornerInfo(rec.V, rec.normals, fr);
+        // The inscribed sphere is only exact when every fillet meeting here has
+        // the same radius; filletGroup guarantees that within one call, and
+        // this guard keeps a mixed set (should one ever arrive) from getting a
+        // sphere that fits none of its cylinders.
+        if(rec.rmax - rec.rmin > 1e-6) continue;
+        // A corner touching a CONCAVE edge is a notch, not a peak — the
+        // inscribed-sphere maths cannot tell the two apart from face normals
+        // alone (its offsets satisfy the tangency either way), so exclude
+        // notches here; they are handled by the pivot blend instead.
+        let notch = false;
+        for(const o of all){
+          if(o.convex) continue;
+          if(ptClose(o.a, rec.V, 0.05) || ptClose(o.b, rec.V, 0.05)){ notch = true; break; }
+        }
+        if(notch) continue;
+        const info = cornerInfo(rec.V, rec.normals, rec.rmax);
         if(info){ addRnd(info.sphere); cornerC.set(k, info.C); }
       }
     }
 
+    // Concave-corner blend: where two filleted edges meet at a notch corner,
+    // flush-mitred cylinders alone leave a V dip at the seam. The rolling ball
+    // really PIVOTS around the corner line there, sweeping a torus-like patch;
+    // approximate it with a fan of spheres so the round flows continuously
+    // from one edge onto the other, SolidWorks-style.
+    const blendV = new Set();   // vertices owned by a concave pivot blend
+    if(kind === 'fillet'){
+      const vends = new Map();
+      for(const e of targets){
+        if(!e.convex) continue;
+        for(const P of [e.a, e.b]){
+          const k = qv(P);
+          if(cornerC.has(k)) continue;
+          let rec = vends.get(k); if(!rec){ rec = {V:P, list:[]}; vends.set(k, rec); }
+          if(rec.list.indexOf(e) < 0) rec.list.push(e);
+        }
+      }
+      for(const [k, rec] of vends){
+        if(rec.list.length !== 2) continue;
+        const [e1, e2] = rec.list;
+        let piv = null;                          // the concave corner line
+        for(const o of all){
+          if(o===e1 || o===e2 || o.convex) continue;
+          if(ptClose(o.a, rec.V, 0.05) || ptClose(o.b, rec.V, 0.05)){ piv = o; break; }
+        }
+        if(!piv) continue;
+        const axisPt = (e)=>{                    // the edge's roll-axis point at V
+          const t = vnorm(e.dir);
+          const n1 = vnorm(e.n1), n2 = vnorm(e.n2);
+          const den = 1 + vdot(n1, n2);
+          if(den < 0.03) return null;
+          const O = vsub(e.mid, vscale(vadd(n1,n2), e.r/den));
+          return vadd(O, vscale(t, vdot(vsub(rec.V,O), t)));
+        };
+        const a = vnorm(piv.dir);
+        const C1 = axisPt(e1), C2 = axisPt(e2);
+        if(!C1 || !C2) continue;
+        const rel1 = vsub(C1, rec.V), rel2 = vsub(C2, rec.V);
+        const h1 = vdot(rel1, a), h2 = vdot(rel2, a);
+        const p1 = vsub(rel1, vscale(a, h1)), p2 = vsub(rel2, vscale(a, h2));
+        const L1 = vlen(p1), L2 = vlen(p2);
+        if(L1 < 1e-6 || L2 < 1e-6) continue;
+        const u1 = vscale(p1, 1/L1), u2 = vscale(p2, 1/L2);
+        let ang = Math.acos(Math.max(-1, Math.min(1, vdot(u1, u2))));
+        if(ang < 1e-3) continue;
+        const sgn = vdot(vcross(u1, u2), a) >= 0 ? 1 : -1;
+        const steps = Math.max(2, Math.ceil(ang / (Math.PI/12)));
+        for(let si=0; si<=steps; si++){
+          const tt = si/steps, th = sgn*ang*tt;
+          const ca = Math.cos(th), sa = Math.sin(th);   // Rodrigues about a
+          const axu = vcross(a, u1);
+          const u = vadd(vadd(vscale(u1, ca), vscale(axu, sa)), vscale(a, vdot(a,u1)*(1-ca)));
+          const L = L1 + (L2-L1)*tt, h = h1 + (h2-h1)*tt, rr = e1.r + (e2.r-e1.r)*tt;
+          const Cc = vadd(vadd(rec.V, vscale(vnorm(u), L)), vscale(a, h));
+          addRnd(sphereCSG(Cc, rr, 40, 30));
+        }
+        // Mitre plane: contains the pivot line and the notch bisector. Each
+        // arm's wedge is clipped to its own side of it, so the two wedges tile
+        // the corner exactly — a sharp notch otherwise lets one arm's overrun
+        // stab across into the other arm past what the sphere fan covers.
+        const ubis = vnorm(vadd(u1, u2));
+        const nb = vnorm(vcross(a, ubis));
+        const clipFor = (u)=> (vdot(nb, u) < 0 ? nb : vscale(nb, -1));  // keep the u side
+        e1._blendClip = e1._blendClip || {}; e1._blendClip[k] = {P: rec.V, n: clipFor(u1)};
+        e2._blendClip = e2._blendClip || {}; e2._blendClip[k] = {P: rec.V, n: clipFor(u2)};
+        blendV.add(k);
+      }
+    }
+
+    // How a fillet is allowed to END matters as much as the round itself
+    // (SolidWorks-style): at an equal-radius corner the sphere takes over; at
+    // a tangent chain neighbour the pieces overlap a little to bridge facet
+    // joints; where the solid CONTINUES past the end of the edge (a concave
+    // kink, a shallow corner, an unselected neighbour) the cut stops flush at
+    // the vertex so it never gouges the neighbouring face; only at a true free
+    // end — where the solid stops too — may the wedge overrun to clear the tip.
+    const targetSet = new Set(targets);
+    const TANG = Math.cos(35*Math.PI/180);
+    // Parity ray test against the input solids — the only reliable way to know
+    // whether the body keeps going past the end of an edge (concave kinks and
+    // L-notches continue at angles no direction heuristic survives).
+    let pimMeshes = null;
+    const pimDir = new THREE.Vector3(0.577, 0.702, 0.418).normalize();
+    function pointInSolid(q){
+      if(!pimMeshes){
+        const mat = new THREE.MeshBasicMaterial({side:THREE.DoubleSide});
+        pimMeshes = inGeoms.map(g=>new THREE.Mesh(g, mat));
+      }
+      const rc = new THREE.Raycaster(new THREE.Vector3(q[0],q[1],q[2]), pimDir);
+      let n = 0;
+      for(const m of pimMeshes) n += rc.intersectObject(m).length;
+      return (n % 2) === 1;
+    }
+    function endTreat(e, P, far){
+      if(kind==='fillet' && cornerC.has(qv(P))) return {sphere:true, w:e.r, c:0};
+      const din = vnorm(vsub(P, far));          // along the edge, out of this end
+      let cont=-1, contTarget=false;
+      for(const o of all){
+        if(o===e) continue;
+        let q=null;
+        if(ptClose(o.a,P,0.05)) q=o.b; else if(ptClose(o.b,P,0.05)) q=o.a;
+        if(!q) continue;
+        const d=vdot(din, vnorm(vsub(q,P)));
+        if(d>cont){ cont=d; contTarget=targetSet.has(o); }
+      }
+      if(contTarget && cont>=TANG) return {sphere:false, w:e.r*0.4, c:e.r*0.4};
+      // at a pivot-blend corner the wedge overruns to clear the sliver between
+      // the two rounds; the mitre plane clips it to this arm's own half of the
+      // notch and the sphere fan bounds the depth of what it may cut
+      if(kind==='fillet' && blendV.has(qv(P))){
+        const clip = e._blendClip && e._blendClip[qv(P)];
+        return {sphere:false, w:e.r*1.2, c:0, clip: clip || null};
+      }
+      // sample just past the end, just inside the material flanking the edge
+      const inw = vnorm(vadd(vnorm(e.n1), vnorm(e.n2)));
+      const q = vadd(vadd(P, vscale(din, Math.max(0.12*e.r, 0.06))),
+                     vscale(inw, -Math.max(0.18*e.r, 0.09)));
+      if(pointInSolid(q)) return {sphere:false, w:Math.max(1e-3,e.r*0.06), c:0};
+      return {sphere:false, w:e.r, c:e.r*0.4};
+    }
+
     for(const e of targets){
       if(!e.convex) continue;
-      const p = buildEdgePieces(e, fr, kind);
+      const endA = endTreat(e, e.a, e.b), endB = endTreat(e, e.b, e.a);
+      const p = buildEdgePieces(e, e.r, kind, endA.w, endB.w);
       if(!p) continue;
-      addRem(p.wedge);
+      let wedge = p.wedge;
+      if(endA.clip) wedge = wedge.intersect(halfSpaceCSG(endA.clip.P, endA.clip.n, 400));
+      if(endB.clip) wedge = wedge.intersect(halfSpaceCSG(endB.clip.P, endB.clip.n, 400));
+      addRem(wedge);
       if(kind==='fillet'){
-        let s0 = vdot(vsub(e.a, p.O), p.t);
-        let s1 = vdot(vsub(e.b, p.O), p.t);
-        let A = e.a, B = e.b;
-        if(s0 > s1){ [s0,s1]=[s1,s0]; [A,B]=[B,A]; }
-        const cA = cornerC.get(qv(A)), cB = cornerC.get(qv(B));
-        s0 = cA ? vdot(vsub(cA, p.O), p.t) : s0 - fr*0.4;
-        s1 = cB ? vdot(vsub(cB, p.O), p.t) : s1 + fr*0.4;
-        if(s1 - s0 > 1e-3) addRnd(cylinderSeg(p.O, p.t, fr, s0, s1, p.segs));
+        let lo = {s: vdot(vsub(e.a, p.O), p.t), end: endA, P: e.a};
+        let hi = {s: vdot(vsub(e.b, p.O), p.t), end: endB, P: e.b};
+        if(lo.s > hi.s){ const t2=lo; lo=hi; hi=t2; }
+        const s0 = lo.end.sphere ? vdot(vsub(cornerC.get(qv(lo.P)), p.O), p.t) : lo.s - lo.end.c;
+        const s1 = hi.end.sphere ? vdot(vsub(cornerC.get(qv(hi.P)), p.O), p.t) : hi.s + hi.end.c;
+        if(s1 - s0 > 1e-3) addRnd(cylinderSeg(p.O, p.t, e.r, s0, s1, p.segs));
       }
     }
     if(!removeRegion) throw new Error('no convex edges in selection');
@@ -1078,75 +1673,113 @@ const CSG = (function(){
   }
 
   /* ============================ REBUILD ============================ */
+  /* Resolve any plane spec to a live frame. Handles datum planes, offset
+     datum-plane features, and face frames (which may be plain JSON after a
+     project load — reconstruct real Vector3s). */
+  function planeFrame(plane){
+    if(plane.kind==='datum') return frameClone(DATUM[plane.name]);
+    if(plane.kind==='dplane'){
+      const pf=features.find(x=>x.id===plane.refId&&x.type==='dplane');
+      if(!pf) throw new Error('its datum plane was deleted');
+      if(pf.suppressed) throw new Error('its datum plane is suppressed');
+      const fr=frameClone(DATUM[pf.base]); fr.o.addScaledVector(fr.n,pf.offset); return fr;
+    }
+    const p=plane.frame, v3=a=>a.isVector3?a.clone():new THREE.Vector3(a.x,a.y,a.z);
+    return {o:v3(p.o),u:v3(p.u),v:v3(p.v),n:v3(p.n)};
+  }
+  const AXDIR={X:{x:1,y:0,z:0},Y:{x:0,y:1,z:0},Z:{x:0,y:0,z:1}};
+  /* 'X'|'Y'|'Z' stays a world axis through the origin; 'ax:<id>' resolves an
+     axis feature to {o,d}. */
+  function resolveAxis(spec){
+    if(typeof spec==='string'&&spec.startsWith('ax:')){
+      const af=features.find(x=>x.id===+spec.slice(3)&&x.type==='daxis');
+      if(!af) throw new Error('its axis was deleted');
+      if(af.suppressed) throw new Error('its axis is suppressed');
+      return {o:{x:af.px,y:af.py,z:af.pz}, d:AXDIR[af.dir]};
+    }
+    return spec;
+  }
   function applyFeature(f){
     if(f.type==='sketch'){
-      const frame = f.plane.kind==='datum' ? frameClone(DATUM[f.plane.name]) : frameClone(f.plane.frame);
+      const frame = planeFrame(f.plane);
       f.frame=frame; sketchData[f.id]={frame, sk:f};
       return;
     }
+    if(f.type==='dplane'||f.type==='daxis') return;   // reference geometry only
     if(f.type==='extrude'||f.type==='cut'){
       const sd=sketchData[f.sketchId]; if(!sd)throw new Error('needs a sketch');
       const sk={entities:sd.sk.entities,fillet:sd.sk.fillet,chamfer:sd.sk.chamfer,frame:sd.frame};
       if(f.type==='extrude'){
-        const geo=buildExtrudeGeom(sk,f.depth,{symmetric:f.symmetric,flip:f.flip});
-        if(f.merge && resultGeoms.length) resultGeoms=unionInto(resultGeoms,geo);
-        else resultGeoms.push(geo);
+        const shp=OCK.extrude(sk,f.depth,{symmetric:f.symmetric,flip:f.flip});
+        if(f.merge && resultShapes.length) resultShapes=OCK.unionInto(resultShapes,shp);
+        else resultShapes.push(shp);
       } else {
         const depth = f.through ? 1000 : f.depth;
-        const tool=buildExtrudeGeom(sk,depth,{symmetric:f.through, flip:(!f.through&&f.flip), overhang:true});
-        if(!resultGeoms.length)throw new Error('nothing to cut');
-        resultGeoms=subtractFrom(resultGeoms,tool);
+        const tool=OCK.extrude(sk,depth,{symmetric:f.through, flip:(!f.through&&f.flip), overhang:true});
+        if(!resultShapes.length)throw new Error('nothing to cut');
+        resultShapes=OCK.subtractFrom(resultShapes,tool);
       }
       return;
     }
     if(f.type==='revolve'){
       const sd=sketchData[f.sketchId]; if(!sd)throw new Error('needs a sketch');
       const sk={entities:sd.sk.entities,fillet:sd.sk.fillet,chamfer:sd.sk.chamfer,frame:sd.frame};
-      const geo=buildRevolveGeom(sk,f.angle,f.axis,f.segments);
-      if(f.operation==='cut'){ if(!resultGeoms.length)throw new Error('nothing to cut'); resultGeoms=subtractFrom(resultGeoms,geo); }
-      else if(f.merge && resultGeoms.length) resultGeoms=unionInto(resultGeoms,geo);
-      else resultGeoms.push(geo);
+      const shp=OCK.revolve(sk,f.angle,resolveAxis(f.axis));
+      if(f.operation==='cut'){ if(!resultShapes.length)throw new Error('nothing to cut'); resultShapes=OCK.subtractFrom(resultShapes,shp); }
+      else if(f.merge && resultShapes.length) resultShapes=OCK.unionInto(resultShapes,shp);
+      else resultShapes.push(shp);
       return;
     }
-    if(f.type==='fillet'){ applyEdgeTreatment(f); return; }
+    if(f.type==='fillet'){
+      if(!resultShapes.length)throw new Error('nothing to fillet');
+      resultShapes=OCK.edgeTreat(resultShapes, f.seeds, f.r, f.kind,
+        (f===propsFeat||f===draftFeat));
+      return;
+    }
     if(f.type==='mirror'){
-      if(!resultGeoms.length)throw new Error('nothing to mirror');
-      const pl=DATUM[f.plane]; const nrm=pl.n;
-      const m=new THREE.Matrix4().makeScale(1-2*Math.abs(nrm.x),1-2*Math.abs(nrm.y),1-2*Math.abs(nrm.z));
-      const clones=resultGeoms.map(g=>{const c=g.clone();c.applyMatrix4(m);reverseWinding(c);return c;});
-      if(f.merge){ let all=resultGeoms.slice(); for(const c of clones)all=unionInto(all,c); resultGeoms=all; }
-      else resultGeoms=resultGeoms.concat(clones);
+      if(!resultShapes.length)throw new Error('nothing to mirror');
+      const pl=DATUM[f.plane];
+      const clones=resultShapes.map(s=>OCK.mirror(s, pl.o, pl.n));
+      if(f.merge){ let all=resultShapes.slice(); for(const c of clones)all=OCK.unionInto(all,c); resultShapes=all; }
+      else resultShapes=resultShapes.concat(clones);
       return;
     }
     if(f.type==='lpattern'){
-      if(!resultGeoms.length)throw new Error('nothing to pattern');
+      if(!resultShapes.length)throw new Error('nothing to pattern');
       const dir={X:[1,0,0],Y:[0,1,0],Z:[0,0,1]}[f.dir];
-      const base=resultGeoms.slice();const add=[];
-      for(let i=1;i<f.count;i++){const m=new THREE.Matrix4().makeTranslation(dir[0]*f.spacing*i,dir[1]*f.spacing*i,dir[2]*f.spacing*i);for(const g of base){const c=g.clone();c.applyMatrix4(m);add.push(c);}}
-      resultGeoms=f.merge?mergeAll(base.concat(add)):base.concat(add);
+      const base=resultShapes.slice();const add=[];
+      for(let i=1;i<f.count;i++){
+        const v=[dir[0]*f.spacing*i,dir[1]*f.spacing*i,dir[2]*f.spacing*i];
+        for(const s of base) add.push(OCK.translate(s,v));
+      }
+      resultShapes=f.merge?mergeAllShapes(base.concat(add)):base.concat(add);
       return;
     }
     if(f.type==='cpattern'){
-      if(!resultGeoms.length)throw new Error('nothing to pattern');
-      const base=resultGeoms.slice();const add=[];
+      if(!resultShapes.length)throw new Error('nothing to pattern');
+      const base=resultShapes.slice();const add=[];
       const total=Math.PI*2*(f.angle/360);
+      const ax=resolveAxis(f.axis);
+      let axv,pt=null;
+      if(typeof ax==='object'&&ax.d){ axv=[ax.d.x,ax.d.y,ax.d.z]; pt=[ax.o.x,ax.o.y,ax.o.z]; }
+      else axv={X:[1,0,0],Y:[0,1,0],Z:[0,0,1]}[ax]||[0,1,0];
       for(let i=1;i<f.count;i++){
         const a=f.equal?total*i/f.count:total*i/(f.count-1||1);
-        const m=new THREE.Matrix4();
-        if(f.axis==='X')m.makeRotationX(a);else if(f.axis==='Z')m.makeRotationZ(a);else m.makeRotationY(a);
-        for(const g of base){const c=g.clone();c.applyMatrix4(m);add.push(c);}
+        for(const s of base) add.push(OCK.rotate(s,axv,a,pt));
       }
-      resultGeoms=f.merge?mergeAll(base.concat(add)):base.concat(add);
+      resultShapes=f.merge?mergeAllShapes(base.concat(add)):base.concat(add);
       return;
     }
   }
-  function mergeAll(geoms){ 
-    let out=[]; for(const g of geoms) out=unionInto(out,g); return out;
+  function mergeAllShapes(shapes){
+    let out=[]; for(const s of shapes) out=OCK.unionInto(out,s); return out;
   }
 
   function rebuild(){
     resultMeshes.forEach(m=>{scene.remove(m);m.geometry.dispose();});
     resultMeshes=[]; resultGeoms=[];
+    for(const s of resultShapes){ try{ s.delete(); }catch(_){} }
+    resultShapes=[];
     Object.keys(sketchData).forEach(k=>delete sketchData[k]);
     while(sketchOverlay.children.length){const c=sketchOverlay.children.pop();if(c.geometry)c.geometry.dispose();}
     while(previewOverlay.children.length){const c=previewOverlay.children.pop();c.geometry.dispose();}
@@ -1158,8 +1791,7 @@ const CSG = (function(){
       
       f.error=null; f.errorDetail=null;
       f._previewGeoms = [];
-      if(f.suppressed) continue; 
-      f._inputGeoms = resultGeoms.slice();   // snapshot so a later fillet can roll back to here
+      if(f.suppressed) continue;
       try{ applyFeature(f); }
       catch(err){
         f.error = err.message||String(err);
@@ -1184,20 +1816,27 @@ const CSG = (function(){
       }
     }
     
+    // tessellate the B-rep shapes for display, picking and STL
+    resultGeoms = [];
+    for(const s of resultShapes){
+      try{ resultGeoms.push(OCK.mesh(s)); }
+      catch(err){ console.error('mesh failed', err); }
+    }
     for(const g of resultGeoms){
-      g.computeVertexNormals();
       const mesh=new THREE.Mesh(g, solidMat);
       mesh.castShadow=true;mesh.receiveShadow=true;
-      const eg=new THREE.EdgesGeometry(g,32);
+      const eg=new THREE.EdgesGeometry(g,25);
       mesh.add(new THREE.LineSegments(eg,edgeMat));
       scene.add(mesh);resultMeshes.push(mesh);
     }
     drawSketchOverlays(active);
+    drawRefGeometry(active);
     buildPickEdges();
     redrawHandles();
     refreshTree(); refreshStatus(); refreshExport();
     flushArena();   // free all manifold WASM objects created this rebuild
     rebuildDimLabels();
+    updateDatumVis();
   }
 
   /* ---- pickable edges ---- */
@@ -1234,6 +1873,40 @@ const CSG = (function(){
     }
   }
   function worldFromSketch(frame,u,v){return frame.o.clone().addScaledVector(frame.u,u).addScaledVector(frame.v,v);}
+
+  /* datum plane / axis features rendered as reference geometry */
+  function drawRefGeometry(active){
+    while(refOverlay.children.length){const c=refOverlay.children.pop();if(c.geometry)c.geometry.dispose();if(c.material&&c.material.map)c.material.map.dispose();}
+    for(let i=0;i<active.length;i++){
+      let f=active[i];
+      if(propsFeat&&propsFeat.id===f.id&&draftFeat)f=draftFeat;
+      if(f.suppressed)continue;
+      const sel=(f.id===selId)||(propsFeat&&propsFeat.id===f.id);
+      const col=sel?0xFBBC05:0x4285F4;
+      if(f.type==='dplane'){
+        let fr; try{ fr=planeFrame({kind:'dplane',refId:f.id}); }catch(_){ continue; }
+        const SZ=8;
+        const cor=[[-SZ/2,-SZ/2],[SZ/2,-SZ/2],[SZ/2,SZ/2],[-SZ/2,SZ/2]]
+          .map(([a,b])=>fr.o.clone().addScaledVector(fr.u,a).addScaledVector(fr.v,b));
+        const fill=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
+          new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:sel?0.13:0.05,side:THREE.DoubleSide,depthWrite:false}));
+        fill.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(fr.u,fr.v,fr.n));
+        fill.position.copy(fr.o); fill.renderOrder=1;
+        const border=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(cor),
+          new THREE.LineBasicMaterial({color:col,transparent:true,opacity:sel?1:0.55}));
+        border.renderOrder=2;
+        refOverlay.add(fill); refOverlay.add(border);
+      } else if(f.type==='daxis'){
+        const d=AXDIR[f.dir], o=new THREE.Vector3(f.px,f.py,f.pz), dv=new THREE.Vector3(d.x,d.y,d.z);
+        const L=14;
+        const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+          o.clone().addScaledVector(dv,-L), o.clone().addScaledVector(dv,L)]),
+          new THREE.LineDashedMaterial({color:col,transparent:true,opacity:sel?1:0.7,dashSize:0.9,gapSize:0.45}));
+        ln.computeLineDistances(); ln.renderOrder=2;
+        refOverlay.add(ln);
+      }
+    }
+  }
 
   /* ============================ SKETCH EDITING ============================ */
   let editing=null;        
@@ -1558,6 +2231,11 @@ const CSG = (function(){
     f.frame=frameClone(DATUM[planeKind]);
     insertFeature(f); startSketch(f);
   }
+  function addSketchOnDPlane(pf){
+    const f={id:nextId(),type:'sketch',name:'Sketch'+sketchCount(),plane:{kind:'dplane',refId:pf.id},entities:[],fillet:0,chamfer:0,suppressed:false,_isNew:true};
+    f.frame=planeFrame(f.plane);
+    insertFeature(f); startSketch(f);
+  }
   let pendingFaceSketch=false;
   function makeFaceSketch(hit){
     const n=hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
@@ -1579,14 +2257,18 @@ const CSG = (function(){
     if(type==='revolve')return {id:nextId(),type:'revolve',name:'Revolve'+cnt('revolve'),sketchId:sid,angle:360,axis:'v',operation:'add',merge:true,segments:48,suppressed:false};
     if(type==='fillet')return {id:nextId(),type:'fillet',name:'Fillet'+cnt('fillet'),kind:'fillet',r:0.5,propagate:true,seeds:selectedEdges.map(s=>({mid:s.mid.slice(),dir:s.dir.slice()})),suppressed:false};
     if(type==='chamfer')return {id:nextId(),type:'fillet',name:'Chamfer'+cnt('fillet'),kind:'chamfer',r:0.5,propagate:true,seeds:selectedEdges.map(s=>({mid:s.mid.slice(),dir:s.dir.slice()})),suppressed:false};
+    if(type==='rcut'){const f={id:nextId(),type:'revolve',name:'RevolveCut'+cnt('revolve'),sketchId:sid,angle:360,axis:'v',operation:'cut',merge:true,segments:48,suppressed:false};return f;}
+    if(type==='dplane')return {id:nextId(),type:'dplane',name:'Plane'+cnt('dplane'),base:'Top',offset:5,suppressed:false};
+    if(type==='daxis')return {id:nextId(),type:'daxis',name:'Axis'+cnt('daxis'),dir:'Y',px:0,py:0,pz:0,suppressed:false};
     if(type==='mirror')return {id:nextId(),type:'mirror',name:'Mirror'+cnt('mirror'),plane:'Right',merge:true,suppressed:false};
     if(type==='lpattern')return {id:nextId(),type:'lpattern',name:'LPattern'+cnt('lpattern'),dir:'X',count:3,spacing:4,merge:false,suppressed:false};
     if(type==='cpattern')return {id:nextId(),type:'cpattern',name:'CPattern'+cnt('cpattern'),axis:'Y',count:6,angle:360,equal:true,merge:false,suppressed:false};
   }
   function cnt(t){return features.filter(f=>f.type===t).length+1;}
-  function addFeature(type){
-    if(type==='extrude'||type==='cut'||type==='revolve'){ if(!lastSketchId()){setHint('Create a sketch first');return;} }
+  function addFeature(type,sketchId){
+    if(type==='extrude'||type==='cut'||type==='revolve'||type==='rcut'){ if(!sketchId&&!lastSketchId()){setHint('Create a sketch first');return;} }
     const f=defaults(type); f._isNew=true;
+    if(sketchId!=null&&'sketchId' in f)f.sketchId=sketchId;
     if(type==='fillet'||type==='chamfer'){ selectedEdges=[]; redrawEdgeSel(); }
     insertFeature(f); selectFeature(f.id); openProps(f);
   }
@@ -1602,8 +2284,59 @@ const CSG = (function(){
     closeProps(); rebuild();
   }
 
+  /* ============================ ICONS ============================
+     SolidWorks-style pictograms. Steel-blue geometry, yellow for the action,
+     green for constraints, red for destructive. */
+  const _sw=(b)=>`<svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${b}</svg>`;
+  const _B='#a9c2e8',_Y='#FBBC05',_G='#34A853',_R='#f28b82',_U='#4285F4';
+  const ICONS={
+    line:_sw(`<path d="M5 19 19 5" stroke="${_B}"/><circle cx="5" cy="19" r="1.8" fill="${_Y}"/><circle cx="19" cy="5" r="1.8" fill="${_Y}"/>`),
+    move:_sw(`<path d="M12 3v18M3 12h18" stroke="${_B}"/><path d="M9.8 5.2 12 3l2.2 2.2M9.8 18.8 12 21l2.2-2.2M5.2 9.8 3 12l2.2 2.2M18.8 9.8 21 12l-2.2 2.2" stroke="${_Y}"/>`),
+    rect:_sw(`<rect x="4" y="6" width="16" height="12" stroke="${_B}"/><circle cx="4" cy="6" r="1.7" fill="${_Y}"/><circle cx="20" cy="18" r="1.7" fill="${_Y}"/>`),
+    circle:_sw(`<circle cx="12" cy="12" r="8" stroke="${_B}"/><circle cx="12" cy="12" r="1.6" fill="${_Y}"/>`),
+    polygon:_sw(`<path d="M12 4.5l6.5 3.75v7.5L12 19.5l-6.5-3.75v-7.5z" stroke="${_B}"/><circle cx="12" cy="12" r="1.6" fill="${_Y}"/>`),
+    dim:_sw(`<path d="M4 5v14M20 5v14" stroke="${_B}"/><path d="M4 12h16M7 9.5 4 12l3 2.5M17 9.5 20 12l-3 2.5" stroke="${_Y}"/>`),
+    horiz:_sw(`<path d="M4 16h16" stroke="${_B}" stroke-width="2.2"/><text x="12" y="10" text-anchor="middle" font-size="10" font-weight="700" font-family="monospace" fill="${_G}" stroke="none">H</text>`),
+    vert:_sw(`<path d="M12 4v16" stroke="${_B}" stroke-width="2.2"/><text x="6" y="15" text-anchor="middle" font-size="10" font-weight="700" font-family="monospace" fill="${_G}" stroke="none">V</text>`),
+    paral:_sw(`<path d="M6 20 12 4M12 20 18 4" stroke="${_G}" stroke-width="2"/>`),
+    equal:_sw(`<path d="M6 10h12M6 14h12" stroke="${_G}" stroke-width="2.2"/>`),
+    erase:_sw(`<path d="M14.5 4.5 20 10l-8.5 8.5H7l-2.5-2.5z" stroke="${_R}"/><path d="M11 8l5.5 5.5" stroke="${_R}"/><path d="M4 20.5h16" stroke="${_B}" opacity=".5"/>`),
+    sketch:_sw(`<path d="M4 20V6M4 20h13" stroke="${_B}"/><path d="M9 15 18 6l2 2-9 9-3.4 1.4z" stroke="${_Y}"/>`),
+    'face-sketch':_sw(`<rect x="4" y="4" width="16" height="16" stroke="${_B}" opacity=".55"/><path d="M9 15 16 8l1.8 1.8-7 7-3 1.2z" stroke="${_Y}"/>`),
+    extrude:_sw(`<path d="M5 17l7 3.2 7-3.2-7-3.2z" stroke="${_B}"/><path d="M5 17v-6.5l7 3.2 7-3.2V17" stroke="${_B}" opacity=".6"/><path d="M12 13.7V7.5" stroke="${_B}" opacity=".6"/><path d="M12 8V2.5M9.5 5 12 2.5 14.5 5" stroke="${_Y}"/>`),
+    cut:_sw(`<path d="M4 21v-8h16v8z" stroke="${_B}"/><path d="M9 13h6v4H9z" stroke="${_Y}"/><path d="M12 3v6M9.5 6.5 12 9l2.5-2.5" stroke="${_Y}"/>`),
+    revolve:_sw(`<path d="M5 3v18" stroke="${_B}" stroke-dasharray="4.5 2 1.2 2"/><path d="M9 6.5c6 0 10 2.2 10 5.5s-4 5.5-10 5.5z" stroke="${_B}"/><path d="M8 3.5c5 .2 8.6 1 10.2 2.4M15.5 6.5l2.7-.6-.5-2.7" stroke="${_Y}"/>`),
+    rcut:_sw(`<path d="M5 3v18" stroke="${_B}" stroke-dasharray="4.5 2 1.2 2"/><path d="M9 6.5c6 0 10 2.2 10 5.5s-4 5.5-10 5.5z" stroke="${_B}"/><path d="M9 10h5.5v4H9z" stroke="${_Y}"/>`),
+    fillet:_sw(`<path d="M4 4v16h16" stroke="${_B}" stroke-dasharray="3 2.4" opacity=".45"/><path d="M4 4v6a10 10 0 0 0 10 10h6" stroke="${_Y}" stroke-width="1.9"/>`),
+    chamfer:_sw(`<path d="M4 4v16h16" stroke="${_B}" stroke-dasharray="3 2.4" opacity=".45"/><path d="M4 4v8l8 8h8" stroke="${_Y}" stroke-width="1.9"/>`),
+    mirror:_sw(`<path d="M12 3v18" stroke="${_G}" stroke-dasharray="4 3"/><path d="M8.5 8 3.5 12l5 4z" fill="${_B}" stroke="${_B}"/><path d="M15.5 8l5 4-5 4z" stroke="${_B}"/>`),
+    lpattern:_sw(`<rect x="3" y="9.5" width="5" height="5" fill="${_B}"/><rect x="9.7" y="9.5" width="5" height="5" stroke="${_B}"/><rect x="16.4" y="9.5" width="5" height="5" stroke="${_B}" opacity=".5"/><path d="M4 19h14M15.5 16.7 18 19l-2.5 2.3" stroke="${_Y}"/>`),
+    cpattern:_sw(`<circle cx="12" cy="13" r="7.5" stroke="${_B}" stroke-dasharray="3 2.4" opacity=".55"/><rect x="9.7" y="3" width="4.6" height="4.6" fill="${_B}"/><rect x="3.4" y="14" width="4.6" height="4.6" stroke="${_B}"/><rect x="16" y="14" width="4.6" height="4.6" stroke="${_B}"/><circle cx="12" cy="13" r="1.4" fill="${_Y}"/>`),
+    dplane:_sw(`<path d="M3 19.5l5-8.5h13l-5 8.5z" stroke="${_B}"/><path d="M6.5 9l2.6-4.5h11l-2 3.4" stroke="${_B}" opacity=".45"/><path d="M12 15.5v-6M9.8 11.7 12 9.5l2.2 2.2" stroke="${_Y}"/>`),
+    daxis:_sw(`<path d="M6 20 18 4" stroke="${_Y}" stroke-width="1.9" stroke-dasharray="5.5 2.2 1.4 2.2"/><circle cx="6" cy="20" r="1.5" fill="${_B}"/><circle cx="18" cy="4" r="1.5" fill="${_B}"/>`),
+    edit:_sw(`<path d="M4 20l1.2-4.2L16.5 4.5l3 3L8.2 18.8z" stroke="${_B}"/><path d="M14.5 6.5l3 3" stroke="${_B}"/>`),
+    iso:_sw(`<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" stroke="${_B}"/><path d="M12 12l8-4.5M12 12 4 7.5M12 12v9" stroke="${_B}" opacity=".7"/>`),
+    fit:_sw(`<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" stroke="${_B}"/><rect x="9.5" y="9.5" width="5" height="5" stroke="${_Y}"/>`),
+    stl:_sw(`<path d="M12 4l8 16H4z" stroke="${_B}"/><path d="M12 4 9.5 20M12 4l3 16M7.2 13.6h9.6" stroke="${_B}" opacity=".55"/>`),
+    step:_sw(`<ellipse cx="12" cy="6.5" rx="7" ry="2.7" stroke="${_B}"/><path d="M5 6.5v11M19 6.5v11" stroke="${_B}"/><path d="M5 17.5c0 1.5 3.1 2.7 7 2.7s7-1.2 7-2.7" stroke="${_B}"/>`),
+    save:_sw(`<path d="M12 3v10M8.5 9.5 12 13l3.5-3.5" stroke="${_Y}"/><path d="M4 14.5V20h16v-5.5" stroke="${_B}"/>`),
+    open:_sw(`<path d="M3 19V5.5h6.2l2 2H21V19z" stroke="${_B}"/>`),
+    newpart:_sw(`<path d="M6 3h8l4 4v14H6z" stroke="${_B}"/><path d="M14 3v4h4" stroke="${_B}"/><path d="M12 10.5v6M9 13.5h6" stroke="${_G}"/>`),
+    finish:_sw(`<path d="M4.5 13l5 5L19.5 6.5" stroke="${_G}" stroke-width="2.4"/>`),
+    cancel:_sw(`<path d="M6.5 6.5l11 11M17.5 6.5l-11 11" stroke="${_R}" stroke-width="2.2"/>`),
+    suppress:_sw(`<circle cx="12" cy="12" r="8" stroke="${_B}"/><path d="M6.4 6.4l11.2 11.2" stroke="${_R}"/>`),
+    del:_sw(`<path d="M5 7h14M10 7V4.5h4V7M7 7l1 13.5h8L17 7" stroke="${_R}"/>`),
+    add:_sw(`<path d="M12 4v16M4 12h16" stroke="currentColor" stroke-width="2"/>`)
+  };
+  function icHTML(n){ return ICONS[n] ? `<span class="fi ic-s">${ICONS[n]}</span>` : `<span class="fi">${n||'•'}</span>`; }
+  function iconFor(f){
+    if(f.type==='fillet') return f.kind==='chamfer'?'chamfer':'fillet';
+    if(f.type==='revolve') return f.operation==='cut'?'rcut':'revolve';
+    if(f.type==='sketch') return f.plane&&f.plane.kind==='face'?'face-sketch':'sketch';
+    return ICONS[f.type]?f.type:'edit';
+  }
+
   /* ============================ TREE UI ============================ */
-  const ICON={sketch:'▦',extrude:'⬓',cut:'⬒',revolve:'◍',fillet:'◜',mirror:'⧉',lpattern:'⋯',cpattern:'❋'};
   const tree=$('tree');
   function refreshTree(){
     tree.innerHTML='';
@@ -1612,7 +2345,7 @@ const CSG = (function(){
       const el=document.createElement('div');
       el.className='feat'+(f.id===selId?' sel':'')+(i>=rollbackIndex?' rolled':'')+(f.error?' errored':'')+(f.suppressed?' suppressed':'');
       const fname = (propsFeat && propsFeat.id === f.id && draftFeat) ? draftFeat.name : f.name;
-      el.innerHTML=`<span class="fi">${ICON[f.type]||'•'}</span><span class="fname">${fname}</span>`+
+      el.innerHTML=icHTML(iconFor(f))+`<span class="fname">${fname}</span>`+
         (f.error?`<span class="ferr" title="Click to see error details">!</span>`:'')+
         (f.suppressed?`<span class="fsupp" title="suppressed">∅</span>`:'')+
         `<button class="fx" title="Delete">×</button>`;
@@ -1622,6 +2355,10 @@ const CSG = (function(){
         selectFeature(f.id);
       });
       el.addEventListener('dblclick',()=>{ if(f.type==='sketch')editSketch(f); else openProps(f); });
+      el.addEventListener('contextmenu',e=>{
+        e.preventDefault(); e.stopPropagation();
+        selectFeature(f.id); openTreeMenu(e.clientX,e.clientY,f);
+      });
       tree.appendChild(el);
     });
     if(rollbackIndex>=features.length)tree.appendChild(makeRollbar());
@@ -1704,7 +2441,7 @@ const CSG = (function(){
         draftFeat._isNew = f._isNew;
         
         const el=document.createElement('aside');el.className='props';
-        el.innerHTML=`<div class="props-head"><span class="fi">${ICON[draftFeat.type]}</span><h3>${draftFeat.name}</h3></div><div class="props-body" id="pbody"></div>
+        el.innerHTML=`<div class="props-head">${icHTML(iconFor(draftFeat))}<h3>${draftFeat.name}</h3></div><div class="props-body" id="pbody"></div>
         <div class="props-foot">
             <button id="p-cancel" class="btn-ghost btn-danger">Cancel</button>
             <button id="p-done" class="btn-primary">Done</button>
@@ -1784,7 +2521,9 @@ const CSG = (function(){
       add(fieldCheck('Flip direction',f.flip,v=>{f.flip=v;rerun();}));
     } else if(f.type==='revolve'){
       add(fieldSeg('Operation',[{l:'Boss',v:'add'},{l:'Cut',v:'cut'}],f.operation,v=>{f.operation=v;rerun();}));
-      add(fieldSeg('Axis',[{l:'Vert (U=0)',v:'v'},{l:'Horiz (V=0)',v:'u'}],f.axis,v=>{f.axis=v;rerun();}));
+      const axOpts=[{l:'Vert (U=0)',v:'v'},{l:'Horiz (V=0)',v:'u'}]
+        .concat(features.filter(x=>x.type==='daxis').map(a=>({l:a.name,v:'ax:'+a.id})));
+      add(fieldSeg('Axis',axOpts,f.axis,v=>{f.axis=v;rerun();}));
       add(fieldNumber('Angle',f.angle,5,1,360,'deg',v=>{f.angle=Math.min(360,v);rerun();}));
     } else if(f.type==='fillet'){
       add(fieldSeg('Type',[{l:'Fillet',v:'fillet'},{l:'Chamfer',v:'chamfer'}],f.kind,v=>{f.kind=v;f.name=(v==='fillet'?'Fillet':'Chamfer')+f.name.replace(/\D+/,''); propsEl.querySelector('h3').textContent=f.name; rerun(); openProps(propsFeat); }));
@@ -1802,11 +2541,23 @@ const CSG = (function(){
       add(fieldNumber('Spacing',f.spacing,0.5,0,null,'units',v=>{f.spacing=v;rerun();}));
       add(fieldCheck('Merge result',f.merge,v=>{f.merge=v;rerun();}));
     } else if(f.type==='cpattern'){
-      add(fieldSeg('Axis',[{l:'X',v:'X'},{l:'Y',v:'Y'},{l:'Z',v:'Z'}],f.axis,v=>{f.axis=v;rerun();}));
+      const cOpts=[{l:'X',v:'X'},{l:'Y',v:'Y'},{l:'Z',v:'Z'}]
+        .concat(features.filter(x=>x.type==='daxis').map(a=>({l:a.name,v:'ax:'+a.id})));
+      add(fieldSeg('Axis',cOpts,f.axis,v=>{f.axis=v;rerun();}));
       add(fieldNumber('Count',f.count,1,2,null,'',v=>{f.count=Math.max(2,Math.round(v));rerun();}));
       add(fieldNumber('Total angle',f.angle,15,1,360,'deg',v=>{f.angle=Math.min(360,v);rerun();}));
       add(fieldCheck('Equal spacing fills angle',f.equal,v=>{f.equal=v;rerun();}));
       add(fieldCheck('Merge result',f.merge,v=>{f.merge=v;rerun();}));
+    } else if(f.type==='dplane'){
+      add(fieldSeg('Base plane',[{l:'Top',v:'Top'},{l:'Front',v:'Front'},{l:'Right',v:'Right'}],f.base,v=>{f.base=v;rerun();}));
+      add(fieldNumber('Offset along normal',f.offset,0.5,null,null,'units',v=>{f.offset=v;rerun();}));
+      const nt=document.createElement('div');nt.className='note';nt.textContent='Right-click the plane in the feature tree to start a sketch on it.';add(nt);
+    } else if(f.type==='daxis'){
+      add(fieldSeg('Direction',[{l:'X',v:'X'},{l:'Y',v:'Y'},{l:'Z',v:'Z'}],f.dir,v=>{f.dir=v;rerun();}));
+      add(fieldNumber('Position X',f.px,0.5,null,null,'units',v=>{f.px=v;rerun();}));
+      add(fieldNumber('Position Y',f.py,0.5,null,null,'units',v=>{f.py=v;rerun();}));
+      add(fieldNumber('Position Z',f.pz,0.5,null,null,'units',v=>{f.pz=v;rerun();}));
+      const nt=document.createElement('div');nt.className='note';nt.textContent='Revolves and circular patterns can pick this axis in their Axis field.';add(nt);
     }
     const supp=fieldCheck('Suppress feature',f.suppressed,v=>{f.suppressed=v;rerun();});
     supp.style.marginTop='4px';add(supp);
@@ -1816,7 +2567,7 @@ const CSG = (function(){
     if(!editing)return; if(propsFeat===editing && propsEl)return;
     closeProps();const f=editing;propsFeat=f;
     const el=document.createElement('aside');el.className='props';
-    el.innerHTML=`<div class="props-head"><span class="fi">▦</span><h3>${f.name}</h3></div><div class="props-body" id="pbody"></div>`;
+    el.innerHTML=`<div class="props-head">${icHTML('sketch')}<h3>${f.name}</h3></div><div class="props-body" id="pbody"></div>`;
     viewport.appendChild(el);propsEl=el;const body=el.querySelector('#pbody');
     const mode=fieldSeg('Corner treatment',[{l:'None',v:'none'},{l:'Fillet',v:'fillet'},{l:'Chamfer',v:'chamfer'}],f.fillet>0?'fillet':f.chamfer>0?'chamfer':'none',v=>{
       if(v==='none'){f.fillet=0;f.chamfer=0;} else if(v==='fillet'){f.chamfer=0;if(f.fillet<=0)f.fillet=0.5;} else {f.fillet=0;if(f.chamfer<=0)f.chamfer=0.5;}
@@ -1883,10 +2634,22 @@ const CSG = (function(){
     $('dock').style.display=m==='sketch'?'flex':'none';
     if(m==='sketch')ensureSketchProps(); else if(propsFeat===editing)closeProps();
     if(m!=='sketch'){ closeDimInput(); clearDimLabels(); dragVtx=null; dragSnapPt=null; redrawHandles(); }
-    refreshStatus();updateHint();
+    refreshStatus();updateHint();updateDatumVis();
   }
   function refreshStatus(){ /* status bar removed */ }
-  function refreshExport(){$('btn-export').disabled=resultGeoms.length===0;}
+  function refreshExport(){
+    $('btn-export').disabled=resultGeoms.length===0;
+    $('btn-step').disabled=resultShapes.length===0;
+  }
+  function exportSTEP(){
+    try{
+      const blob=OCK.stepBlob(resultShapes,'freyacad.step');
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url;a.download='freyacad.step';document.body.appendChild(a);a.click();a.remove();
+      URL.revokeObjectURL(url);
+    }catch(e){ setHint('STEP export failed: '+(e.message||e)); }
+  }
   let hintTimer=null;
   function setHint(t){const h=$('hint');h.innerHTML=`<span class="pip"></span> ${t}`;h.classList.add('show');clearTimeout(hintTimer);hintTimer=setTimeout(()=>h.classList.remove('show'),2600);}
   function updateHint(){
@@ -1939,6 +2702,11 @@ const CSG = (function(){
       cursorMesh.position.copy(worldFromSketch(editing.frame,p.x,p.y));cursorMesh.visible=true;
       redrawDraft(p);
     } else if(mode==='model'&&!pendingFaceSketch){
+      if(datumGroup.visible){
+        const d=pickDatum(e); setDatumHover(d);
+        canvas.style.cursor=d?'pointer':'default';
+        return;
+      }
       const e2=pickEdge(e); const ne=e2?e2.idx:null;
       if(ne!==(hoveredEdge?hoveredEdge.idx:null)){ hoveredEdge=e2; redrawEdgeSel(); canvas.style.cursor=e2?'pointer':'default'; }
     }
@@ -1959,6 +2727,10 @@ const CSG = (function(){
     }
     if(mode==='sketch'&&editing){ if(e.button===0){const p=pointerToSketch(e);if(p)sketchClick(p);} return; }
     if(mode==='model'&&e.button===0){
+      if(datumGroup.visible){
+        const d=pickDatum(e);
+        if(d){ setDatumHover(null); addSketch(d.userData.plane); return; }
+      }
       const e2=pickEdge(e);
       if(e2){ 
           if(draftFeat && draftFeat.type === 'fillet') {
@@ -1987,10 +2759,7 @@ const CSG = (function(){
     }
     const e2=pickEdge(e);
     if(e2||selectedEdges.length){ if(e2&&!selectedEdges.some(s=>s.idx===e2.rec.idx))toggleEdge(e2.rec); openEdgeMenu(e.clientX,e.clientY); }
-    else if (mode==='model' && selId && !e2 && !selectedEdges.length) {
-        const f = features.find(x=>x.id===selId);
-        if(f && f.type==='sketch') openSketchMenu(e.clientX, e.clientY);
-    }
+    else openModelMenu(e.clientX,e.clientY);
   });
 
   function pickBody(e){
@@ -2065,28 +2834,130 @@ const CSG = (function(){
     insertFeature(f); selectFeature(f.id); openProps(f);
   }
   
+  /* generic context menu: [{sect:'…'} | {ic,label,fn,disabled}] */
+  function buildCtxMenu(x,y,items){
+    closeEdgeMenu();
+    const m=document.createElement('div');m.className='menu open';
+    for(const it of items){
+      if(it.sect){const d=document.createElement('div');d.className='menu-sect';d.textContent=it.sect;m.appendChild(d);continue;}
+      const b=document.createElement('button');
+      b.innerHTML=icHTML(it.ic)+it.label;
+      if(it.disabled)b.disabled=true;
+      else b.addEventListener('click',()=>{closeEdgeMenu();it.fn();});
+      m.appendChild(b);
+    }
+    document.body.appendChild(m);eMenu=m;
+    const r=m.getBoundingClientRect();
+    m.style.left=Math.min(x,window.innerWidth-r.width-8)+'px';
+    m.style.top=Math.min(y,window.innerHeight-r.height-8)+'px';
+  }
+  function openModelMenu(x,y){
+    const hasSketch=!!lastSketchId(), hasSolid=resultShapes.length>0;
+    const sf=features.find(f=>f.id===selId);
+    const items=[];
+    if(sf&&sf.type==='sketch'){
+      items.push({sect:sf.name});
+      items.push({ic:'edit',label:'Edit sketch',fn:()=>editSketch(sf)});
+    }
+    items.push(
+      {sect:'Sketch'},
+      {ic:'sketch',label:'Sketch · Top plane',fn:()=>addSketch('Top')},
+      {ic:'sketch',label:'Sketch · Front plane',fn:()=>addSketch('Front')},
+      {ic:'sketch',label:'Sketch · Right plane',fn:()=>addSketch('Right')},
+      {ic:'face-sketch',label:'Sketch · on a face',fn:()=>addSketch('face'),disabled:!hasSolid},
+      {sect:'Features'},
+      {ic:'extrude',label:'Extrude boss',fn:()=>addFeature('extrude'),disabled:!hasSketch},
+      {ic:'cut',label:'Extrude cut',fn:()=>addFeature('cut'),disabled:!hasSketch},
+      {ic:'revolve',label:'Revolve boss',fn:()=>addFeature('revolve'),disabled:!hasSketch},
+      {ic:'rcut',label:'Revolve cut',fn:()=>addFeature('rcut'),disabled:!hasSketch},
+      {ic:'fillet',label:'Fillet',fn:()=>addFeature('fillet'),disabled:!hasSolid},
+      {ic:'chamfer',label:'Chamfer',fn:()=>addFeature('chamfer'),disabled:!hasSolid},
+      {sect:'Transform'},
+      {ic:'mirror',label:'Mirror',fn:()=>addFeature('mirror'),disabled:!hasSolid},
+      {ic:'lpattern',label:'Linear pattern',fn:()=>addFeature('lpattern'),disabled:!hasSolid},
+      {ic:'cpattern',label:'Circular pattern',fn:()=>addFeature('cpattern'),disabled:!hasSolid},
+      {sect:'Reference'},
+      {ic:'dplane',label:'Add plane',fn:()=>addFeature('dplane')},
+      {ic:'daxis',label:'Add axis',fn:()=>addFeature('daxis')},
+      {sect:'View'},
+      {ic:'iso',label:'Iso view',fn:()=>controls.setIso()},
+      {ic:'fit',label:'Fit',fn:fitAll,disabled:!resultMeshes.length},
+      {sect:'File'},
+      {ic:'stl',label:'Export STL',fn:exportSTL,disabled:!resultGeoms.length},
+      {ic:'step',label:'Export STEP',fn:exportSTEP,disabled:!hasSolid},
+      {ic:'save',label:'Save project',fn:saveProject},
+      {ic:'open',label:'Open project',fn:()=>$('file-load').click()}
+    );
+    buildCtxMenu(x,y,items);
+  }
   function openSketchMenu(x,y){
-      closeEdgeMenu();
-      const m=document.createElement('div');m.className='menu open';
-      m.innerHTML=`<button id="ctx-extrude"><span class="fi">⬓</span>Extrude Sketch</button>`;
-      document.body.appendChild(m); eMenu=m;
-      m.style.left=Math.min(x,window.innerWidth-150)+'px';
-      m.style.top=Math.min(y,window.innerHeight-40)+'px';
-      $('ctx-extrude').addEventListener('click', ()=>{
-          if(mode==='sketch') finishSketch();
-          addFeature('extrude');
-          closeEdgeMenu();
-      });
+    const setTool=t=>()=>{tool=t;draftStage=0;draftA=null;paralRef=null;equalRef=null;dragVtx=null;dragSnapPt=null;redrawHandles();dockSel();};
+    buildCtxMenu(x,y,[
+      {sect:'Sketch tools'},
+      {ic:'line',label:'Line',fn:setTool('line')},
+      {ic:'move',label:'Move point',fn:setTool('move')},
+      {ic:'rect',label:'Rectangle',fn:setTool('rect')},
+      {ic:'circle',label:'Circle',fn:setTool('circle')},
+      {ic:'polygon',label:'Polygon',fn:setTool('polygon')},
+      {ic:'dim',label:'Dimension',fn:setTool('dim')},
+      {ic:'erase',label:'Erase',fn:setTool('erase')},
+      {sect:'Constraints'},
+      {ic:'horiz',label:'Horizontal',fn:setTool('horiz')},
+      {ic:'vert',label:'Vertical',fn:setTool('vert')},
+      {ic:'paral',label:'Parallel',fn:setTool('paral')},
+      {ic:'equal',label:'Equal length',fn:setTool('equal')},
+      {sect:'Sketch'},
+      {ic:'finish',label:'Finish sketch',fn:finishSketch},
+      {ic:'extrude',label:'Finish + extrude',fn:()=>{finishSketch();addFeature('extrude');}},
+      {ic:'cancel',label:'Cancel sketch',fn:cancelSketch}
+    ]);
+  }
+  /* right-click on a feature-tree row */
+  function openTreeMenu(x,y,f){
+    const items=[{sect:f.name}];
+    if(f.type==='sketch'){
+      items.push({ic:'edit',label:'Edit sketch',fn:()=>editSketch(f)});
+      items.push({sect:'Use this sketch'});
+      items.push({ic:'extrude',label:'Extrude boss',fn:()=>addFeature('extrude',f.id)});
+      items.push({ic:'cut',label:'Extrude cut',fn:()=>addFeature('cut',f.id)});
+      items.push({ic:'revolve',label:'Revolve boss',fn:()=>addFeature('revolve',f.id)});
+      items.push({ic:'rcut',label:'Revolve cut',fn:()=>addFeature('rcut',f.id)});
+    } else if(f.type==='dplane'){
+      items.push({ic:'sketch',label:'Sketch on this plane',fn:()=>addSketchOnDPlane(f)});
+      items.push({ic:'edit',label:'Edit plane',fn:()=>openProps(f)});
+    } else {
+      items.push({ic:'edit',label:'Edit feature',fn:()=>openProps(f)});
+    }
+    items.push({sect:'Feature'});
+    items.push({ic:'suppress',label:f.suppressed?'Unsuppress':'Suppress',fn:()=>{f.suppressed=!f.suppressed;rebuild();}});
+    items.push({ic:'del',label:'Delete',fn:()=>deleteFeature(f.id)});
+    buildCtxMenu(x,y,items);
   }
   document.addEventListener('pointerdown',e=>{ if(eMenu && !eMenu.contains(e.target))closeEdgeMenu(); },true);
 
   /* ============================ WIRING ============================ */
   const menu=$('menu');
+  /* decorate every button with its pictogram; original text becomes a .lbl */
+  (function decorate(){
+    menu.querySelectorAll('[data-ic]').forEach(b=>{ b.innerHTML=icHTML(b.dataset.ic)+'<span class="lbl">'+b.textContent+'</span>'; });
+    const dockLbl={line:'Line',move:'Move',rect:'Rect',circle:'Circle',polygon:'Polygon',dim:'Dim',horiz:'Horiz',vert:'Vert',paral:'Parallel',equal:'Equal',erase:'Erase'};
+    $('dock').querySelectorAll('button').forEach(b=>{ const t=b.dataset.tool; b.innerHTML=icHTML(t)+'<span class="lbl">'+(dockLbl[t]||t)+'</span>'; });
+    const tb={'btn-save':'save','btn-load':'open','btn-iso':'iso','btn-fit':'fit','btn-export':'stl','btn-step':'step','btn-new':'newpart','btn-edit':'edit','btn-finish':'finish','btn-cancel-sk':'cancel'};
+    for(const id in tb){ const b=$(id); b.innerHTML=icHTML(tb[id])+'<span class="lbl">'+b.textContent+'</span>'; }
+    $('btn-add').innerHTML=icHTML('add')+'<span class="lbl">Add feature</span>';
+  })();
+  function setIconsOnly(v){
+    document.body.classList.toggle('icons-only',v);
+    $('btn-labels').classList.toggle('active',v);
+    try{localStorage.setItem('fcad-icons',v?'1':'0');}catch(_){}
+  }
+  $('btn-labels').addEventListener('click',()=>setIconsOnly(!document.body.classList.contains('icons-only')));
+  try{ if(localStorage.getItem('fcad-icons')==='1') setIconsOnly(true); }catch(_){}
   $('btn-add').addEventListener('click',e=>{
     const r=$('btn-add').getBoundingClientRect();
     menu.style.left=r.left+'px';menu.style.top=(r.bottom+6)+'px';menu.classList.toggle('open');
     const hasSketch=!!lastSketchId();
-    menu.querySelectorAll('[data-add]').forEach(b=>{const a=b.dataset.add;b.disabled=(['extrude','cut','revolve'].includes(a)&&!hasSketch);});
+    menu.querySelectorAll('[data-add]').forEach(b=>{const a=b.dataset.add;b.disabled=(['extrude','cut','revolve','rcut'].includes(a)&&!hasSketch);});
     e.stopPropagation();
   });
   document.addEventListener('click',e=>{if(!menu.contains(e.target)&&e.target.id!=='btn-add')menu.classList.remove('open');});
@@ -2102,9 +2973,11 @@ const CSG = (function(){
   }));
   $('btn-finish').addEventListener('click',finishSketch);
   $('btn-cancel-sk').addEventListener('click',cancelSketch);
+  $('btn-demo').addEventListener('click',loadDemo);
   $('btn-iso').addEventListener('click',()=>{controls.setIso();});
   $('btn-fit').addEventListener('click',fitAll);
   $('btn-export').addEventListener('click',exportSTL);
+  $('btn-step').addEventListener('click',exportSTEP);
   $('btn-save').addEventListener('click',saveProject);
   $('btn-load').addEventListener('click',()=>$('file-load').click());
   $('file-load').addEventListener('change', e => { if(e.target.files.length) loadProject(e.target.files[0]); });
@@ -2144,14 +3017,31 @@ const CSG = (function(){
   window.addEventListener('resize',resize);resize();
   (function loop(){requestAnimationFrame(loop);updateDimLabels();renderer.render(scene,camera);})();
 
+  // Test hook: the app state is otherwise unreachable from the console, which
+  // makes features like fillet impossible to verify headlessly.
+  window.__C = {
+    get features(){ return features; },
+    get resultGeoms(){ return resultGeoms; },
+    get resultShapes(){ return resultShapes; },
+    get pickEdges(){ return pickEdges; },
+    get selectedEdges(){ return selectedEdges; },
+    set selectedEdges(v){ selectedEdges = v; },
+    get propsFeat(){ return propsFeat; },
+    get draftFeat(){ return draftFeat; },
+    insertFeature, defaults, addFeature, rebuild, openProps, closeProps,
+    selectFeature, nextId: () => nextId(), renderer, scene, camera, controls, fitAll,
+    OCK, featureEdges,
+    snap(){ renderer.render(scene, camera); return renderer.domElement.toDataURL('image/jpeg', 0.85); }
+  };
+
   function boot(){
     rebuild();
-    setHint('Add feature → Sketch · Top plane to begin');
+    setHint('Click a plane to start a sketch · right-click for all commands');
   }
-  if(window.MANIFOLD){ boot(); }
+  if(window.OCCT){ boot(); }
   else {
-    setHint('Loading 3D engine…');
-    window.addEventListener('manifold-ready', boot, { once:true });
+    setHint('Loading the Open CASCADE kernel — ~11 MB, first visit only…');
+    window.addEventListener('kernel-ready', boot, { once:true });
   }
 })();
 </script>
