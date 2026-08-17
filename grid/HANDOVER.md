@@ -1,6 +1,43 @@
 # /grid — handover
 
-State as of 2026-08-15. Live at https://freya.co.nz/grid
+State as of 2026-08-17. Live at https://freya.co.nz/grid
+
+## 2026-08-17 — fit-check template (not yet deployed)
+
+- **`GF.buildTemplate(opts)`** (core.js): the bin in plan at 0.2 mm thick with
+  the pocket (outline + clearance + finger holes, all copies) cut clean through.
+  Reuses `GF.pocketSolids` with zBot −1 / zTop t+1 / floorZ 0 so every cut is a
+  through-cut and finger holes don't dive below a floor that isn't there.
+- **UI**: a *Make* select (`bin-output`: full bin / fit-check template) in the
+  Tool pocket fieldset on the Bin tab, so it only shows for pocket style.
+  Generate builds whichever is selected; STL/STEP export it unchanged. File
+  name becomes `gridfinity-tool-template-NxM`.
+- Test case `tool_template` added to `test/export-parts.mjs`; 8/8 STEPs read
+  back as single closed valid solids. `?v=` bumped to `20260817a`.
+
+## Evening session — scan-tab quality pass (not yet deployed)
+
+- **Trace quality**: after the crack-following contour, the line is resampled
+  to 2 px, snapped to the sub-pixel zero crossing of a signed segmentation
+  score (`V.refine` — undoes the shift the open/close clean-up introduces),
+  then smoothed (`V.smooth`, radius driven by the *Follow the edge closely*
+  slider). No more pixel staircase.
+- **Drag-to-fix is now a push brush**: each pointermove nudges whatever is
+  inside the brush *now* (sub-stepped so fast moves don't tunnel), so one
+  stroke swept along the line redoes a whole edge. Touched points get one
+  Laplacian relax and the polygon is re-spaced on release.
+- **The dashed cut line is real**: outline ∪ clearance offset ∪ finger
+  circles, rasterised and re-traced (`buildCutPreview`), exactly matching
+  what `GF.pocketSolids` cuts. Rebuilt on trace/release/slider/finger events,
+  never per-frame. Finger holes snap onto the outline when placed.
+- **Straighten tool**: armed button in *Fix it by dragging*; click each end of
+  a wobbly stretch and the shorter perimeter path between the clicks is
+  replaced with an evenly spaced straight run. Blue marker + rubber-band show
+  the pending first end; Esc or the button disarms; Undo covers it.
+- `window.__S` exposes the app state as a test hook — drive the scan tab
+  headlessly with synthetic PointerEvents + a DataTransfer drop (see this
+  session for the recipe); screenshots still don't composite when the pane
+  is hidden, but `sc-canvas.toDataURL()` gets you the rendered canvas.
 
 ## Run it
 

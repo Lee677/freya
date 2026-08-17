@@ -130,27 +130,36 @@
     if (tool.length && back.length) {
       const d = img.data;
       const m = new Uint8Array(w * h);
+      // Signed edge score over the whole frame: positive means nearer the tool
+      // colours than the background colours. The mask is just this thresholded
+      // inside the search area; V.refine later follows its zero crossing to put
+      // the outline on the real edge at sub-pixel accuracy, undoing the shifts
+      // the morphological clean-up introduces.
+      const esc = new Float32Array(w * h);
+      for (let i = 0; i < w * h; i++) {
+        const o = i * 4, R = d[o], G = d[o + 1], B = d[o + 2];
+        let dt = Infinity, db = Infinity;
+        for (let s = 0; s < tool.length; s++) {
+          const c = tool[s], e = (R - c[0]) * (R - c[0]) + (G - c[1]) * (G - c[1]) + (B - c[2]) * (B - c[2]);
+          if (e < dt) dt = e;
+        }
+        for (let s = 0; s < back.length; s++) {
+          const c = back[s], e = (R - c[0]) * (R - c[0]) + (G - c[1]) * (G - c[1]) + (B - c[2]) * (B - c[2]);
+          if (e < db) db = e;
+        }
+        esc[i] = Math.sqrt(db) - Math.sqrt(dt);
+      }
       for (let y = ry0; y <= ry1; y++) {
         for (let x = rx0; x <= rx1; x++) {
-          const i = y * w + x, o = i * 4;
-          const R = d[o], G = d[o + 1], B = d[o + 2];
-          let dt = Infinity, db = Infinity;
-          for (let s = 0; s < tool.length; s++) {
-            const c = tool[s], e = (R - c[0]) * (R - c[0]) + (G - c[1]) * (G - c[1]) + (B - c[2]) * (B - c[2]);
-            if (e < dt) dt = e;
-          }
-          for (let s = 0; s < back.length; s++) {
-            const c = back[s], e = (R - c[0]) * (R - c[0]) + (G - c[1]) * (G - c[1]) + (B - c[2]) * (B - c[2]);
-            if (e < db) db = e;
-          }
-          m[i] = dt < db ? 1 : 0;
+          const i = y * w + x;
+          m[i] = esc[i] > 0 ? 1 : 0;
         }
       }
       const res = finish(m);
       fillHoles(res.mask, w, h);
       return {
         mask: res.mask, w: w, h: h, threshold: null, objDark: null, mode: 'colour',
-        area: res.area, clipped: res.touch > 0
+        score: esc, area: res.area, clipped: res.touch > 0
       };
     }
 
@@ -168,9 +177,13 @@
     if (opts.invert) best = (best === cands[0]) ? cands[1] : cands[0];
 
     fillHoles(best.mask, w, h);
+    // same signed score as the colour path, from brightness alone
+    const esc = new Float32Array(w * h);
+    if (best.dark) { for (let i = 0; i < w * h; i++) esc[i] = thr - g[i]; }
+    else { for (let i = 0; i < w * h; i++) esc[i] = g[i] - thr; }
     return {
       mask: best.mask, w: w, h: h, threshold: thr, objDark: best.dark,
-      area: best.area, clipped: best.touch > 0
+      score: esc, area: best.area, clipped: best.touch > 0
     };
   };
 
@@ -304,6 +317,65 @@
     const out = [];
     for (let i = 0; i < pts.length; i++) if (keepIdx[i]) out.push(pts[i]);
     return out;
+  };
+
+  /* Slide each point of a traced polygon along its local normal to the nearest
+   * zero crossing of the segmentation score — i.e. onto the actual image edge.
+   * The thresholded mask is only pixel-accurate and the open/close clean-up
+   * shifts its boundary by up to the clean radius; this puts the line back on
+   * the edge at sub-pixel accuracy. Points with no crossing within reach stay. */
+  V.refine = function (pts, score, w, h, reach) {
+    reach = reach || 3;
+    function S(x, y) {   // bilinear sample
+      x = Math.max(0, Math.min(w - 1.001, x)); y = Math.max(0, Math.min(h - 1.001, y));
+      const x0 = x | 0, y0 = y | 0, fx = x - x0, fy = y - y0, o = y0 * w + x0;
+      return score[o] * (1 - fx) * (1 - fy) + score[o + 1] * fx * (1 - fy) +
+        score[o + w] * (1 - fx) * fy + score[o + w + 1] * fx * fy;
+    }
+    const n = pts.length, out = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const a = pts[(i - 1 + n) % n], b = pts[(i + 1) % n], p = pts[i];
+      let nx = -(b[1] - a[1]), ny = b[0] - a[0];
+      const L = Math.hypot(nx, ny);
+      if (L < 1e-6) { out[i] = [p[0], p[1]]; continue; }
+      nx /= L; ny /= L;
+      let bestT = 0, found = false;
+      let prevT = -reach, prevV = S(p[0] - nx * reach, p[1] - ny * reach);
+      for (let t = -reach + 0.5; t <= reach + 1e-9; t += 0.5) {
+        const v = S(p[0] + nx * t, p[1] + ny * t);
+        if ((prevV >= 0) !== (v >= 0)) {
+          const tz = prevT + (0 - prevV) / (v - prevV) * (t - prevT);
+          if (!found || Math.abs(tz) < Math.abs(bestT)) { bestT = tz; found = true; }
+        }
+        prevT = t; prevV = v;
+      }
+      out[i] = found ? [p[0] + nx * bestT, p[1] + ny * bestT] : [p[0], p[1]];
+    }
+    return out;
+  };
+
+  /* Windowed average along a closed polyline — triangular weights so the
+   * window has no hard edge. rad is in points either side. Kills the pixel
+   * staircase without flattening real corners the way a big RDP epsilon does. */
+  V.smooth = function (pts, rad, iters) {
+    rad = Math.max(1, rad | 0); iters = iters || 1;
+    const n = pts.length;
+    if (n < 8) return pts.slice();
+    let cur = pts;
+    for (let it = 0; it < iters; it++) {
+      const out = new Array(n);
+      for (let i = 0; i < n; i++) {
+        let sx = 0, sy = 0, sw = 0;
+        for (let k = -rad; k <= rad; k++) {
+          const wt = rad + 1 - Math.abs(k);
+          const p = cur[(i + k + n) % n];
+          sx += p[0] * wt; sy += p[1] * wt; sw += wt;
+        }
+        out[i] = [sx / sw, sy / sw];
+      }
+      cur = out;
+    }
+    return cur;
   };
 
   /* pixel polygon -> millimetre polygon, Y flipped, centred on its bbox */

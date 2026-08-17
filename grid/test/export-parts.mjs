@@ -42,6 +42,10 @@ const cases = [
     pocket: { poly: spanner, depth: 12, clearance: 0.5, cols: 1, rows: 2, spacing: 4, fingerR: 9 }
   }).solid],
   ['bin_5x3x9_solid', () => GF.buildBin({ nx: 5, ny: 3, uz: 9, lip: true, solidBody: true, seg: 8 }).solid],
+  ['tool_template', () => GF.buildTemplate({
+    nx: 4, ny: 2, seg: 8,
+    pocket: { poly: spanner, clearance: 0.5, cols: 1, rows: 2, spacing: 4, fingers: [{ x: -60, y: 6, r: 9 }] }
+  }).solid],
   ['baseplate_grid_only', () => GF.buildBaseplate({ drawerW: 300, drawerD: 200, fill: 'grid', seg: 8 }).solid]
 ];
 

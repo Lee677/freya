@@ -459,6 +459,23 @@
     };
   };
 
+  /* One-layer fit-check template: the bin in plan at t mm thick, with the
+   * pocket cut clean through. Prints in minutes; set the tool in the hole to
+   * prove the outline and clearance before committing to the full bin. */
+  GF.buildTemplate = function (opts) {
+    const S = SPEC;
+    const seg = opts.seg || S.SEG;
+    const nx = Math.max(1, opts.nx | 0), ny = Math.max(1, opts.ny | 0);
+    const W = nx * S.PITCH - S.BIN_GAP, D = ny * S.PITCH - S.BIN_GAP;
+    const t = opts.t || 0.2;
+    let solid = roundBox(W, D, t, S.BIN_R, 0, 0, 0, seg);
+    // zBot below zero and zTop above t make every cut a through-cut; floorZ 0
+    // keeps the finger holes from trying to dive below a floor that isn't there
+    const cuts = GF.pocketSolids(opts.pocket, -1, t + 1, 0);
+    if (cuts.length) solid = keep(solid.subtract(unionAll(cuts)));
+    return { solid: solid, info: { nx: nx, ny: ny, W: W, D: D, t: t } };
+  };
+
   /* Tool pocket negatives from a traced outline.
    * zBot = pocket floor, zTop = well above the bin top, floorZ = inside floor. */
   GF.pocketSolids = function (p, zBot, zTop, floorZ) {

@@ -19,7 +19,8 @@
       contourPx: null, mask: null, work: null,
       colors: { tool: [], bg: [] },   // sampled rgb, drives the trace
       fingers: [],                    // {x,y,r} in canvas px, r in mm
-      arm: null                       // 'tool' | 'bg' | 'finger' while placing
+      arm: null,                      // 'tool' | 'bg' | 'finger' | 'straight' while placing
+      straightA: null                 // first end of a straighten pair (outline index)
     }
   };
 
@@ -197,13 +198,26 @@
       GF.flush();
       const o = binOpts();
       if (o.nx > 12 || o.ny > 12 || o.uz > 40) throw new Error('That is bigger than this tool will build.');
-      const r = GF.buildBin(o);
+      const tpl = !!(o.pocket && $('bin-output').value === 'template');
+      const r = tpl ? GF.buildTemplate(o) : GF.buildBin(o);
       const mesh = EX.toMesh(r.solid);
       GF.flush();
-      S.bin = { mesh: mesh, info: r.info, opts: o };
+      S.bin = { mesh: mesh, info: r.info, opts: o, template: tpl };
       showMeshes([mesh]);
       const st = EX.meshStats(mesh);
       const i = r.info;
+      if (tpl) {
+        const ps = V.polyStats(o.pocket.poly);
+        readout('<b>Fit-check template</b> · ' + fmt(i.W, 1) + ' × ' + fmt(i.D, 1) + ' × ' + fmt(i.t, 1) +
+          ' mm — the bin in plan, one layer thick\n' +
+          'pocket ' + fmt(ps.w, 1) + ' × ' + fmt(ps.d, 1) + ' mm + ' + fmt(o.pocket.clearance, 2) +
+          ' mm clearance × ' + (o.pocket.cols * o.pocket.rows) + ' off\n' +
+          st.tris.toLocaleString() + ' triangles · ~' + fmt(st.grams, 1) + ' g — prints in minutes\n' +
+          'Print it flat, set the tool in the hole. An even gap all round means the full\n' +
+          'bin will fit; too snug, raise <b>Extra room</b> on the Tool scan tab and remake.');
+        $('bin-stl').disabled = $('bin-step').disabled = false;
+        return;
+      }
       let h = '<b>' + i.nx + ' × ' + i.ny + ' × ' + i.uz + 'u</b> · ' +
         fmt(i.W, 1) + ' × ' + fmt(i.D, 1) + ' × ' + fmt(i.H, 2) + ' mm overall\n' +
         (i.lip ? 'body ' + fmt(i.body, 0) + ' mm + stacking lip · stacks at ' + fmt(i.stackPitch, 2) + ' mm pitch\n'
@@ -222,6 +236,7 @@
   }
   function binName() {
     const i = S.bin.info;
+    if (S.bin.template) return 'gridfinity-tool-template-' + i.nx + 'x' + i.ny;
     return 'gridfinity-bin-' + i.nx + 'x' + i.ny + 'x' + i.uz + (S.bin.opts.pocket ? '-tool' : '');
   }
   on('bin-build', 'click', buildBin);
@@ -241,9 +256,9 @@
     S.scan.base = canvas;
     S.scan.ppm = ppm || null;
     cv.width = canvas.width; cv.height = canvas.height;
-    S.scan.contourPx = null; S.scan.mask = null; S.scan.tinted = null;
+    S.scan.contourPx = null; S.scan.mask = null; S.scan.tinted = null; S.scan.cutPx = null;
     S.scan.undo = []; S.scan.edited = false; S.scan.traced = null; S.scan.cursor = null;
-    S.scan.fingers = []; S.fingers = [];
+    S.scan.fingers = []; S.fingers = []; S.scan.straightA = null;
     if ($('sc-fingern')) updateFingerCount();
     refreshEditButtons();
     drawScan();
@@ -292,17 +307,19 @@
       cx.strokeStyle = '#f0721c'; cx.lineWidth = lw; cx.stroke();
       cx.restore();
 
-      // what actually gets cut: the outline grown by the clearance
-      const clr = clearanceMM() * S.scan.ppm;
-      if (clr > 0.5) {
+      // what actually gets cut: outline + clearance + finger notches, as the
+      // one dashed line the pocket boundary will really follow
+      if (S.scan.cutPx && S.scan.cutPx.length > 2) {
+        const s = dispScale();
         cx.save();
-        cx.strokeStyle = 'rgba(240,114,28,.85)';
-        cx.lineWidth = clr * 2;              // a band of exactly the clearance
-        cx.lineJoin = cx.lineCap = 'round';
-        cx.globalAlpha = 0.22;
+        cx.lineJoin = 'round';
         cx.beginPath();
-        S.scan.contourPx.forEach(function (p, i) { i ? cx.lineTo(p[0], p[1]) : cx.moveTo(p[0], p[1]); });
-        cx.closePath(); cx.stroke();
+        S.scan.cutPx.forEach(function (p, i) { i ? cx.lineTo(p[0], p[1]) : cx.moveTo(p[0], p[1]); });
+        cx.closePath();
+        cx.strokeStyle = 'rgba(255,255,255,.6)'; cx.lineWidth = 2.8 * s; cx.stroke();
+        cx.strokeStyle = 'rgba(240,114,28,.95)'; cx.lineWidth = 1.4 * s;
+        cx.setLineDash([6 * s, 4.5 * s]);
+        cx.stroke();
         cx.restore();
       }
 
@@ -318,6 +335,21 @@
           cx.lineWidth = 1.8 * s;
           cx.fill(); cx.stroke();
         });
+        cx.restore();
+      }
+
+      // straighten: mark the first clicked end, rubber-band to the cursor
+      if (S.scan.arm === 'straight' && S.scan.straightA != null && S.scan.contourPx[S.scan.straightA]) {
+        const a = S.scan.contourPx[S.scan.straightA];
+        const s = dispScale();
+        cx.save();
+        if (S.scan.cursor) {
+          cx.strokeStyle = acc; cx.lineWidth = 1.5 * s; cx.setLineDash([5 * s, 4 * s]);
+          cx.beginPath(); cx.moveTo(a[0], a[1]); cx.lineTo(S.scan.cursor[0], S.scan.cursor[1]); cx.stroke();
+          cx.setLineDash([]);
+        }
+        cx.fillStyle = acc; cx.strokeStyle = '#fff'; cx.lineWidth = 2 * s;
+        cx.beginPath(); cx.arc(a[0], a[1], 4.5 * s, 0, 7); cx.fill(); cx.stroke();
         cx.restore();
       }
 
@@ -445,6 +477,7 @@
       return { x: f.x / ppm - cx0, y: -f.y / ppm - cy0, r: f.r };
     });
     $('bin-pclear').value = fmt(clearanceMM(), 2);
+    if (withStats) buildCutPreview();   // too dear to redo on every drag frame
     const st = V.polyStats(S.outline);
     $('bin-poly').textContent = fmt(st.w, 1) + ' × ' + fmt(st.d, 1) + ' mm, ' + st.n + ' pts';
     if (withStats) {
@@ -458,22 +491,130 @@
     }
   }
 
+  /* ---- the cut line ----------------------------------------------------
+   * The bin builder cuts the outline offset by the clearance (round joins)
+   * unioned with a full circle per finger hole. Build exactly that union in
+   * raster — fill the polygon, stroke it 2×clearance wide, fill the circles —
+   * and trace the result, so the dashed preview is the true pocket boundary
+   * rather than an approximation of it. */
+  function buildCutPreview() {
+    S.scan.cutPx = null;
+    if (!canEdit()) return;
+    const w = cv.width, h = cv.height;
+    const t = document.createElement('canvas');
+    t.width = w; t.height = h;
+    const g = t.getContext('2d', { willReadFrequently: true });
+    g.fillStyle = g.strokeStyle = '#fff';
+    g.lineJoin = g.lineCap = 'round';
+    g.beginPath();
+    S.scan.contourPx.forEach(function (p, i) { i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]); });
+    g.closePath();
+    g.fill();
+    const clr = clearanceMM() * S.scan.ppm;
+    if (clr > 0.05) { g.lineWidth = clr * 2; g.stroke(); }
+    S.scan.fingers.forEach(function (f) {
+      g.beginPath(); g.arc(f.x, f.y, f.r * S.scan.ppm, 0, 7); g.fill();
+    });
+    const d = g.getImageData(0, 0, w, h).data;
+    const m = new Uint8Array(w * h);
+    for (let i = 0; i < m.length; i++) m[i] = d[i * 4 + 3] > 127 ? 1 : 0;
+    const c = V.contour(m, w, h);
+    S.scan.cutPx = c && c.length > 2 ? V.rdp(c, 1.25) : null;
+  }
+
+  // gentle Laplacian relax of just the points a drag touched, so a stroke
+  // leaves no kinks behind but deliberate bends survive
+  function smoothIndices(poly, idxSet) {
+    const n = poly.length;
+    const src = poly.map(function (p) { return [p[0], p[1]]; });
+    idxSet.forEach(function (i) {
+      const a = src[(i - 1 + n) % n], b = src[(i + 1) % n], p = src[i];
+      poly[i] = [(a[0] + 2 * p[0] + b[0]) / 4, (a[1] + 2 * p[1] + b[1]) / 4];
+    });
+  }
+
+  function nearestOutlineIndex(p) {
+    const poly = S.scan.contourPx;
+    let bi = 0, bd = Infinity;
+    for (let i = 0; i < poly.length; i++) {
+      const d = Math.hypot(p[0] - poly[i][0], p[1] - poly[i][1]);
+      if (d < bd) { bd = d; bi = i; }
+    }
+    return bi;
+  }
+
+  /* Replace the stretch between two clicked points with a straight line.
+   * A closed polygon has two paths between any pair of points; the one that is
+   * shorter along the perimeter is the one being straightened — that is the
+   * arc you mean when you click the two ends of one wobbly edge. */
+  function straightenBetween(i0, i1) {
+    const poly = S.scan.contourPx, n = poly.length;
+    let a = i0, b = i1;
+    const fwd = (b - a + n) % n;
+    if (fwd > n - fwd) { const t = a; a = b; b = t; }   // replace a→b forward, the short way
+    const A = poly[a], B = poly[b];
+    const out = [];
+    for (let k = b; k !== a; k = (k + 1) % n) out.push([poly[k][0], poly[k][1]]);
+    out.push([A[0], A[1]]);
+    const step = Math.max(3, cv.width / 300);
+    const m = Math.max(1, Math.floor(Math.hypot(B[0] - A[0], B[1] - A[1]) / step));
+    for (let k = 1; k < m; k++) out.push([A[0] + (B[0] - A[0]) * k / m, A[1] + (B[1] - A[1]) * k / m]);
+    S.scan.contourPx = out;
+  }
+  function straightClick(p) {
+    const i = nearestOutlineIndex(p);
+    if (S.scan.straightA == null) {
+      S.scan.straightA = i;
+      status('now click the other end — the stretch between goes straight');
+      drawScan();
+      return;
+    }
+    const i0 = S.scan.straightA;
+    S.scan.straightA = null;
+    if (i0 === i) { status('those are the same point — click two different places', 'err'); drawScan(); return; }
+    pushUndo();
+    straightenBetween(i0, i);
+    syncOutline(true);
+    status('straightened — click two more points, or press Straighten again to stop');
+    drawScan();
+  }
+
+  function nearestOutlinePoint(p) {
+    const poly = S.scan.contourPx, n = poly.length;
+    let best = Infinity, out = p;
+    for (let i = 0; i < n; i++) {
+      const a = poly[i], b = poly[(i + 1) % n];
+      const vx = b[0] - a[0], vy = b[1] - a[1];
+      const len = vx * vx + vy * vy;
+      let t = len ? ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / len : 0;
+      t = Math.max(0, Math.min(1, t));
+      const q = [a[0] + t * vx, a[1] + t * vy];
+      const d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+      if (d < best) { best = d; out = q; }
+    }
+    return out;
+  }
+
   /* ---- colour sampling and finger holes -------------------------------- */
   function armTool(which) {
     S.scan.arm = S.scan.arm === which ? null : which;
+    S.scan.straightA = null;
     $('sc-pick-tool').classList.toggle('armed', S.scan.arm === 'tool');
     $('sc-pick-bg').classList.toggle('armed', S.scan.arm === 'bg');
     $('sc-addfinger').classList.toggle('armed', S.scan.arm === 'finger');
+    $('sc-straight').classList.toggle('armed', S.scan.arm === 'straight');
     status(S.scan.arm === 'tool' ? 'click the tool in the photo — one click per shade'
       : S.scan.arm === 'bg' ? 'click the surface the tool is lying on'
         : S.scan.arm === 'finger' ? 'click the outline where you want to lift the tool from'
-          : '');
+          : S.scan.arm === 'straight' ? 'click one end of the wobbly stretch'
+            : '');
     cv.style.cursor = S.scan.arm ? 'crosshair' : 'default';
     drawScan();
   }
   on('sc-pick-tool', 'click', function () { armTool('tool'); });
   on('sc-pick-bg', 'click', function () { armTool('bg'); });
   on('sc-addfinger', 'click', function () { armTool('finger'); });
+  on('sc-straight', 'click', function () { armTool('straight'); });
   on('sc-clearcols', 'click', function () {
     S.scan.colors = { tool: [], bg: [] };
     renderSwatches();
@@ -519,7 +660,10 @@
         return;
       }
     }
-    S.scan.fingers.push({ x: p[0], y: p[1], r: fingerR() });
+    // the notch is a circle centred ON the line (core.js cuts it that way),
+    // so snap the click to the nearest point of the outline
+    const q = nearestOutlinePoint(p);
+    S.scan.fingers.push({ x: q[0], y: q[1], r: fingerR() });
     syncOutline(true); updateFingerCount(); drawScan();
   }
   function updateFingerCount() {
@@ -562,6 +706,11 @@
       addFinger(p);
       return;
     }
+    if (S.scan.arm === 'straight') {
+      if (!canEdit()) { status('trace an outline first', 'err'); return; }
+      straightClick(p);
+      return;
+    }
 
     // Before the scale is set the canvas does one thing only: mark the two ends
     // of a known distance. Dragging from one to the other is the gesture people
@@ -575,18 +724,10 @@
     // grabbing the line takes priority over drawing a search box
     if (e.button === 0 && canEdit() && distToOutline(p) <= brushPx()) {
       pushUndo();
-      const r = brushPx();
-      const grabbed = [];
-      S.scan.contourPx.forEach(function (q, i) {
-        const d = Math.hypot(p[0] - q[0], p[1] - q[1]);
-        if (d <= r) grabbed.push({ i: i, from: [q[0], q[1]], w: 0.5 * (1 + Math.cos(Math.PI * d / r)) });
-      });
-      if (grabbed.length) {
-        drag = { brush: true, start: p, grabbed: grabbed };
-        try { cv.setPointerCapture(e.pointerId); } catch (err) { /* synthetic pointer */ }
-        drawScan();
-        return;
-      }
+      drag = { brush: true, last: p, touched: new Set() };
+      try { cv.setPointerCapture(e.pointerId); } catch (err) { /* synthetic pointer */ }
+      drawScan();
+      return;
     }
     drag = { start: p, moved: false };
     try { cv.setPointerCapture(e.pointerId); } catch (err) { /* synthetic pointer */ }
@@ -605,22 +746,38 @@
       return;
     }
 
-    if (drag && drag.brush) {                       // bend the line toward the cursor
-      const dx = p[0] - drag.start[0], dy = p[1] - drag.start[1];
-      drag.grabbed.forEach(function (g) {
-        S.scan.contourPx[g.i] = [
-          Math.max(0, Math.min(cv.width, g.from[0] + dx * g.w)),
-          Math.max(0, Math.min(cv.height, g.from[1] + dy * g.w))
-        ];
-      });
-      syncOutline(false);
-      drawScan();
+    if (drag && drag.brush) {                       // push the line as the cursor sweeps
+      // Not a fixed grab: each frame nudges whatever is inside the brush NOW,
+      // so one stroke dragged along the line herds a whole edge into place.
+      // Fast moves are sub-stepped or points between two frames get skipped.
+      const r = brushPx();
+      const tx = p[0] - drag.last[0], ty = p[1] - drag.last[1];
+      const total = Math.hypot(tx, ty);
+      if (total > 0) {
+        const steps = Math.max(1, Math.ceil(total / (r * 0.4)));
+        const poly = S.scan.contourPx, n = poly.length;
+        for (let s = 1; s <= steps; s++) {
+          const cxp = drag.last[0] + tx * s / steps, cyp = drag.last[1] + ty * s / steps;
+          for (let i = 0; i < n; i++) {
+            const q = poly[i];
+            const d = Math.hypot(cxp - q[0], cyp - q[1]);
+            if (d > r) continue;
+            const w0 = 0.5 * (1 + Math.cos(Math.PI * d / r));
+            q[0] = Math.max(0, Math.min(cv.width, q[0] + (tx / steps) * w0));
+            q[1] = Math.max(0, Math.min(cv.height, q[1] + (ty / steps) * w0));
+            drag.touched.add(i);
+          }
+        }
+        drag.last = p;
+        syncOutline(false);
+        drawScan();
+      }
       return;
     }
 
     if (!drag) {                                    // hover: show what we would grab
       if (!canEdit()) { cv.style.cursor = 'crosshair'; return; }
-      cv.style.cursor = distToOutline(p) <= brushPx() ? 'grab' : 'crosshair';
+      cv.style.cursor = !S.scan.arm && distToOutline(p) <= brushPx() ? 'grab' : 'crosshair';
       drawScan();
       return;
     }
@@ -651,6 +808,10 @@
         S.scan.pts = was.concat([evPos(e)]);
       }
     } else if (drag.brush) {
+      // relax what was touched, then re-space so the next grab has points
+      // everywhere along the stretch that just moved
+      smoothIndices(S.scan.contourPx, drag.touched);
+      S.scan.contourPx = resample(S.scan.contourPx, Math.max(3, cv.width / 300));
       syncOutline(true);
     }
     drag = null;
@@ -661,6 +822,7 @@
   function undoEdit() {
     if (!S.scan.undo || !S.scan.undo.length) return;
     S.scan.contourPx = S.scan.undo.pop();
+    S.scan.straightA = null;
     S.scan.edited = !!S.scan.undo.length;
     refreshEditButtons();
     syncOutline(true);
@@ -671,6 +833,7 @@
     if (!S.scan.traced) return;
     pushUndo();
     S.scan.contourPx = S.scan.traced.map(function (p) { return [p[0], p[1]]; });
+    S.scan.straightA = null;
     S.scan.edited = false;
     refreshEditButtons();
     syncOutline(true);
@@ -772,19 +935,26 @@
       });
       const raw = V.contour(seg.mask, seg.w, seg.h);
       if (!raw || raw.length < 8) throw new Error('Nothing found — try inverting, or drag a box around the tool.');
+      // Refine the pixel-accurate contour instead of using it as-is: light
+      // smoothing to settle the staircase, a sub-pixel snap onto the actual
+      // image edge (which also undoes the shift the speckle clean-up causes),
+      // then smoothing driven by the slider. Even spacing last, so a drag
+      // always has something to grab. Thinned again on the way out to the bin.
+      let dense = V.smooth(resample(raw, 2), 2, 1);
+      if (seg.score) dense = V.refine(dense, seg.score, seg.w, seg.h, int('sc-clean') + 3);
       const smoothMM = Math.max(0.05, num('sc-simp') / 10);
-      const simp = V.rdp(raw, smoothMM * S.scan.ppm);
-      // Even spacing along the line, so a drag always has something to grab and
-      // the bend is smooth. Thinned again on the way out to the bin.
-      const dense = resample(simp, Math.max(3, cv.width / 300));
+      dense = V.smooth(dense, Math.max(1, Math.round(smoothMM * S.scan.ppm / 2)), 2);   // /2: points are 2 px apart
+      dense = resample(dense, Math.max(3, cv.width / 300));
       S.scan.mask = seg.mask;
       S.scan.contourPx = dense;
+      S.scan.straightA = null;
       S.scan.traced = dense.map(function (p) { return [p[0], p[1]]; });  // baseline for Reset
       S.scan.undo = [];
       S.scan.edited = false;
       refreshEditButtons();
       buildTint();
       syncOutline(false);
+      buildCutPreview();
       drawScan();
       const st = V.polyStats(S.outline);
       readout('Outline: <b>' + fmt(st.w, 1) + ' × ' + fmt(st.d, 1) + ' mm</b>, ' +
@@ -833,6 +1003,9 @@
     status('');
     buildBaseplate();
   }
+  // Test hook: the scan-tab state is otherwise unreachable from the console,
+  // which made the drag/trace features impossible to verify headlessly.
+  window.__S = S;
   if (window.MANIFOLD) boot();
   else addEventListener('manifold-ready', boot);
   addEventListener('error', function (e) {

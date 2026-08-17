@@ -279,6 +279,13 @@
             <span class="two" style="width:9.6rem"><input type="number" id="bin-pcols" value="1" min="1" max="20"><input type="number" id="bin-prows" value="1" min="1" max="20"></span></div>
           <div class="row"><label for="bin-pspace">Gap between copies</label><input type="number" id="bin-pspace" value="4" step="0.5"></div>
           <div class="row"><label for="bin-pauto">Auto-size the bin</label><input type="checkbox" id="bin-pauto" checked></div>
+          <div class="row"><label for="bin-output">Make<span class="hint">the template is the bin in plan, one printed
+            layer thick &mdash; minutes on the printer to prove the fit before the full bin</span></label>
+            <select id="bin-output"
+              title="Fit-check template: the bin's footprint at 0.2 mm thick with the pocket cut clean through. Print it, set the tool in the hole, and check the gap before spending hours on the full bin.">
+              <option value="bin">full bin</option>
+              <option value="template">fit-check template</option>
+            </select></div>
         </fieldset>
 
         <div class="btns">
@@ -342,7 +349,7 @@
               title="Rubs out flecks of dust and fills pinholes before tracing. Raise it if the outline is chasing bits of grit; lower it to 0 if it is rounding off a genuinely fine detail."></div>
           <div class="row"><label for="sc-simp">Follow the edge closely</label>
             <input type="range" id="sc-simp" min="0" max="30" value="4"
-              title="How tightly the outline hugs the pixels, in tenths of a millimetre. Low keeps every wobble, high gives fewer, straighter segments. 0.4 mm suits most tools."></div>
+              title="How tightly the outline hugs the edge, in tenths of a millimetre. Low keeps every wobble, high gives a calmer, smoother line. 0.4 mm suits most tools."></div>
           <div class="row"><label>Drag a box on the photo to search only there</label><span class="hint" id="sc-roi">whole image</span></div>
           <div class="btns">
             <button class="act primary" id="sc-trace" disabled>Trace outline</button>
@@ -352,11 +359,14 @@
 
         <fieldset class="grp">
           <div class="legend">Fix it by dragging</div>
-          <div class="row"><label>Drag the orange line on the photo<span class="hint">it bends toward your cursor &mdash;
-            push it out over anything the trace missed, or in where it grabbed too much</span></label></div>
+          <div class="row"><label>Drag the orange line on the photo<span class="hint">it follows your cursor &mdash;
+            push it out over anything the trace missed, or sweep along the line to redo a whole edge in one stroke</span></label></div>
           <div class="row"><label for="sc-brush">How much moves at once</label>
             <input type="range" id="sc-brush" min="10" max="140" value="50"
               title="The size of the circle you drag with. Small nudges one corner; large sweeps a whole side of the tool."></div>
+          <div class="row"><label>Straighten an edge<span class="hint">click each end of a wobbly stretch &mdash;
+            the line between them goes dead straight</span></label>
+            <button class="act" id="sc-straight" title="Arms straightening. Click the outline at one end of a wobbly stretch, then at the other; the shorter way round between your two clicks is replaced with a straight line. Press again to stop.">Straighten</button></div>
           <div class="btns">
             <button class="act" id="sc-undo" disabled>Undo</button>
             <button class="act" id="sc-reset" disabled>Back to auto-trace</button>
@@ -466,10 +476,10 @@
      fetches code that matches this markup. Without it, a cached app.js drives
      fresh HTML after a deploy, reads an element that no longer exists, and the
      page dies on the first click — which is exactly what happened once. -->
-<script src="./js/core.js?v=20260815c"></script>
-<script src="./js/exporters.js?v=20260815c"></script>
-<script src="./js/vision.js?v=20260815c"></script>
-<script src="./js/viewer.js?v=20260815c"></script>
-<script src="./js/app.js?v=20260815c"></script>
+<script src="./js/core.js?v=20260817a"></script>
+<script src="./js/exporters.js?v=20260817a"></script>
+<script src="./js/vision.js?v=20260817a"></script>
+<script src="./js/viewer.js?v=20260817a"></script>
+<script src="./js/app.js?v=20260817a"></script>
 </body>
 </html>
