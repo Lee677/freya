@@ -93,14 +93,14 @@ if(!window.THREE){
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;overflow:hidden}
   body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
-  #app{display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:268px 1fr;height:100vh;width:100vw}
+  #app{display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:226px 1fr;height:100vh;width:100vw}
 
   /* toolbar */
-  .toolbar{grid-column:1/3;display:flex;align-items:center;gap:12px;padding:0 14px;height:50px;
+  .toolbar{grid-column:1/3;display:flex;align-items:center;gap:8px;padding:0 10px;height:40px;
     background:linear-gradient(180deg,var(--panel),#080a0f);border-bottom:2px solid var(--g-blue);box-shadow:0 0 15px rgba(66,133,244,0.25);z-index:30}
   /* the home-page freya wordmark, inverted for the dark UI */
   a.brand{display:flex;align-items:center;user-select:none;text-decoration:none;color:var(--text)}
-  .brand .mark{font-family:var(--serif);font-weight:600;font-size:21px;letter-spacing:-.015em;line-height:1;position:relative;display:inline-block;padding:2px .6em 3px 0}
+  .brand .mark{font-family:var(--serif);font-weight:600;font-size:17px;letter-spacing:-.015em;line-height:1;position:relative;display:inline-block;padding:2px .6em 3px 0}
   .brand .mark::after{content:"";position:absolute;left:0;right:.6em;bottom:-2px;height:2px;background:linear-gradient(90deg,var(--accent-f),transparent)}
   .brand .asterism{position:absolute;right:.02em;top:-.30em;width:1.72em;height:.62em;overflow:visible;pointer-events:none}
   .brand .asterism .link{fill:none;stroke:var(--accent-f);stroke-width:.9;stroke-linecap:round;stroke-linejoin:round;opacity:.55}
@@ -116,8 +116,8 @@ if(!window.THREE){
   .tb-spacer{flex:1}
   .tb-group{display:flex;align-items:center;gap:7px}
   
-  button{font-family:var(--sans);font-size:12px;color:var(--text);background:var(--panel-2);
-    border:1px solid var(--line);border-radius:var(--radius);padding:7px 11px;cursor:pointer;
+  button{font-family:var(--sans);font-size:11.5px;color:var(--text);background:var(--panel-2);
+    border:1px solid var(--line);border-radius:var(--radius);padding:5px 9px;cursor:pointer;
     transition:all .15s ease;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
   button:hover{border-color:var(--g-blue);background:#1a232b;box-shadow:0 0 10px rgba(66,133,244,0.15)}
   button:active{transform:translateY(1px)}
@@ -133,19 +133,19 @@ if(!window.THREE){
 
   /* tree */
   .tree-col{grid-row:2/3;grid-column:1/2;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;z-index:20}
-  .tree-head{padding:11px 13px 9px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line-soft)}
-  .tree-head h2{font-family:var(--mono);font-size:11px;letter-spacing:.16em;color:var(--g-yellow);text-transform:uppercase;text-shadow:0 0 6px rgba(251,188,5,0.4)}
+  .tree-head{padding:7px 10px 6px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line-soft)}
+  .tree-head h2{font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--g-yellow);text-transform:uppercase;text-shadow:0 0 6px rgba(251,188,5,0.4)}
   .tree-head .pill{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--text);background:rgba(251,188,5,.15);border:1px solid var(--g-yellow);border-radius:20px;padding:2px 8px;box-shadow:0 0 6px rgba(251,188,5,0.3)}
   .tree{flex:1;overflow-y:auto;padding:6px 8px 30px;position:relative;min-height:0}
   
-  .feat{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:6px;cursor:pointer;border:1px solid transparent;position:relative;user-select:none;transition:all 0.1s}
+  .feat{display:flex;align-items:center;gap:7px;padding:4.5px 7px;border-radius:6px;cursor:pointer;border:1px solid transparent;position:relative;user-select:none;transition:all 0.1s}
   .feat:hover{background:var(--panel-2)}
   .feat.sel{background:rgba(52,168,83,.1);border-color:var(--g-green);box-shadow:inset 0 0 10px rgba(52,168,83,0.15)}
   .feat.rolled{opacity:.4}
   .feat.errored{border-color:var(--g-red);background:rgba(234,67,53,.07);box-shadow:inset 0 0 8px rgba(234,67,53,0.2)}
   .feat .fi{width:16px;height:16px;flex:0 0 auto;display:grid;place-items:center;color:var(--muted)}
   .feat.sel .fi{color:var(--g-green);text-shadow:0 0 6px var(--g-green)}
-  .feat .fname{flex:1;font-size:12.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .feat .fname{flex:1;font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .feat .ferr{color:var(--g-red);font-size:11px;text-shadow:0 0 4px var(--g-red)}
   .feat .fsupp{color:var(--muted-2)}
   .feat .fx{border:0;background:transparent;color:var(--muted-2);padding:2px 4px;font-size:14px;line-height:1;border-radius:4px;opacity:0;box-shadow:none}
@@ -202,6 +202,14 @@ if(!window.THREE){
   .hint.show{opacity:1}
   .hint kbd{font-family:var(--mono);font-size:10px;color:var(--g-yellow);background:var(--panel-2);border:1px solid var(--g-yellow);border-radius:4px;padding:1px 6px;box-shadow:0 0 4px rgba(251,188,5,0.2)}
   .hint .pip{width:6px;height:6px;border-radius:50%;background:var(--g-yellow);box-shadow:0 0 8px var(--g-yellow)}
+  .help-panel{position:absolute;left:12px;bottom:12px;width:248px;z-index:9;
+    background:rgba(13,17,23,.82);backdrop-filter:blur(8px);border:1px solid var(--line);
+    border-radius:10px;padding:9px 12px 10px;font-size:11.5px;line-height:1.55;color:var(--muted);display:none}
+  .help-panel.show{display:block}
+  .help-panel .help-title{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;
+    color:var(--g-yellow);text-transform:uppercase;margin-bottom:5px}
+  .help-panel b{color:var(--text);font-weight:600}
+  .toolbar button.active{background:rgba(66,133,244,.2);border-color:var(--g-blue)}
   .demo-btn{position:absolute;bottom:58px;left:50%;transform:translateX(-50%);z-index:8;
     background:rgba(13,17,23,.85);backdrop-filter:blur(6px);border:1px solid var(--g-blue);border-radius:999px;
     padding:8px 16px;font-size:12px;box-shadow:0 0 15px rgba(66,133,244,.2)}
@@ -217,7 +225,17 @@ if(!window.THREE){
   .status-fill{flex:1}
   .status-coords{padding:0 15px}.status-coords .v{color:var(--text)}
 
-  .menu{position:absolute;background:rgba(18,22,30,0.95);backdrop-filter:blur(10px);border:1px solid var(--g-blue);border-radius:9px;padding:6px;z-index:50;box-shadow:0 18px 40px -10px rgba(0,0,0,.9),0 0 20px rgba(66,133,244,0.15);min-width:178px;width:max-content;display:none;max-height:min(78vh,620px);overflow-y:auto}
+  .menu{position:absolute;background:rgba(15,19,27,0.66);backdrop-filter:blur(14px);border:1px solid rgba(66,133,244,.65);border-radius:9px;padding:6px;z-index:50;box-shadow:0 18px 40px -10px rgba(0,0,0,.8),0 0 20px rgba(66,133,244,0.12);min-width:178px;width:max-content;display:none;max-height:min(78vh,620px);overflow-y:auto}
+  /* columnar context menu: one column per section, no scrolling */
+  .menu.cols{display:none;max-height:none;overflow:visible;min-width:0}
+  .menu.cols.open{display:flex;align-items:flex-start;gap:2px}
+  .menu-col{display:flex;flex-direction:column;min-width:142px}
+  .menu-col+.menu-col{border-left:1px solid rgba(255,255,255,.06);padding-left:2px;margin-left:2px}
+  body.icons-only .menu-col{min-width:0}
+  body.icons-only .menu .lbl{display:none}
+  body.icons-only .menu button{justify-content:center;padding:8px}
+  body.icons-only .feat .fname{display:none}
+  body.icons-only .feat{justify-content:center}
   .menu.open{display:block}
   .menu-sect{font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:var(--g-blue);padding:7px 9px 4px;text-transform:uppercase;text-shadow:0 0 4px rgba(66,133,244,0.4)}
   .menu button{display:flex;width:100%;justify-content:flex-start;background:transparent;border:0;padding:7px 9px;font-size:12.5px;border-radius:6px;box-shadow:none;gap:9px}
@@ -297,18 +315,20 @@ if(!window.THREE){
     </div>
     <div class="tb-spacer"></div>
     <div class="tb-group">
+      <button id="btn-new" class="btn-ghost">New part</button>
       <button id="btn-save" class="btn-ghost">Save</button>
       <button id="btn-load" class="btn-ghost">Open</button>
       <input type="file" id="file-load" style="display:none" accept=".json,.sketchcad">
       <div class="sep"></div>
       <button id="btn-units" class="btn-ghost">Units: mm</button>
-      <button id="btn-labels" class="btn-ghost" title="Show or hide button labels — icons only">Aa</button>
+      <button id="btn-labels" class="btn-ghost" title="Show or hide button and menu labels — icons only">Aa</button>
+      <button id="btn-help" class="btn-ghost" title="Live help — tips that follow what you're doing">?</button>
+      <button id="btn-demo-tgl" class="btn-ghost" title="Show or hide the pillow-block demo part (also controls whether it loads on startup)">Demo</button>
       <button id="btn-iso" class="btn-ghost">Iso view</button>
       <button id="btn-fit" class="btn-ghost">Fit</button>
       <div class="sep"></div>
       <button id="btn-export" disabled>Export STL</button>
       <button id="btn-step" disabled title="True B-rep STEP straight from the Open CASCADE kernel — real planes, cylinders and blend surfaces, not tessellated facets.">STEP</button>
-      <button id="btn-new" class="btn-ghost btn-danger">New part</button>
     </div>
   </header>
 
@@ -333,6 +353,7 @@ if(!window.THREE){
     </div>
     <div class="hint" id="hint"></div>
     <button id="btn-demo" class="demo-btn" style="display:none" title="Builds an 11-feature pillow-block bearing mount — explore or edit every step in the feature tree">⚙ Load the demo part — a pillow-block bearing</button>
+    <div class="help-panel" id="help-panel"><div class="help-title" id="help-title"></div><div id="help-body"></div></div>
   </main>
 
   <div class="menu" id="menu">
@@ -490,10 +511,10 @@ const CSG = (function(){
   Controls.prototype._init=function(){
     const d=this.dom;
     d.addEventListener('pointerdown',e=>{
-      if(e.button===0 && this.enableRotate)this._s=1;
+      if(e.button===0 && this.enableRotate){this._s=1; if(this.onRotateStart)this.onRotateStart();}
       else if(e.button===2||e.button===1||(e.button===0&&!this.enableRotate&&e.shiftKey))this._s=2;
       else{this._s=0;return;}
-      this._px=e.clientX;this._py=e.clientY; d.setPointerCapture(e.pointerId);
+      this._px=e.clientX;this._py=e.clientY; try{d.setPointerCapture(e.pointerId);}catch(_){}
     });
     d.addEventListener('pointermove',e=>{
       if(!this._s)return; const dx=e.clientX-this._px,dy=e.clientY-this._py; this._px=e.clientX;this._py=e.clientY;
@@ -618,15 +639,20 @@ const CSG = (function(){
     {"id":10,"type":"sketch","name":"Bolt holes","plane":{"kind":"datum","name":"Top"},"entities":[{"type":"circle","c":{"x":-5.5,"y":0},"r":0.8},{"type":"circle","c":{"x":5.5,"y":0},"r":0.8}],"fillet":0,"chamfer":0,"suppressed":false},
     {"id":11,"type":"cut","name":"Bolt holes cut","sketchId":10,"depth":3,"through":true,"flip":true,"suppressed":false}
   ];
+  let demoActive=false;
   function loadDemo(){
     features=JSON.parse(JSON.stringify(DEMO_PART));
     uid=Math.max(...features.map(f=>f.id))+1;
     rollbackIndex=features.length;
     selId=null; editing=null; selectedEdges=[]; hoveredEdge=null; closeProps(); setMode('model');
+    demoActive=true;
     rebuild();
     controls.target.set(0,2.6,0); controls.sph.set(26,1.05,0.7); controls.unlock(); controls.update();
     setHint('Pillow-block bearing — double-click any feature in the tree to edit it');
+    refreshDemoTgl();
   }
+  function demoPref(){ try{return localStorage.getItem('fcad-demo')!=='0';}catch(_){return true;} }
+  function refreshDemoTgl(){ const b=$('btn-demo-tgl'); if(b)b.classList.toggle('active',demoActive); }
 
   /* ============================ FEATURE MODEL ============================ */
   let features=[];        
@@ -1837,6 +1863,7 @@ const CSG = (function(){
     flushArena();   // free all manifold WASM objects created this rebuild
     rebuildDimLabels();
     updateDatumVis();
+    if(typeof updateHelp==='function')updateHelp();
   }
 
   /* ---- pickable edges ---- */
@@ -2345,6 +2372,7 @@ const CSG = (function(){
       const el=document.createElement('div');
       el.className='feat'+(f.id===selId?' sel':'')+(i>=rollbackIndex?' rolled':'')+(f.error?' errored':'')+(f.suppressed?' suppressed':'');
       const fname = (propsFeat && propsFeat.id === f.id && draftFeat) ? draftFeat.name : f.name;
+      el.title=fname;
       el.innerHTML=icHTML(iconFor(f))+`<span class="fname">${fname}</span>`+
         (f.error?`<span class="ferr" title="Click to see error details">!</span>`:'')+
         (f.suppressed?`<span class="fsupp" title="suppressed">∅</span>`:'')+
@@ -2430,7 +2458,7 @@ const CSG = (function(){
 
   /* ============================ PROPERTIES PANEL ============================ */
   let propsEl=null, propsFeat=null, draftFeat=null, draftOriginalState=null;
-  function closeProps(){if(propsEl){propsEl.remove();propsEl=null;propsFeat=null;draftFeat=null;draftOriginalState=null;}}
+  function closeProps(){if(propsEl){propsEl.remove();propsEl=null;propsFeat=null;draftFeat=null;draftOriginalState=null;if(typeof updateHelp==='function')updateHelp();}}
   
   function openProps(f){
     if(propsFeat && propsFeat.id !== f.id) closeProps();
@@ -2665,6 +2693,7 @@ const CSG = (function(){
       else if(tool==='equal')h.innerHTML='<span class="pip"></span> Equal: click the reference line, then the line to match its length';
       else h.innerHTML=`<span class="pip"></span> ${tool}: click two points`;
     } else h.classList.remove('show');
+    if(typeof updateHelp==='function')updateHelp();
   }
 
   /* ============================ POINTER (viewport) ============================ */
@@ -2799,6 +2828,7 @@ const CSG = (function(){
     
     if(hoveredEdge && !seedsToDraw.some(s=>ptClose(s.mid,hoveredEdge.rec.mid,1e-3)))
       hoverGroup.add(mkLine(hoveredEdge.rec.a,hoveredEdge.rec.b,0x35d4e6));
+    if(typeof updateHelp==='function')updateHelp();
   }
 
   /* ---- context menus ---- */
@@ -2834,22 +2864,30 @@ const CSG = (function(){
     insertFeature(f); selectFeature(f.id); openProps(f);
   }
   
-  /* generic context menu: [{sect:'…'} | {ic,label,fn,disabled}] */
-  function buildCtxMenu(x,y,items){
+  /* generic context menu: [{sect:'…'} | {ic,label,fn,disabled}].
+     opts.cols lays each section out as its own column (no scrolling). */
+  function buildCtxMenu(x,y,items,opts){
     closeEdgeMenu();
-    const m=document.createElement('div');m.className='menu open';
+    const cols=!!(opts&&opts.cols);
+    const m=document.createElement('div');m.className='menu open'+(cols?' cols':'');
+    let host=m;
     for(const it of items){
-      if(it.sect){const d=document.createElement('div');d.className='menu-sect';d.textContent=it.sect;m.appendChild(d);continue;}
+      if(it.sect){
+        if(cols){ host=document.createElement('div'); host.className='menu-col'; m.appendChild(host); }
+        const d=document.createElement('div');d.className='menu-sect';d.textContent=it.sect;host.appendChild(d);
+        continue;
+      }
       const b=document.createElement('button');
-      b.innerHTML=icHTML(it.ic)+it.label;
+      b.innerHTML=icHTML(it.ic)+'<span class="lbl">'+it.label+'</span>';
+      b.title=it.label;
       if(it.disabled)b.disabled=true;
       else b.addEventListener('click',()=>{closeEdgeMenu();it.fn();});
-      m.appendChild(b);
+      host.appendChild(b);
     }
     document.body.appendChild(m);eMenu=m;
     const r=m.getBoundingClientRect();
-    m.style.left=Math.min(x,window.innerWidth-r.width-8)+'px';
-    m.style.top=Math.min(y,window.innerHeight-r.height-8)+'px';
+    m.style.left=Math.max(8,Math.min(x,window.innerWidth-r.width-8))+'px';
+    m.style.top=Math.max(8,Math.min(y,window.innerHeight-r.height-8))+'px';
   }
   function openModelMenu(x,y){
     const hasSketch=!!lastSketchId(), hasSolid=resultShapes.length>0;
@@ -2878,17 +2916,9 @@ const CSG = (function(){
       {ic:'cpattern',label:'Circular pattern',fn:()=>addFeature('cpattern'),disabled:!hasSolid},
       {sect:'Reference'},
       {ic:'dplane',label:'Add plane',fn:()=>addFeature('dplane')},
-      {ic:'daxis',label:'Add axis',fn:()=>addFeature('daxis')},
-      {sect:'View'},
-      {ic:'iso',label:'Iso view',fn:()=>controls.setIso()},
-      {ic:'fit',label:'Fit',fn:fitAll,disabled:!resultMeshes.length},
-      {sect:'File'},
-      {ic:'stl',label:'Export STL',fn:exportSTL,disabled:!resultGeoms.length},
-      {ic:'step',label:'Export STEP',fn:exportSTEP,disabled:!hasSolid},
-      {ic:'save',label:'Save project',fn:saveProject},
-      {ic:'open',label:'Open project',fn:()=>$('file-load').click()}
+      {ic:'daxis',label:'Add axis',fn:()=>addFeature('daxis')}
     );
-    buildCtxMenu(x,y,items);
+    buildCtxMenu(x,y,items,{cols:true});
   }
   function openSketchMenu(x,y){
     const setTool=t=>()=>{tool=t;draftStage=0;draftA=null;paralRef=null;equalRef=null;dragVtx=null;dragSnapPt=null;redrawHandles();dockSel();};
@@ -2910,7 +2940,7 @@ const CSG = (function(){
       {ic:'finish',label:'Finish sketch',fn:finishSketch},
       {ic:'extrude',label:'Finish + extrude',fn:()=>{finishSketch();addFeature('extrude');}},
       {ic:'cancel',label:'Cancel sketch',fn:cancelSketch}
-    ]);
+    ],{cols:true});
   }
   /* right-click on a feature-tree row */
   function openTreeMenu(x,y,f){
@@ -2953,6 +2983,65 @@ const CSG = (function(){
   }
   $('btn-labels').addEventListener('click',()=>setIconsOnly(!document.body.classList.contains('icons-only')));
   try{ if(localStorage.getItem('fcad-icons')==='1') setIconsOnly(true); }catch(_){}
+
+  /* ---- live help ---- */
+  let helpOn=true;
+  try{ helpOn = localStorage.getItem('fcad-help')!=='0'; }catch(_){}
+  function helpContext(){
+    if(mode==='sketch'){
+      const t={
+        line:'Click to drop points. Click the <b>first (red) point</b> or press <b>Enter</b> to close the loop. <b>Esc</b> removes the last point.',
+        move:'Drag any point. Release within <b>1&nbsp;mm</b> of another point to weld them together.',
+        rect:'Two clicks — one for each corner.',
+        circle:'Click the <b>centre</b>, then click to set the radius.',
+        polygon:'Click the centre, then a vertex. Change the side count in the panel on the right.',
+        dim:'Click a line, circle or rectangle edge, then type a value — the geometry moves to match.',
+        horiz:'Click a line segment to lay it flat.',
+        vert:'Click a line segment to stand it upright.',
+        paral:'Click a reference line first, then the line to align to it.',
+        equal:'Click a reference line first, then the line to match its length.',
+        erase:'Click any shape to delete it.'};
+      return {title:'Sketch · '+tool, body:(t[tool]||'Pick a tool from the dock above.')+'<br>Right-click for every tool. <b>Finish sketch</b> when the profile is closed.'};
+    }
+    if(pendingFaceSketch) return {title:'Pick a face', body:'Click a <b>flat face</b> on the solid to place the new sketch there. Right-click to cancel.'};
+    if(draftFeat&&draftFeat.type==='fillet') return {title:draftFeat.kind==='chamfer'?'Chamfer':'Fillet', body:'Click <b>edges in the viewport</b> to add or remove them — the result previews live. Set the radius in the panel, then <b>Done</b>.'};
+    if(propsFeat) return {title:'Feature properties', body:'Adjust the values — the model rebuilds live. <b>Done</b> keeps the change, <b>Cancel</b> rolls it back.'};
+    if(!features.length) return {title:'Getting started', body:'<b>Left-click a plane</b> to start a sketch on it, or right-click anywhere for every command. The <b>Demo</b> button loads a finished example part.'};
+    if(selectedEdges.length) return {title:selectedEdges.length+' edge'+(selectedEdges.length>1?'s':'')+' selected', body:'<b>Right-click</b> to fillet or chamfer the selection. Click an edge again to deselect it.'};
+    return {title:'Model', body:'<b>Right-click</b> the viewport for commands, or a <b>tree item</b> for its options. <b>Double-click</b> a feature to edit it. Hover edges and click to select them for fillets. Drag the yellow <b>ROLLBACK</b> bar to step back through history.'};
+  }
+  function updateHelp(){
+    const p=$('help-panel'); if(!p)return;
+    p.classList.toggle('show',helpOn);
+    $('btn-help').classList.toggle('active',helpOn);
+    if(!helpOn)return;
+    const c=helpContext();
+    $('help-title').textContent=c.title;
+    $('help-body').innerHTML=c.body;
+  }
+  $('btn-help').addEventListener('click',()=>{
+    helpOn=!helpOn;
+    try{localStorage.setItem('fcad-help',helpOn?'1':'0');}catch(_){}
+    updateHelp();
+  });
+
+  /* ---- demo show/hide toggle ---- */
+  $('btn-demo-tgl').addEventListener('click',()=>{
+    if(demoActive){
+      try{localStorage.setItem('fcad-demo','0');}catch(_){}
+      doNewPart();
+      setHint('Demo hidden — it will stay hidden on startup until you press Demo again');
+    } else if(!features.length){
+      try{localStorage.setItem('fcad-demo','1');}catch(_){}
+      loadDemo();
+    } else {
+      askDialog('Replace your part with the demo?',
+        'The current part has '+features.length+' feature'+(features.length===1?'':'s')+'.',
+        [{label:'Save, then load demo',primary:true,fn:()=>{saveProject();try{localStorage.setItem('fcad-demo','1');}catch(_){} loadDemo();}},
+         {label:'Discard & load demo',danger:true,fn:()=>{try{localStorage.setItem('fcad-demo','1');}catch(_){} loadDemo();}},
+         {label:'Cancel'}]);
+    }
+  });
   $('btn-add').addEventListener('click',e=>{
     const r=$('btn-add').getBoundingClientRect();
     menu.style.left=r.left+'px';menu.style.top=(r.bottom+6)+'px';menu.classList.toggle('open');
@@ -2987,16 +3076,62 @@ const CSG = (function(){
     // re-render the open properties body so length fields show the new unit
     if(propsEl){ const body=propsEl.querySelector('#pbody'); if(body){ body.innerHTML=''; buildPropsBody(body, draftFeat||propsFeat); } }
   });
+  function doNewPart(){
+    features=[];rollbackIndex=0;selId=null;editing=null;selectedEdges=[];hoveredEdge=null;closeEdgeMenu();closeProps();setMode('model');controls.unlock();demoActive=false;rebuild();refreshDemoTgl();
+  }
+  /* small choice dialog (used by New part) */
+  function askDialog(title,msg,buttons){
+    const old=document.getElementById('askdlg'); if(old)old.remove();
+    const ov=document.createElement('div'); ov.id='askdlg';
+    ov.style.cssText='position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center';
+    const box=document.createElement('div');
+    box.style.cssText='width:min(360px,90vw);background:#0d1117;border:1px solid var(--g-blue);border-radius:10px;padding:16px 18px;box-shadow:0 12px 40px rgba(0,0,0,.6)';
+    box.innerHTML='<div style="font-size:13.5px;font-weight:600;margin-bottom:6px">'+title+'</div>'
+      +'<div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:14px">'+msg+'</div>';
+    const row=document.createElement('div'); row.style.cssText='display:flex;gap:8px;justify-content:flex-end';
+    for(const bt of buttons){
+      const b=document.createElement('button');
+      b.textContent=bt.label;
+      if(bt.primary)b.className='btn-primary'; else if(bt.danger)b.className='btn-ghost btn-danger'; else b.className='btn-ghost';
+      b.addEventListener('click',()=>{ov.remove(); if(bt.fn)bt.fn();});
+      row.appendChild(b);
+    }
+    box.appendChild(row); ov.appendChild(box); document.body.appendChild(ov);
+    ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
+  }
   $('btn-new').addEventListener('click',()=>{
-    features=[];rollbackIndex=0;selId=null;editing=null;selectedEdges=[];hoveredEdge=null;closeEdgeMenu();closeProps();setMode('model');controls.unlock();rebuild();
+    if(!features.length){ doNewPart(); return; }
+    askDialog('Start a new part?',
+      'The current part has '+features.length+' feature'+(features.length===1?'':'s')+'. Save it first?',
+      [{label:'Save, then new',primary:true,fn:()=>{saveProject();doNewPart();}},
+       {label:'Discard',danger:true,fn:doNewPart},
+       {label:'Cancel'}]);
   });
 
-  function fitAll(){
-    if(!resultMeshes.length)return;
+  function partBox(){
+    if(!resultMeshes.length)return null;
     const box=new THREE.Box3();resultMeshes.forEach(m=>box.expandByObject(m));
-    const c=box.getCenter(new THREE.Vector3()),sz=box.getSize(new THREE.Vector3()).length();
-    controls.target.copy(c);controls.sph.radius=Math.max(8,Math.min(controls.maxR,sz*1.7+5));controls.update();
+    return box;
   }
+  function fitAll(){
+    let box=partBox();
+    if(!box){ if(datumGroup.visible){ box=new THREE.Box3().setFromObject(datumGroup); } else return; }
+    const c=box.getCenter(new THREE.Vector3()),sz=Math.max(2,box.getSize(new THREE.Vector3()).length());
+    const fov=camera.fov*Math.PI/180;
+    controls.target.copy(c);
+    controls.sph.radius=Math.max(4,Math.min(controls.maxR,(sz/2)/Math.tan(fov/2)*1.15+0.5));
+    controls.update();
+  }
+  /* orbit about the part, not wherever the target drifted to after panning */
+  controls.onRotateStart=function(){
+    const box=partBox(); if(!box)return;
+    const c=box.getCenter(new THREE.Vector3());
+    if(c.distanceTo(controls.target)<0.5)return;
+    const off=camera.position.clone().sub(c);
+    controls.target.copy(c);
+    controls.sph.setFromVector3(off);
+    controls.update();
+  };
 
   window.addEventListener('keydown',e=>{
     if(/INPUT|TEXTAREA/.test(e.target.tagName))return;
@@ -3035,8 +3170,9 @@ const CSG = (function(){
   };
 
   function boot(){
-    rebuild();
-    setHint('Click a plane to start a sketch · right-click for all commands');
+    if(demoPref()){ loadDemo(); }
+    else { rebuild(); setHint('Click a plane to start a sketch · right-click for all commands'); }
+    updateHelp(); refreshDemoTgl();
   }
   if(window.OCCT){ boot(); }
   else {
