@@ -517,7 +517,8 @@ const CSG = (function(){
       this._px=e.clientX;this._py=e.clientY; try{d.setPointerCapture(e.pointerId);}catch(_){}
     });
     d.addEventListener('pointermove',e=>{
-      if(!this._s)return; const dx=e.clientX-this._px,dy=e.clientY-this._py; this._px=e.clientX;this._py=e.clientY;
+      if(!this._s)return; if(this._animLock){this._px=e.clientX;this._py=e.clientY;return;}
+      const dx=e.clientX-this._px,dy=e.clientY-this._py; this._px=e.clientX;this._py=e.clientY;
       if(this._s===1){ this.sph.theta-=dx*0.005; this.sph.phi=Math.max(0.05,Math.min(Math.PI-0.05,this.sph.phi-dy*0.005)); }
       else this._pan(dx,dy);
       this.update();
@@ -647,7 +648,7 @@ const CSG = (function(){
     selId=null; editing=null; selectedEdges=[]; hoveredEdge=null; closeProps(); setMode('model');
     demoActive=true;
     rebuild();
-    controls.target.set(0,2.6,0); controls.sph.set(26,1.05,0.7); controls.unlock(); controls.update();
+    controls.target.set(0,3.75,0); controls.sph.set(26,1.05,0.7); controls.unlock(); controls.update();
     setHint('Pillow-block bearing — double-click any feature in the tree to edit it');
     refreshDemoTgl();
   }
@@ -1995,12 +1996,40 @@ const CSG = (function(){
   const cursorMesh=new THREE.Mesh(new THREE.SphereGeometry(0.1,12,10),new THREE.MeshBasicMaterial({color:0x4285F4,depthTest:false}));
   cursorMesh.renderOrder=6;cursorMesh.visible=false;scene.add(cursorMesh);
 
+  /* fly the camera round to look square at a sketch plane, then lock it */
+  let camAnimId=0;
+  function animateToFrame(frame,radius){
+    const id=++camAnimId;
+    const o=frame.o.clone(), n=frame.n.clone().normalize(), vup=frame.v.clone().normalize();
+    const t0v=controls.target.clone(), p0=camera.position.clone(), up0=camera.up.clone().normalize();
+    const d0=p0.clone().sub(t0v); const r0=Math.max(d0.length(),0.001); d0.normalize();
+    if(d0.dot(n)<-0.98) d0.addScaledVector(vup,0.25).normalize();  // avoid the degenerate 180° path
+    controls.enableRotate=false;
+    const dur=300, start=performance.now();
+    let finished=false;
+    const finish=()=>{
+      if(finished||id!==camAnimId)return; finished=true;
+      controls.lockToFrame(frame); controls.sph.radius=radius; controls.update();
+    };
+    function step(){
+      if(finished||id!==camAnimId||mode!=='sketch')return;
+      const t=Math.min(1,(performance.now()-start)/dur);
+      const e=t*t*(3-2*t);
+      const dir=d0.clone().lerp(n,e).normalize();
+      const tgt=t0v.clone().lerp(o,e);
+      camera.position.copy(tgt).addScaledVector(dir,r0+(radius-r0)*e);
+      camera.up.copy(up0.clone().lerp(vup,e).normalize());
+      camera.lookAt(tgt);
+      if(t<1)requestAnimationFrame(step); else finish();
+    }
+    requestAnimationFrame(step);
+    setTimeout(()=>{ if(mode==='sketch')finish(); },dur+150);  // background tabs: rAF may not fire
+  }
   function startSketch(feature){
     editing=feature; selId=feature.id; tool='line'; draftPts=[]; draftStage=0; draftA=null;
     selectedEdges=[]; hoveredEdge=null; closeEdgeMenu();
     setMode('sketch');
-    controls.lockToFrame(feature.frame || (feature.plane.kind==='datum'?DATUM[feature.plane.name]:feature.plane.frame));
-    controls.sph.radius=18; controls.update();
+    animateToFrame(feature.frame || planeFrame(feature.plane), 18);
     cursorMesh.visible=true;
     $('dock').querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.tool==='line'));
     rebuild(); redrawDraft(null);
@@ -3122,15 +3151,31 @@ const CSG = (function(){
     controls.sph.radius=Math.max(4,Math.min(controls.maxR,(sz/2)/Math.tan(fov/2)*1.15+0.5));
     controls.update();
   }
-  /* orbit about the part, not wherever the target drifted to after panning */
+  /* orbit about the part, not wherever the target drifted to after panning —
+     glide the aim to the part centre (~160ms) instead of snapping, then rotate */
   controls.onRotateStart=function(){
     const box=partBox(); if(!box)return;
-    const c=box.getCenter(new THREE.Vector3());
-    if(c.distanceTo(controls.target)<0.5)return;
-    const off=camera.position.clone().sub(c);
-    controls.target.copy(c);
-    controls.sph.setFromVector3(off);
-    controls.update();
+    const c0=box.getCenter(new THREE.Vector3());
+    if(c0.distanceTo(controls.target)<0.25)return;
+    const t0v=controls.target.clone(), p=camera.position.clone();
+    const dur=160, start=performance.now();
+    controls._animLock=true;
+    const finish=()=>{
+      if(!controls._animLock)return;
+      controls._animLock=false;
+      controls.target.copy(c0);
+      controls.sph.setFromVector3(p.clone().sub(c0));
+      controls.update();
+    };
+    function step(){
+      if(!controls._animLock)return;
+      const t=Math.min(1,(performance.now()-start)/dur), e=t*t*(3-2*t);
+      const tgt=t0v.clone().lerp(c0,e);
+      camera.position.copy(p); camera.up.set(0,1,0); camera.lookAt(tgt);
+      if(t<1)requestAnimationFrame(step); else finish();
+    }
+    requestAnimationFrame(step);
+    setTimeout(finish,dur+120);
   };
 
   window.addEventListener('keydown',e=>{
