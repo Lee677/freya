@@ -626,7 +626,7 @@ const CSG = (function(){
     return h?h.object:null;
   }
   function updateDatumVis(){
-    datumGroup.visible=(mode==='model')&&features.length===0;
+    datumGroup.visible=(docMode==='part')&&(mode==='model')&&features.length===0;
     if(!datumGroup.visible)setDatumHover(null);
     const db=$('btn-demo'); if(db)db.style.display=datumGroup.visible?'':'none';
   }
@@ -2384,7 +2384,8 @@ const CSG = (function(){
     step:_sw(`<ellipse cx="12" cy="6.5" rx="7" ry="2.7" stroke="${_B}"/><path d="M5 6.5v11M19 6.5v11" stroke="${_B}"/><path d="M5 17.5c0 1.5 3.1 2.7 7 2.7s7-1.2 7-2.7" stroke="${_B}"/>`),
     save:_sw(`<path d="M12 3v10M8.5 9.5 12 13l3.5-3.5" stroke="${_Y}"/><path d="M4 14.5V20h16v-5.5" stroke="${_B}"/>`),
     open:_sw(`<path d="M3 19V5.5h6.2l2 2H21V19z" stroke="${_B}"/>`),
-    newpart:_sw(`<path d="M6 3h8l4 4v14H6z" stroke="${_B}"/><path d="M14 3v4h4" stroke="${_B}"/><path d="M12 10.5v6M9 13.5h6" stroke="${_G}"/>`),
+    newpart:_sw(`<path d="M10 3.5l5.5 3.2v6.4L10 16.3l-5.5-3.2V6.7z" stroke="${_B}"/><path d="M10 9.9l5.5-3.2M10 9.9 4.5 6.7M10 9.9v6.4" stroke="${_B}" opacity=".65"/><path d="M18.5 14.5v6M15.5 17.5h6" stroke="${_G}" stroke-width="2.1"/>`),
+    asm:_sw(`<path d="M8 3l4.5 2.6v5.2L8 13.4 3.5 10.8V5.6z" stroke="${_B}"/><path d="M8 8.2l4.5-2.6M8 8.2 3.5 5.6M8 8.2v5.2" stroke="${_B}" opacity=".55"/><path d="M14 10l4.5 2.6v5.2L14 20.4l-4.5-2.6v-5.2z" stroke="${_B}"/><path d="M14 15.2l4.5-2.6M14 15.2l-4.5-2.6M14 15.2v5.2" stroke="${_B}" opacity=".55"/><path d="M19.5 2.5v5M17 5h5" stroke="${_G}" stroke-width="2.1"/>`),
     finish:_sw(`<path d="M4.5 13l5 5L19.5 6.5" stroke="${_G}" stroke-width="2.4"/>`),
     cancel:_sw(`<path d="M6.5 6.5l11 11M17.5 6.5l-11 11" stroke="${_R}" stroke-width="2.2"/>`),
     suppress:_sw(`<circle cx="12" cy="12" r="8" stroke="${_B}"/><path d="M6.4 6.4l11.2 11.2" stroke="${_R}"/>`),
@@ -2648,10 +2649,11 @@ const CSG = (function(){
 
   /* ============================ STL EXPORT & SAVE / LOAD ============================ */
   function exportSTL(){
-    if(!resultGeoms.length)return;
+    const srcGeoms = docMode==='asm' ? asmTransformedGeoms() : resultGeoms;
+    if(!srcGeoms.length)return;
     const MM=10;let s='solid sketchcad\n';
     const a=new THREE.Vector3(),b=new THREE.Vector3(),c=new THREE.Vector3(),ab=new THREE.Vector3(),cb=new THREE.Vector3(),nn=new THREE.Vector3();
-    for(const g0 of resultGeoms){const g=g0.index?g0.toNonIndexed():g0;const p=g.attributes.position;
+    for(const g0 of srcGeoms){const g=g0.index?g0.toNonIndexed():g0;const p=g.attributes.position;
       for(let i=0;i<p.count;i+=3){
         a.set(p.getX(i),p.getY(i),p.getZ(i)).multiplyScalar(MM);
         b.set(p.getX(i+1),p.getY(i+1),p.getZ(i+1)).multiplyScalar(MM);
@@ -2666,21 +2668,37 @@ const CSG = (function(){
   }
   
   function saveProject() {
-      const data = JSON.stringify(features);
+      const isA = docMode==='asm';
+      const data = isA ? JSON.stringify({type:'assembly',components:asm.components,mates:asm.mates})
+                       : JSON.stringify(features);
       const blob = new Blob([data], {type: 'application/json'});
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = 'project.sketchcad';
+      const a = document.createElement('a'); a.href = url; a.download = isA?'assembly.asmcad':'project.sketchcad';
       a.click(); URL.revokeObjectURL(url);
   }
-  
+
   function loadProject(file) {
       const reader = new FileReader();
       reader.onload = e => {
           try {
-              features = JSON.parse(e.target.result);
-              uid = Math.max(...features.map(f=>f.id)) + 1;
-              rollbackIndex = features.length;
-              selId = null; closeProps(); rebuild();
+              const data = JSON.parse(e.target.result);
+              if (Array.isArray(data)) {                    // a part file
+                  if (docMode==='asm') { clearAsm(); setDocMode('part'); }
+                  features = data;
+                  uid = Math.max(0,...features.map(f=>f.id)) + 1;
+                  rollbackIndex = features.length;
+                  selId = null; demoActive=false; closeProps(); rebuild(); refreshDemoTgl();
+              } else if (data && data.type==='assembly') {  // an assembly file
+                  features=[];rollbackIndex=0;selId=null;editing=null;demoActive=false;
+                  clearAsm();
+                  asm={components:[],mates:data.mates||[]};
+                  setDocMode('asm');
+                  for(const comp of (data.components||[])){
+                      comp.id=cuid++;
+                      asm.components.push(comp); buildComponent(comp);
+                  }
+                  refreshAsmUI(); fitAll();
+              } else throw new Error('unrecognised');
           } catch(err) { alert('Invalid file'); }
       };
       reader.readAsText(file);
@@ -2690,7 +2708,8 @@ const CSG = (function(){
   let mode='model';
   function setMode(m){
     mode=m;
-    $('tb-main').style.display=m==='model'?'flex':'none';
+    $('tb-main').style.display=(m==='model'&&docMode==='part')?'flex':'none';
+    $('tb-asm-main').style.display=(docMode==='asm')?'flex':'none';
     $('tb-sketch').style.display=m==='sketch'?'flex':'none';
     $('dock').style.display=m==='sketch'?'flex':'none';
     if(m==='sketch')ensureSketchProps(); else if(propsFeat===editing)closeProps();
@@ -2699,12 +2718,16 @@ const CSG = (function(){
   }
   function refreshStatus(){ /* status bar removed */ }
   function refreshExport(){
-    $('btn-export').disabled=resultGeoms.length===0;
-    $('btn-step').disabled=resultShapes.length===0;
+    const has=docMode==='asm'?asm.components.length>0:null;
+    $('btn-export').disabled=docMode==='asm'?!has:resultGeoms.length===0;
+    $('btn-step').disabled=docMode==='asm'?!has:resultShapes.length===0;
   }
   function exportSTEP(){
     try{
-      const blob=OCK.stepBlob(resultShapes,'freyacad.step');
+      let shapes=resultShapes, cleanup=null;
+      if(docMode==='asm'){ shapes=asmTransformedShapes(); cleanup=shapes; }
+      const blob=OCK.stepBlob(shapes,'freyacad.step');
+      if(cleanup)for(const s of cleanup){try{s.delete();}catch(_){}}
       const url=URL.createObjectURL(blob);
       const a=document.createElement('a');
       a.href=url;a.download='freyacad.step';document.body.appendChild(a);a.click();a.remove();
@@ -2736,6 +2759,7 @@ const CSG = (function(){
   
   canvas.addEventListener('pointerdown',e=>{
       downX=e.clientX; downY=e.clientY; downBtn=e.button;
+      if(docMode==='asm'){ asmPointerDown(e); return; }
       if(mode==='sketch'&&editing&&tool==='move'&&e.button===0){
         const p=pointerToSketch(e);
         if(p){ const tol=Math.max(0.6,controls.sph.radius*0.04); const h=nearestHandle(p,tol);
@@ -2744,6 +2768,12 @@ const CSG = (function(){
   });
   canvas.addEventListener('pointermove',e=>{
     const r=canvas.getBoundingClientRect();ndc.x=((e.clientX-r.left)/r.width)*2-1;ndc.y=-((e.clientY-r.top)/r.height)*2+1;
+    if(docMode==='asm'){
+      if(asmDrag){ asmPointerMove(e); return; }
+      const hp=pickComp(e);
+      canvas.style.cursor=(hp&&hp.comp&&!hp.comp.fixed)?'grab':'default';
+      return;
+    }
     if(dragVtx){
       const p=pointerToSketch(e); if(!p)return;
       const snap=nearestSnap(p,dragVtx.pt,SNAP_JOIN);
@@ -2774,6 +2804,16 @@ const CSG = (function(){
     }
   });
   canvas.addEventListener('pointerup',e=>{
+    if(docMode==='asm'){
+      if(asmDrag){ asmPointerUp(); return; }
+      if(Math.hypot(e.clientX-downX,e.clientY-downY)>5)return;
+      if(e.button===0){
+        const hp=pickComp(e);
+        asmSel=(hp&&hp.comp)?hp.comp.id:null;
+        refreshAsmUI();
+      }
+      return;
+    }
     if(dragVtx){
       // already snapped-to-coincident during move; just commit + rebuild
       if(dragSnapPt) setHint('Points joined');
@@ -2815,6 +2855,12 @@ const CSG = (function(){
   canvas.addEventListener('contextmenu',e=>{
     if(Math.hypot(e.clientX-downX,e.clientY-downY)>5)return;
     e.preventDefault();
+    if(docMode==='asm'){
+      const hp=pickComp(e);
+      if(hp&&hp.comp){ asmSel=hp.comp.id; refreshAsmUI(); openAsmCompMenu(e.clientX,e.clientY,hp.comp); }
+      else openAsmMenu(e.clientX,e.clientY);
+      return;
+    }
     if(mode==='sketch') {
         openSketchMenu(e.clientX, e.clientY);
         return;
@@ -2998,6 +3044,236 @@ const CSG = (function(){
   }
   document.addEventListener('pointerdown',e=>{ if(eMenu && !eMenu.contains(e.target))closeEdgeMenu(); },true);
 
+  /* ============================ ASSEMBLY ============================
+     Tier-1 assemblies in the same document: insert saved part files (or the
+     demo part), drag them around, set exact transforms, save/load .asmcad,
+     export the lot as STL or true B-rep STEP. No mates yet. */
+  let docMode='part';                 // 'part' | 'asm'
+  let asm={components:[],mates:[]};   // component: {id,name,features,t:{x,y,z,rx,ry,rz},fixed}
+  let asmSel=null, cuid=1;
+  let asmMeshes=[], asmShapes=[];     // parallel to asm.components; shapes are untransformed
+  const D2R=Math.PI/180;
+
+  /* run a feature list through the engine without touching the open part */
+  function buildPartShapes(list){
+    const sF=features,sR=rollbackIndex,sS=resultShapes,sPF=propsFeat,sDF=draftFeat;
+    const sSD=Object.assign({},sketchData);
+    features=list;rollbackIndex=list.length;resultShapes=[];propsFeat=null;draftFeat=null;
+    Object.keys(sketchData).forEach(k=>delete sketchData[k]);
+    const errs=[];
+    let shapes=[];
+    try{
+      for(const f of list){
+        if(f.suppressed)continue;
+        f.error=null;f._previewGeoms=[];
+        try{ applyFeature(f); }catch(e){ errs.push((f.name||f.type)+': '+(e.message||e)); }
+      }
+      shapes=resultShapes;
+    } finally {
+      features=sF;rollbackIndex=sR;resultShapes=sS;propsFeat=sPF;draftFeat=sDF;
+      Object.keys(sketchData).forEach(k=>delete sketchData[k]);Object.assign(sketchData,sSD);
+    }
+    return {shapes,errs};
+  }
+  function applyCompTransform(comp){
+    const i=asm.components.indexOf(comp); if(i<0)return;
+    for(const m of asmMeshes[i]||[]){
+      m.position.set(comp.t.x,comp.t.y,comp.t.z);
+      m.rotation.set(comp.t.rx*D2R,comp.t.ry*D2R,comp.t.rz*D2R);
+    }
+  }
+  function refreshAsmSel(){
+    asm.components.forEach((c2,i)=>{
+      for(const m of asmMeshes[i]||[]) m.material.emissive.setHex(c2.id===asmSel?0x274a12:0x000000);
+    });
+  }
+  function buildComponent(comp){
+    const {shapes,errs}=buildPartShapes(comp.features);
+    comp.error=errs.length?errs.join('; '):null;
+    const group=[];
+    for(const s of shapes){
+      let g; try{ g=OCK.mesh(s); }catch(_){ continue; }
+      const mesh=new THREE.Mesh(g,solidMat.clone());
+      mesh.castShadow=true;mesh.receiveShadow=true;
+      mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(g,25),edgeMat.clone()));
+      mesh.userData.compId=comp.id;
+      mesh.visible=(docMode==='asm');
+      scene.add(mesh);group.push(mesh);
+    }
+    asmMeshes.push(group);asmShapes.push(shapes);
+    applyCompTransform(comp);
+  }
+  function removeComponent(comp){
+    const i=asm.components.indexOf(comp); if(i<0)return;
+    for(const m of asmMeshes[i]){scene.remove(m);m.geometry.dispose();}
+    for(const s of asmShapes[i]){try{s.delete();}catch(_){}}
+    asm.components.splice(i,1);asmMeshes.splice(i,1);asmShapes.splice(i,1);
+    if(asmSel===comp.id)asmSel=null;
+    refreshAsmUI();
+  }
+  function clearAsm(){
+    while(asm.components.length)removeComponent(asm.components[0]);
+    asm={components:[],mates:[]};asmSel=null;
+  }
+  function addComponent(featList,name){
+    const n=asm.components.length;
+    const comp={id:cuid++,name:name||('Part'+(n+1)),features:JSON.parse(JSON.stringify(featList)),
+      t:{x:n*16,y:0,z:0,rx:0,ry:0,rz:0},fixed:n===0};
+    asm.components.push(comp);
+    buildComponent(comp);
+    asmSel=comp.id;
+    refreshAsmUI();
+    if(n===0)fitAll();
+    setHint(comp.name+' inserted'+(comp.fixed?' (fixed in place)':' — drag it, or double-click it for exact position'));
+    return comp;
+  }
+  function refreshAsmUI(){
+    if(docMode!=='asm')return;
+    refreshAsmTree();refreshAsmSel();refreshExport();updateHelp();
+  }
+  function refreshAsmTree(){
+    tree.innerHTML='';
+    asm.components.forEach(comp=>{
+      const el=document.createElement('div');
+      el.className='feat'+(comp.id===asmSel?' sel':'')+(comp.error?' errored':'');
+      el.title=comp.name;
+      el.innerHTML=icHTML('iso')+`<span class="fname">${comp.name}</span>`+
+        (comp.error?'<span class="ferr" title="'+esc(comp.error)+'">!</span>':'')+
+        (comp.fixed?'<span class="fsupp" title="fixed in place">⚓</span>':'')+
+        '<button class="fx" title="Remove">×</button>';
+      el.addEventListener('click',e=>{
+        if(e.target.classList.contains('fx')){removeComponent(comp);return;}
+        asmSel=comp.id;refreshAsmUI();
+      });
+      el.addEventListener('dblclick',()=>openCompProps(comp));
+      el.addEventListener('contextmenu',e=>{
+        e.preventDefault();e.stopPropagation();
+        asmSel=comp.id;refreshAsmUI();
+        openAsmCompMenu(e.clientX,e.clientY,comp);
+      });
+      tree.appendChild(el);
+    });
+    $('tree-pill').textContent=asm.components.length;
+  }
+  function openCompProps(comp){
+    closeProps();
+    const el=document.createElement('aside');el.className='props';
+    el.innerHTML=`<div class="props-head">${icHTML('iso')}<h3>${esc(comp.name)}</h3></div><div class="props-body" id="pbody"></div>
+      <div class="props-foot"><button id="pc-del" class="btn-ghost btn-danger">Remove</button><button id="pc-close" class="btn-primary">Close</button></div>`;
+    viewport.appendChild(el);propsEl=el;
+    const body=el.querySelector('#pbody'),add=x=>body.appendChild(x);
+    const upd=()=>applyCompTransform(comp);
+    add(fieldNumber('Position X',comp.t.x,0.5,null,null,'units',v=>{comp.t.x=v;upd();}));
+    add(fieldNumber('Position Y',comp.t.y,0.5,null,null,'units',v=>{comp.t.y=v;upd();}));
+    add(fieldNumber('Position Z',comp.t.z,0.5,null,null,'units',v=>{comp.t.z=v;upd();}));
+    add(fieldNumber('Rotate X',comp.t.rx,15,null,null,'deg',v=>{comp.t.rx=v;upd();}));
+    add(fieldNumber('Rotate Y',comp.t.ry,15,null,null,'deg',v=>{comp.t.ry=v;upd();}));
+    add(fieldNumber('Rotate Z',comp.t.rz,15,null,null,'deg',v=>{comp.t.rz=v;upd();}));
+    add(fieldCheck('Fixed in place',comp.fixed,v=>{comp.fixed=v;refreshAsmTree();}));
+    el.querySelector('#pc-close').addEventListener('click',closeProps);
+    el.querySelector('#pc-del').addEventListener('click',()=>{closeProps();removeComponent(comp);});
+  }
+  function openAsmCompMenu(x,y,comp){
+    buildCtxMenu(x,y,[
+      {sect:comp.name},
+      {ic:'edit',label:'Position…',fn:()=>openCompProps(comp)},
+      {ic:'suppress',label:comp.fixed?'Unfix':'Fix in place',fn:()=>{comp.fixed=!comp.fixed;refreshAsmTree();}},
+      {ic:'del',label:'Remove',fn:()=>removeComponent(comp)}
+    ]);
+  }
+  function openAsmMenu(x,y){
+    buildCtxMenu(x,y,[
+      {sect:'Assembly'},
+      {ic:'open',label:'Insert part file…',fn:()=>$('file-insert').click()},
+      {ic:'iso',label:'Insert pillow-block demo',fn:()=>addComponent(DEMO_PART,'pillow-block')}
+    ]);
+  }
+  function setDocMode(m2){
+    docMode=m2;
+    const isA=m2==='asm';
+    $('tb-main').style.display=isA?'none':'flex';
+    $('tb-asm-main').style.display=isA?'flex':'none';
+    $('btn-demo-tgl').style.display=isA?'none':'';
+    document.querySelector('.tree-head h2').textContent=isA?'Components':'Feature Tree';
+    [sketchOverlay,previewOverlay,refOverlay,hoverGroup,selGroup,handleGroup,draftGroup].forEach(g=>g.visible=!isA);
+    resultMeshes.forEach(mm=>mm.visible=!isA);
+    if(pickLines)pickLines.visible=!isA;
+    asmMeshes.flat().forEach(mm=>mm.visible=isA);
+    closeProps();closeEdgeMenu();
+    if(isA){
+      refreshAsmUI();updateDatumVis();
+      setHint('Assembly — Insert part adds a saved .sketchcad file; right-click for options');
+    } else { rebuild(); }
+    updateHelp();
+  }
+  /* drag components on the ground plane (Shift = vertical) */
+  let asmDrag=null;
+  function pickComp(e){
+    const r=canvas.getBoundingClientRect();ndc.x=((e.clientX-r.left)/r.width)*2-1;ndc.y=-((e.clientY-r.top)/r.height)*2+1;
+    raycaster.setFromCamera(ndc,camera);
+    const hit=raycaster.intersectObjects(asmMeshes.flat(),false)[0];
+    return hit?{comp:asm.components.find(c2=>c2.id===hit.object.userData.compId),point:hit.point}:null;
+  }
+  function asmPointerDown(e){
+    if(e.button!==0)return;
+    const hit=pickComp(e);
+    if(hit&&hit.comp&&!hit.comp.fixed){
+      controls._animLock=false;controls._s=0;controls.enableRotate=false;
+      asmDrag={comp:hit.comp,grab:hit.point.clone(),
+        start:{x:hit.comp.t.x,y:hit.comp.t.y,z:hit.comp.t.z}};
+      asmSel=hit.comp.id;refreshAsmUI();
+    }
+  }
+  function asmPointerMove(e){
+    if(!asmDrag)return true;
+    const r=canvas.getBoundingClientRect();ndc.x=((e.clientX-r.left)/r.width)*2-1;ndc.y=-((e.clientY-r.top)/r.height)*2+1;
+    raycaster.setFromCamera(ndc,camera);
+    const pl=new THREE.Plane();
+    if(e.shiftKey){
+      const n2=camera.getWorldDirection(new THREE.Vector3());n2.y=0;
+      if(n2.lengthSq()<1e-6)n2.set(0,0,1); n2.normalize();
+      pl.setFromNormalAndCoplanarPoint(n2,asmDrag.grab);
+    } else {
+      pl.setFromNormalAndCoplanarPoint(new THREE.Vector3(0,1,0),asmDrag.grab);
+    }
+    const hit=new THREE.Vector3();
+    if(raycaster.ray.intersectPlane(pl,hit)){
+      const d=hit.sub(asmDrag.grab);
+      const t=asmDrag.comp.t, s=asmDrag.start;
+      if(e.shiftKey){ t.y=Math.round((s.y+d.y)*10)/10; }
+      else { t.x=Math.round((s.x+d.x)*10)/10; t.z=Math.round((s.z+d.z)*10)/10; }
+      applyCompTransform(asmDrag.comp);
+    }
+    return false;
+  }
+  function asmPointerUp(){
+    if(asmDrag){asmDrag=null;controls.enableRotate=true;return false;}
+    return true;
+  }
+  /* transformed copies for export (rotations XYZ then translation, like the meshes) */
+  function asmTransformedShapes(){
+    const out=[];
+    asm.components.forEach((comp,i)=>{
+      for(const s of asmShapes[i]||[]){
+        let cur=s;const tmp=[];
+        const step2=f2=>{const n2=f2(cur);if(cur!==s)tmp.push(cur);cur=n2;};
+        if(comp.t.rx)step2(sh=>OCK.rotate(sh,[1,0,0],comp.t.rx*D2R));
+        if(comp.t.ry)step2(sh=>OCK.rotate(sh,[0,1,0],comp.t.ry*D2R));
+        if(comp.t.rz)step2(sh=>OCK.rotate(sh,[0,0,1],comp.t.rz*D2R));
+        if(comp.t.x||comp.t.y||comp.t.z)step2(sh=>OCK.translate(sh,[comp.t.x,comp.t.y,comp.t.z]));
+        if(cur===s)cur=OCK.translate(s,[0,0,0]);   // always export a copy so the original survives
+        for(const t2 of tmp){try{t2.delete();}catch(_){}}
+        out.push(cur);
+      }
+    });
+    return out;
+  }
+  function asmTransformedGeoms(){
+    const out=[];
+    asmMeshes.flat().forEach(m=>{m.updateMatrixWorld(true);out.push(m.geometry.clone().applyMatrix4(m.matrixWorld));});
+    return out;
+  }
+
   /* ============================ WIRING ============================ */
   const menu=$('menu');
   /* decorate every button with its pictogram; original text becomes a .lbl */
@@ -3005,7 +3281,7 @@ const CSG = (function(){
     menu.querySelectorAll('[data-ic]').forEach(b=>{ b.innerHTML=icHTML(b.dataset.ic)+'<span class="lbl">'+b.textContent+'</span>'; });
     const dockLbl={line:'Line',move:'Move',rect:'Rect',circle:'Circle',polygon:'Polygon',dim:'Dim',horiz:'Horiz',vert:'Vert',paral:'Parallel',equal:'Equal',erase:'Erase'};
     $('dock').querySelectorAll('button').forEach(b=>{ const t=b.dataset.tool; b.innerHTML=icHTML(t)+'<span class="lbl">'+(dockLbl[t]||t)+'</span>'; });
-    const tb={'btn-save':'save','btn-load':'open','btn-export':'stl','btn-step':'step','btn-new':'newpart','btn-new-asm':'iso','btn-insert':'add','btn-finish':'finish','btn-cancel-sk':'cancel'};
+    const tb={'btn-save':'save','btn-load':'open','btn-export':'stl','btn-step':'step','btn-new':'newpart','btn-new-asm':'asm','btn-insert':'add','btn-finish':'finish','btn-cancel-sk':'cancel'};
     for(const id in tb){ const b=$(id); b.innerHTML=icHTML(tb[id])+'<span class="lbl">'+b.textContent+'</span>'; }
     $('btn-add').innerHTML=icHTML('add')+'<span class="lbl">Add feature</span>';
   })();
@@ -3021,6 +3297,10 @@ const CSG = (function(){
   let helpOn=true;
   try{ helpOn = localStorage.getItem('fcad-help')!=='0'; }catch(_){}
   function helpContext(){
+    if(docMode==='asm'){
+      if(!asm.components.length) return {title:'Assembly', body:'<b>Insert part</b> adds a saved .sketchcad file, or <b>right-click</b> to insert the pillow-block demo. The first part comes in fixed in place.'};
+      return {title:'Assembly · '+asm.components.length+' component'+(asm.components.length>1?'s':''), body:'<b>Drag</b> a part to move it (<b>Shift</b> = vertical). <b>Double-click</b> one for exact position and rotation. Right-click a part to fix or remove it. Save writes an .asmcad file; STL and STEP export every part in place.'};
+    }
     if(mode==='sketch'){
       const t={
         line:'Click to drop points. Click the <b>first (red) point</b> or press <b>Enter</b> to close the loop. <b>Esc</b> removes the last point.',
@@ -3096,7 +3376,38 @@ const CSG = (function(){
   $('btn-finish').addEventListener('click',finishSketch);
   $('btn-cancel-sk').addEventListener('click',cancelSketch);
   $('btn-demo').addEventListener('click',loadDemo);
-  $('btn-new-asm').addEventListener('click',()=>setHint('Assemblies are coming soon — insert saved parts and arrange them together'));
+  $('btn-new-asm').addEventListener('click',()=>{
+    const start=()=>{
+      features=[];rollbackIndex=0;selId=null;editing=null;demoActive=false;
+      closeProps();setMode('model');controls.unlock();clearAsm();rebuild();refreshDemoTgl();
+      setDocMode('asm');
+    };
+    if(docMode==='part'&&features.length){
+      askDialog('Start a new assembly?',
+        'The current part has '+features.length+' feature'+(features.length===1?'':'s')+'. Save it first?',
+        [{label:'Save, then new',primary:true,fn:()=>{saveProject();start();}},
+         {label:'Discard',danger:true,fn:start},{label:'Cancel'}]);
+    } else if(docMode==='asm'&&asm.components.length){
+      askDialog('Start a new assembly?',
+      'The current assembly has '+asm.components.length+' component'+(asm.components.length===1?'':'s')+'. Save it first?',
+        [{label:'Save, then new',primary:true,fn:()=>{saveProject();start();}},
+         {label:'Discard',danger:true,fn:start},{label:'Cancel'}]);
+    } else start();
+  });
+  $('btn-insert').addEventListener('click',()=>$('file-insert').click());
+  $('file-insert').addEventListener('change',e=>{
+    const file=e.target.files[0]; if(!file)return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const d=JSON.parse(ev.target.result);
+        if(!Array.isArray(d))throw new Error('not a part');
+        addComponent(d, file.name.replace(/\.(sketchcad|json)$/i,''));
+      }catch(_){ alert('Not a part file — insert a .sketchcad saved from part mode'); }
+    };
+    reader.readAsText(file);
+    e.target.value='';
+  });
   $('btn-export').addEventListener('click',exportSTL);
   $('btn-step').addEventListener('click',exportSTEP);
   $('btn-save').addEventListener('click',saveProject);
@@ -3132,6 +3443,16 @@ const CSG = (function(){
     ov.addEventListener('click',e=>{if(e.target===ov)ov.remove();});
   }
   $('btn-new').addEventListener('click',()=>{
+    if(docMode==='asm'){
+      const start=()=>{ clearAsm(); setDocMode('part'); doNewPart(); };
+      if(asm.components.length){
+        askDialog('Leave the assembly?',
+          'The current assembly has '+asm.components.length+' component'+(asm.components.length===1?'':'s')+'. Save it first?',
+          [{label:'Save, then new part',primary:true,fn:()=>{saveProject();start();}},
+           {label:'Discard',danger:true,fn:start},{label:'Cancel'}]);
+      } else start();
+      return;
+    }
     if(!features.length){ doNewPart(); return; }
     askDialog('Start a new part?',
       'The current part has '+features.length+' feature'+(features.length===1?'':'s')+'. Save it first?',
@@ -3141,8 +3462,9 @@ const CSG = (function(){
   });
 
   function partBox(){
-    if(!resultMeshes.length)return null;
-    const box=new THREE.Box3();resultMeshes.forEach(m=>box.expandByObject(m));
+    const list=docMode==='asm'?asmMeshes.flat():resultMeshes;
+    if(!list.length)return null;
+    const box=new THREE.Box3();list.forEach(m=>box.expandByObject(m));
     return box;
   }
   function fitAll(){
@@ -3189,6 +3511,9 @@ const CSG = (function(){
       else if(e.key==='Backspace'){e.preventDefault();if(draftPts.length)draftPts.pop();redrawDraft(null);}
       else if(e.key==='1'){tool='line';dockSel();}else if(e.key==='2'){tool='rect';dockSel();}
       else if(e.key==='3'){tool='circle';dockSel();}else if(e.key==='4'){tool='polygon';dockSel();}
+    } else if(docMode==='asm'){
+      if((e.key==='Delete'||e.key==='Backspace')&&asmSel){const c2=asm.components.find(x=>x.id===asmSel);if(c2)removeComponent(c2);}
+      else if(e.key.toLowerCase()==='f')fitAll();
     } else {
       if((e.key==='Delete'||e.key==='Backspace')&&selId){deleteFeature(selId);}
       else if(e.key.toLowerCase()==='f')fitAll();
@@ -3214,6 +3539,11 @@ const CSG = (function(){
     insertFeature, defaults, addFeature, rebuild, openProps, closeProps,
     selectFeature, nextId: () => nextId(), renderer, scene, camera, controls, fitAll,
     OCK, featureEdges,
+    get docMode(){ return docMode; },
+    get asm(){ return asm; },
+    get asmShapes(){ return asmShapes; },
+    get asmMeshes(){ return asmMeshes; },
+    addComponent, setDocMode, buildPartShapes, asmTransformedShapes, removeComponent,
     snap(){ renderer.render(scene, camera); return renderer.domElement.toDataURL('image/jpeg', 0.85); }
   };
 
