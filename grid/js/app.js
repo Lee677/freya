@@ -487,7 +487,7 @@
         'pocket cut ' + fmt(c, 2) + ' mm larger all round → <b>' +
         fmt(st.w + 2 * c, 1) + ' × ' + fmt(st.d + 2 * c, 1) + ' mm</b>' +
         (S.fingers && S.fingers.length ? ' · ' + S.fingers.length + ' finger hole' + (S.fingers.length > 1 ? 's' : '') : '') + '\n' +
-        'Happy with it? Send it to the Bin tab.');
+        'Happy with it? Print a one-layer fit template, or send it to the Bin tab.');
     }
   }
 
@@ -965,8 +965,9 @@
           : 'cut-off ' + seg.threshold + (seg.objDark ? ' (tool darker than background)' : ' (tool lighter than background)') + '\n') +
         (seg.clipped ? '<span class="w">the shape runs off the edge of the search box — drag a wider one</span>\n' : '') +
         '<b>Not covering the whole tool?</b> Drag the orange line — it bends toward your\n' +
-        'cursor. Then send it to the Bin tab.');
-      $('sc-use').disabled = $('sc-svg').disabled = false;
+        'cursor. Then <b>Fit template</b> prints a one-layer proof in minutes, or\n' +
+        '<b>Use in bin</b> goes straight to the full bin.');
+      $('sc-use').disabled = $('sc-svg').disabled = $('sc-template').disabled = false;
       $('sc-s3').classList.add('done');
     });
   });
@@ -979,13 +980,19 @@
     });
   });
 
-  on('sc-use', 'click', function () {
+  // Both routes out of the scan tab land on the Bin tab with the pocket style
+  // on; the only difference is what the Make picker is left saying, so the
+  // Generate that follows builds the thing the button promised.
+  function sendToBin(output) {
     $('bin-style').value = 'pocket';
+    $('bin-output').value = output;
     syncVisibility();
     selectTab('bin');
     $('sc-s4').classList.add('done');
     buildBin();
-  });
+  }
+  on('sc-use', 'click', function () { sendToBin('bin'); });
+  on('sc-template', 'click', function () { sendToBin('template'); });
   on('sc-svg', 'click', function () {
     EX.save(EX.outlineSVG(S.outline, 'tool outline'), 'tool-outline.svg');
   });
