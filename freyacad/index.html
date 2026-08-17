@@ -114,6 +114,7 @@ if(!window.THREE){
   @keyframes tw-b{0%,100%{opacity:.8}45%{opacity:.34}}
   .sep{width:1px;height:22px;background:var(--line);flex:0 0 auto}
   .tb-spacer{flex:1}
+  .tb-gap{width:26px;flex:0 0 auto}
   .tb-group{display:flex;align-items:center;gap:7px}
   
   button{font-family:var(--sans);font-size:11.5px;color:var(--text);background:var(--panel-2);
@@ -307,28 +308,34 @@ if(!window.THREE){
     <div class="sep"></div>
     <div class="tb-group" id="tb-main">
       <button id="btn-add" class="btn-primary"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 3v10M3 8h10"/></svg>Add feature</button>
-      <button id="btn-edit" disabled>Edit</button>
+    </div>
+    <div class="tb-group" id="tb-asm-main" style="display:none">
+      <button id="btn-insert" class="btn-primary">Insert part</button>
     </div>
     <div class="tb-group" id="tb-sketch" style="display:none">
       <button id="btn-finish" class="btn-primary">Finish sketch</button>
       <button id="btn-cancel-sk" class="btn-ghost btn-danger">Cancel</button>
     </div>
-    <div class="tb-spacer"></div>
+    <div class="sep"></div>
     <div class="tb-group">
       <button id="btn-new" class="btn-ghost">New part</button>
-      <button id="btn-save" class="btn-ghost">Save</button>
+      <button id="btn-new-asm" class="btn-ghost">New assembly</button>
       <button id="btn-load" class="btn-ghost">Open</button>
-      <input type="file" id="file-load" style="display:none" accept=".json,.sketchcad">
-      <div class="sep"></div>
+      <input type="file" id="file-load" style="display:none" accept=".json,.sketchcad,.asmcad">
+      <input type="file" id="file-insert" style="display:none" accept=".json,.sketchcad">
+    </div>
+    <div class="tb-spacer"></div>
+    <div class="tb-group">
       <button id="btn-units" class="btn-ghost">Units: mm</button>
       <button id="btn-labels" class="btn-ghost" title="Show or hide button and menu labels — icons only">Aa</button>
       <button id="btn-help" class="btn-ghost" title="Live help — tips that follow what you're doing">?</button>
       <button id="btn-demo-tgl" class="btn-ghost" title="Show or hide the pillow-block demo part (also controls whether it loads on startup)">Demo</button>
-      <button id="btn-iso" class="btn-ghost">Iso view</button>
-      <button id="btn-fit" class="btn-ghost">Fit</button>
-      <div class="sep"></div>
+    </div>
+    <div class="tb-gap"></div>
+    <div class="tb-group">
+      <button id="btn-save" class="btn-ghost">Save</button>
       <button id="btn-export" disabled>Export STL</button>
-      <button id="btn-step" disabled title="True B-rep STEP straight from the Open CASCADE kernel — real planes, cylinders and blend surfaces, not tessellated facets.">STEP</button>
+      <button id="btn-step" disabled title="True B-rep STEP straight from the Open CASCADE kernel — real planes, cylinders and blend surfaces, not tessellated facets.">Export STEP</button>
     </div>
   </header>
 
@@ -2474,11 +2481,8 @@ const CSG = (function(){
   function selectFeature(id){
     selId=id;
     refreshTree();
-    const f=features.find(x=>x.id===id);
-    $('btn-edit').disabled=!f;
     drawSketchOverlays(features.slice(0,rollbackIndex));
   }
-  $('btn-edit').addEventListener('click',()=>{const f=features.find(x=>x.id===selId);if(!f)return;if(f.type==='sketch')editSketch(f);else openProps(f);});
 
   function editSketch(f){
     f._isNew=false;
@@ -3001,7 +3005,7 @@ const CSG = (function(){
     menu.querySelectorAll('[data-ic]').forEach(b=>{ b.innerHTML=icHTML(b.dataset.ic)+'<span class="lbl">'+b.textContent+'</span>'; });
     const dockLbl={line:'Line',move:'Move',rect:'Rect',circle:'Circle',polygon:'Polygon',dim:'Dim',horiz:'Horiz',vert:'Vert',paral:'Parallel',equal:'Equal',erase:'Erase'};
     $('dock').querySelectorAll('button').forEach(b=>{ const t=b.dataset.tool; b.innerHTML=icHTML(t)+'<span class="lbl">'+(dockLbl[t]||t)+'</span>'; });
-    const tb={'btn-save':'save','btn-load':'open','btn-iso':'iso','btn-fit':'fit','btn-export':'stl','btn-step':'step','btn-new':'newpart','btn-edit':'edit','btn-finish':'finish','btn-cancel-sk':'cancel'};
+    const tb={'btn-save':'save','btn-load':'open','btn-export':'stl','btn-step':'step','btn-new':'newpart','btn-new-asm':'iso','btn-insert':'add','btn-finish':'finish','btn-cancel-sk':'cancel'};
     for(const id in tb){ const b=$(id); b.innerHTML=icHTML(tb[id])+'<span class="lbl">'+b.textContent+'</span>'; }
     $('btn-add').innerHTML=icHTML('add')+'<span class="lbl">Add feature</span>';
   })();
@@ -3092,8 +3096,7 @@ const CSG = (function(){
   $('btn-finish').addEventListener('click',finishSketch);
   $('btn-cancel-sk').addEventListener('click',cancelSketch);
   $('btn-demo').addEventListener('click',loadDemo);
-  $('btn-iso').addEventListener('click',()=>{controls.setIso();});
-  $('btn-fit').addEventListener('click',fitAll);
+  $('btn-new-asm').addEventListener('click',()=>setHint('Assemblies are coming soon — insert saved parts and arrange them together'));
   $('btn-export').addEventListener('click',exportSTL);
   $('btn-step').addEventListener('click',exportSTEP);
   $('btn-save').addEventListener('click',saveProject);
