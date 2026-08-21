@@ -381,6 +381,7 @@ if(!window.THREE){
 <div id="boot" aria-hidden="true"></div>
 <canvas id="navcube" width="208" height="208" title="Drag to orbit · click a face for that view"></canvas>
 <div id="sk-anchor" aria-hidden="true"></div>
+<div id="dim-preview" class="dim-label" style="display:none;pointer-events:none"></div>
 <div id="app">
   <header class="toolbar">
     <a class="brand" href="/" title="freya.co.nz — home"><span class="mark">freya<svg class="asterism" viewBox="0 0 100 36" aria-hidden="true" focusable="false">
@@ -2365,6 +2366,8 @@ const CSG = (function(){
   let hoverSnap=null;                        // {x,y,kind:'point'|'line'} in sketch UV
   let hoverGuides=[];                        // dashed H/V inference guides, sketch UV
   let hoverPt=null;                          // sketch point under the cursor (glows)
+  let dimPick=null;                          // first half of a two-click dimension
+  let sketchCursor=null;                     // last cursor position in sketch UV
   // Tools where clicking an existing point means something — the glow is the
   // affordance that says "this endpoint is grabbable".
   const POINT_TOOLS=['dim','move','erase'];
@@ -2383,16 +2386,44 @@ const CSG = (function(){
   function drawSnapMark(){
     while(snapMarkGroup.children.length){const c=snapMarkGroup.children.pop();if(c.geometry)c.geometry.dispose();}
     if(mode!=='sketch'||!editing||!editing.frame)return;
-    if(hoverPt){                                   // grabbable endpoint: glowing halo
-      const s=Math.max(0.6,controls.sph.radius/18);
-      for(const [rad,op] of [[0.17*s,1],[0.34*s,0.35],[0.55*s,0.15]]){
-        const h=new THREE.Mesh(new THREE.SphereGeometry(rad,14,10),
+    if(hoverPt){                                   // grabbable endpoint: a dot and a hint of a halo
+      const s=Math.max(0.5,controls.sph.radius/22);
+      for(const [rad,op] of [[0.085*s,0.95],[0.15*s,0.18]]){
+        const h=new THREE.Mesh(new THREE.SphereGeometry(rad,12,10),
           new THREE.MeshBasicMaterial({color:0x35d4e6,depthTest:false,transparent:true,opacity:op,
-            blending:op<1?THREE.AdditiveBlending:THREE.NormalBlending}));
+            blending:op<0.5?THREE.AdditiveBlending:THREE.NormalBlending}));
         h.position.copy(worldFromSketch(editing.frame,hoverPt.x,hoverPt.y));
         h.renderOrder=9; snapMarkGroup.add(h);
       }
     }
+    // half-made dimension: rubber-band from the picked point to the cursor
+    if(dimPick&&sketchCursor){
+      const prev=$('dim-preview');
+      let A=null;
+      if(dimPick.kind==='point') A=resolvePt(editing,dimPick.ref);
+      else { const s=segPts(editing,{ent:dimPick.hit.entIdx,seg:dimPick.hit.seg});
+             if(s)A={x:(s.a.x+s.b.x)/2,y:(s.a.y+s.b.y)/2}; }
+      if(A){
+        const w=[worldFromSketch(editing.frame,A.x,A.y),
+                 worldFromSketch(editing.frame,sketchCursor.x,sketchCursor.y)];
+        const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(w),
+          new THREE.LineDashedMaterial({color:0xFBBC05,dashSize:0.42,gapSize:0.28,
+            depthTest:false,transparent:true,opacity:0.95}));
+        ln.computeLineDistances(); ln.renderOrder=9; snapMarkGroup.add(ln);
+        const dot=new THREE.Mesh(new THREE.SphereGeometry(0.13,12,10),
+          new THREE.MeshBasicMaterial({color:0xFBBC05,depthTest:false}));
+        dot.position.copy(w[0]); dot.renderOrder=9; snapMarkGroup.add(dot);
+        if(prev){                                   // live readout by the cursor
+          const L=Math.hypot(sketchCursor.x-A.x,sketchCursor.y-A.y);
+          const sp=screenOf({x:(A.x+sketchCursor.x)/2,y:(A.y+sketchCursor.y)/2});
+          prev.style.display=sp.behind?'none':'block';
+          prev.style.left=sp.x+'px'; prev.style.top=sp.y+'px';
+          prev.textContent=(dimPick.kind==='point')
+            ? (+toDisp(L).toFixed(2))+' '+lenLabel()
+            : 'pick a second line';
+        }
+      }
+    } else { const prev=$('dim-preview'); if(prev)prev.style.display='none'; }
     if(!hoverSnap)return;
     const s=Math.max(0.6,controls.sph.radius/18);
     const point=hoverSnap.kind==='point';
@@ -2620,7 +2651,32 @@ const CSG = (function(){
     } else if(tool==='polygon'){
       if(draftStage===0){draftA=p;draftStage=1;} else {const r=Math.hypot(p.x-draftA.x,p.y-draftA.y),rot=Math.atan2(p.y-draftA.y,p.x-draftA.x);if(r>1e-3){const ent={type:'polygon',c:{x:draftA.x,y:draftA.y},r,sides:polygonSides,rot};editing.entities.push(ent);flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
     } else if(tool==='dim'){
-      const d=dimHit(p); if(d) openDimInput(d);
+      /* Two clicks, SolidWorks-style. First click arms a point or a line and
+         previews; second click decides what the dimension is:
+           point + point → distance      line + line → angle
+           line  + away  → that line's own length / diameter                */
+      const pr=nearestPointRef(p);
+      const eh=pr?null:dimHit(p);
+      if(!dimPick){
+        if(pr){ dimPick={kind:'point',ref:pr};
+          setHint('Now click the second point — or the origin'); }
+        else if(eh){ dimPick={kind:'ent',hit:eh};
+          setHint(eh.kind==='seg'?'Click another line for the angle, or click clear space to dimension this one'
+                                 :'Click clear space to place the dimension'); }
+        else setHint('Click a point, a line, a circle or a rectangle edge');
+        drawSnapMark(); return;
+      }
+      const first=dimPick; dimPick=null;
+      if(first.kind==='point'){
+        if(pr&&!sameRef(first.ref,pr)) openDimInput({kind:'p2p',a:first.ref,b:pr});
+        else setHint('Pick a different second point');
+      } else {
+        const A=first.hit;
+        if(eh&&eh.kind==='seg'&&A.kind==='seg'&&!(eh.entIdx===A.entIdx&&eh.seg===A.seg))
+          openDimInput({kind:'angle',a:{ent:A.entIdx,seg:A.seg},b:{ent:eh.entIdx,seg:eh.seg}});
+        else openDimInput(A);
+      }
+      drawSnapMark(); return;
     } else if(tool==='horiz' || tool==='vert'){
       const d=dimHit(p);
       if(d && d.kind==='seg'){ applyHVConstraint(d, tool); rebuild(); setHint(tool==='horiz'?'Line set horizontal':'Line set vertical'); }
@@ -2646,8 +2702,12 @@ const CSG = (function(){
      the loop (or splits the chain) rather than deleting the whole shape. */
   function dropDimsFor(sk,ei){
     if(!sk.dims)return;
-    sk.dims=sk.dims.filter(x=>x.entIdx!==ei);
-    sk.dims.forEach(x=>{ if(x.entIdx>ei)x.entIdx--; });
+    const two=x=>x.kind==='p2p'||x.kind==='angle';
+    sk.dims=sk.dims.filter(x=>two(x)?(x.a.ent!==ei&&x.b.ent!==ei):x.entIdx!==ei);
+    sk.dims.forEach(x=>{
+      if(two(x)){ if(x.a.ent>ei)x.a.ent--; if(x.b.ent>ei)x.b.ent--; }
+      else if(x.entIdx>ei)x.entIdx--;
+    });
   }
   function dimNear(p){
     if(!editing||!editing.dims)return -1;
@@ -2749,7 +2809,81 @@ const CSG = (function(){
      so they don't swim about as you zoom. */
   // arrowhead ~3:1 long-to-wide, the usual drafting proportion
   const DIM_OFF=2.6, DIM_GAP=0.5, DIM_OVER=0.4, DIM_ARROW=0.8, DIM_BARB=0.14;
+  /* ---- point and segment references, so a dimension can span two entities ----
+     ent:-1 is the sketch origin. Returning the live point object matters: the
+     driving dimensions mutate it in place. */
+  function pointRefs(sk){
+    const out=[];
+    sk.entities.forEach((e,ei)=>{
+      if(e.type==='poly') e.pts.forEach((q,i)=>out.push({ent:ei,idx:i,pt:q}));
+      else if(e.type==='rect'){ out.push({ent:ei,idx:0,pt:e.a}); out.push({ent:ei,idx:2,pt:e.b}); }
+      else if(e.type==='circle'||e.type==='polygon') out.push({ent:ei,idx:0,pt:e.c});
+    });
+    // origin first, so a vertex sitting on it loses the tie: dimensioning to
+    // the origin is the useful reading, and the origin can never be dragged
+    out.unshift({ent:-1,idx:0,pt:{x:0,y:0}});
+    return out;
+  }
+  function resolvePt(sk,ref){
+    if(!ref) return null;
+    if(ref.ent===-1) return {x:0,y:0};
+    const e=sk.entities[ref.ent]; if(!e) return null;
+    if(e.type==='poly') return e.pts[ref.idx]||null;
+    if(e.type==='rect') return ref.idx===0?e.a:e.b;
+    if(e.type==='circle'||e.type==='polygon') return e.c;
+    return null;
+  }
+  function sameRef(a,b){ return a&&b&&a.ent===b.ent&&a.idx===b.idx; }
+  function nearestPointRef(p){
+    if(!editing) return null;
+    const tol=Math.max(0.55,controls.sph.radius*0.035);
+    let best=null,bd=tol;
+    for(const r of pointRefs(editing)){
+      const d=Math.hypot(r.pt.x-p.x,r.pt.y-p.y);
+      if(d<bd){bd=d;best=r;}
+    }
+    return best?{ent:best.ent,idx:best.idx}:null;
+  }
+  function segPts(f,ref){
+    const e=f.entities[ref.ent]; if(!e||e.type!=='poly') return null;
+    const n=e.pts.length, a=e.pts[ref.seg], b=e.pts[(ref.seg+1)%n];
+    return (a&&b)?{a:a,b:b,e:e}:null;
+  }
+  function lineIntersect(p1,u1,p2,u2){
+    const den=u1.x*u2.y-u1.y*u2.x;
+    if(Math.abs(den)<1e-9) return null;
+    const t=((p2.x-p1.x)*u2.y-(p2.y-p1.y)*u2.x)/den;
+    return {x:p1.x+u1.x*t, y:p1.y+u1.y*t};
+  }
+
   function dimResolve(f,d){
+    if(d.kind==='p2p'){
+      const A=resolvePt(f,d.a), B=resolvePt(f,d.b); if(!A||!B) return null;
+      const dx=B.x-A.x, dy=B.y-A.y, L=Math.hypot(dx,dy)||1;
+      const nx=-dy/L, ny=dx/L;
+      return {value:Math.hypot(dx,dy), suffix:'', type:'linear',
+              a:{x:A.x,y:A.y}, b:{x:B.x,y:B.y}, n:{x:nx,y:ny},
+              anchor:{x:(A.x+B.x)/2+nx*(DIM_OFF+0.9), y:(A.y+B.y)/2+ny*(DIM_OFF+0.9)}};
+    }
+    if(d.kind==='angle'){
+      const S1=segPts(f,d.a), S2=segPts(f,d.b); if(!S1||!S2) return null;
+      const raw=(s)=>{const dx=s.b.x-s.a.x,dy=s.b.y-s.a.y,L=Math.hypot(dx,dy)||1;return {x:dx/L,y:dy/L};};
+      const r1=raw(S1), r2=raw(S2);
+      const P=lineIntersect(S1.a,r1,S2.a,r2);
+      if(!P) return null;                              // parallel: no angle to show
+      // point both legs away from the vertex, so the arc spans the angle you see
+      const away=(s)=>{
+        const da=Math.hypot(s.a.x-P.x,s.a.y-P.y), db=Math.hypot(s.b.x-P.x,s.b.y-P.y);
+        const q=(da>db)?s.a:s.b, L=Math.hypot(q.x-P.x,q.y-P.y)||1;
+        return {x:(q.x-P.x)/L,y:(q.y-P.y)/L};
+      };
+      const o1=away(S1), o2=away(S2);
+      const ang=Math.abs(Math.atan2(o1.x*o2.y-o1.y*o2.x, o1.x*o2.x+o1.y*o2.y))*180/Math.PI;
+      let bx=o1.x+o2.x, by=o1.y+o2.y; const BL=Math.hypot(bx,by)||1; bx/=BL; by/=BL;
+      return {value:ang, angular:true, suffix:'', type:'angle', vertex:P, o1:o1, o2:o2,
+              a:S1.a, b:S2.a,
+              anchor:{x:P.x+bx*(DIM_OFF+2.2), y:P.y+by*(DIM_OFF+2.2)}};
+    }
     const e=f.entities[d.entIdx]; if(!e) return null;
     const mk=(a,b,nx,ny,suffix,type)=>{
       const value=(type==='dia')?2*e.r:Math.hypot(b.x-a.x,b.y-a.y);
@@ -2812,6 +2946,25 @@ const CSG = (function(){
         arrow(g.a,{x:u.x,y:u.y}); arrow(g.b,{x:-u.x,y:-u.y});
         continue;
       }
+      if(g.type==='angle'){
+        const R=DIM_OFF+1.6, P=g.vertex;
+        const a1=Math.atan2(g.o1.y,g.o1.x);
+        let da=Math.atan2(g.o2.y,g.o2.x)-a1;
+        while(da>Math.PI)da-=2*Math.PI; while(da<-Math.PI)da+=2*Math.PI;
+        let prev=null;
+        for(let k=0;k<=28;k++){
+          const t=a1+da*k/28, q={x:P.x+Math.cos(t)*R,y:P.y+Math.sin(t)*R};
+          if(prev)segs.push([prev,q]); prev=q;
+        }
+        // short legs out to the arc, and arrowheads tangent to it
+        segs.push([P,{x:P.x+g.o1.x*(R+DIM_OVER),y:P.y+g.o1.y*(R+DIM_OVER)}]);
+        segs.push([P,{x:P.x+g.o2.x*(R+DIM_OVER),y:P.y+g.o2.y*(R+DIM_OVER)}]);
+        const sg=Math.sign(da)||1;
+        const tang=(t,s)=>({x:-Math.sin(t)*s,y:Math.cos(t)*s});
+        arrow({x:P.x+Math.cos(a1)*R,y:P.y+Math.sin(a1)*R},tang(a1,sg));
+        arrow({x:P.x+Math.cos(a1+da)*R,y:P.y+Math.sin(a1+da)*R},tang(a1+da,-sg));
+        continue;
+      }
       const n=g.n, A=g.a, B=g.b;
       const A2={x:A.x+n.x*DIM_OFF,y:A.y+n.y*DIM_OFF}, B2={x:B.x+n.x*DIM_OFF,y:B.y+n.y*DIM_OFF};
       // witness lines, held off the geometry by a gap and overshooting a touch
@@ -2868,6 +3021,34 @@ const CSG = (function(){
   }
   // Write the value back to the parameter (driving).
   function dimApply(f,d,val){
+    if(d.kind==='p2p'){
+      const A=resolvePt(f,d.a), B=resolvePt(f,d.b); if(!A||!B) return;
+      const dx=B.x-A.x, dy=B.y-A.y, L=Math.hypot(dx,dy)||1, ux=dx/L, uy=dy/L;
+      // only the origin is truly immovable; otherwise the second-picked point
+      // is the one that gives, which is what "A to B = 12" reads like
+      const aFixed=(d.a.ent===-1), bFixed=(d.b.ent===-1);
+      if(aFixed&&bFixed) return;
+      if(bFixed){ A.x=B.x-ux*val; A.y=B.y-uy*val; }
+      else      { B.x=A.x+ux*val; B.y=A.y+uy*val; }
+      return;
+    }
+    if(d.kind==='angle'){
+      const g=dimResolve(f,d); if(!g) return;
+      const S2=segPts(f,d.b); if(!S2) return;
+      const P=g.vertex;
+      const spin=(rad)=>{
+        const c=Math.cos(rad), s=Math.sin(rad);
+        for(const q of [S2.a,S2.b]){
+          const dx=q.x-P.x, dy=q.y-P.y;
+          q.x=P.x+dx*c-dy*s; q.y=P.y+dx*s+dy*c;
+        }
+      };
+      const delta=(val-g.value)*Math.PI/180;
+      spin(delta);
+      const after=dimResolve(f,d);                    // rotated the wrong way? flip it
+      if(after&&Math.abs(after.value-val)>Math.abs(g.value-val)) spin(-2*delta);
+      return;
+    }
     const e=f.entities[d.entIdx]; if(!e) return;
     if(d.kind==='dia'||d.kind==='pdia') e.r=Math.max(1e-3,val/2);
     else if(d.kind==='width')  e.b.x=e.a.x+(Math.sign(e.b.x-e.a.x)||1)*val;
@@ -2878,10 +3059,17 @@ const CSG = (function(){
       b.x=a.x+dx/L*val; b.y=a.y+dy/L*val;
     }
   }
-  function dimKey(d){ return d.entIdx+':'+d.kind+':'+(d.seg!=null?d.seg:''); }
+  function dimKey(d){
+    if(d.kind==='p2p')   return 'p2p:'+d.a.ent+'.'+d.a.idx+':'+d.b.ent+'.'+d.b.idx;
+    if(d.kind==='angle') return 'ang:'+d.a.ent+'.'+d.a.seg+':'+d.b.ent+'.'+d.b.seg;
+    return d.entIdx+':'+d.kind+':'+(d.seg!=null?d.seg:'');
+  }
   function ensureDimStored(d){
     editing.dims = editing.dims || [];
-    if(!editing.dims.some(x=>dimKey(x)===dimKey(d))) editing.dims.push({entIdx:d.entIdx,kind:d.kind,seg:d.seg});
+    if(editing.dims.some(x=>dimKey(x)===dimKey(d))) return;
+    editing.dims.push((d.kind==='p2p'||d.kind==='angle')
+      ? {kind:d.kind, a:Object.assign({},d.a), b:Object.assign({},d.b)}
+      : {entIdx:d.entIdx, kind:d.kind, seg:d.seg});
   }
   function screenOf(anchor){
     const fr=(sketchData[editing.id]&&sketchData[editing.id].frame)||editing.frame;
@@ -2895,13 +3083,15 @@ const CSG = (function(){
     const cur=dimResolve(editing,d); if(!cur) return;
     const sp=screenOf(cur.anchor);
     const inp=document.createElement('input'); inp.type='number'; inp.className='dim-input';
-    inp.value=+toDisp(cur.value).toFixed(4); inp.step=0.1; inp.min=0.001;
+    inp.value=cur.angular?+cur.value.toFixed(3):+toDisp(cur.value).toFixed(4);
+    inp.step=cur.angular?1:0.1; inp.min=0.001;
     inp.style.left=sp.x+'px'; inp.style.top=sp.y+'px';
     viewport.appendChild(inp); dimInputEl=inp; inp.focus(); inp.select();
     let done=false;
     const apply=()=>{ if(done)return; done=true; let v=parseFloat(inp.value);
       closeDimInput();
-      if(!isNaN(v)&&v>0){ pushUndo('dimension'); ensureDimStored(d); dimApply(editing,d,fromDisp(v)); rebuild(); } };
+      if(!isNaN(v)&&v>0){ pushUndo('dimension'); ensureDimStored(d);
+        dimApply(editing,d,cur.angular?v:fromDisp(v)); rebuild(); } };
     inp.addEventListener('keydown',ev=>{ if(ev.key==='Enter'){ev.preventDefault();apply();}
       else if(ev.key==='Escape'){ev.preventDefault();done=true;closeDimInput();} });
     inp.addEventListener('blur',apply);
@@ -2929,7 +3119,9 @@ const CSG = (function(){
       const sp=screenOf(cur.anchor);
       o.el.style.display = sp.behind ? 'none' : 'block';
       o.el.style.left=sp.x+'px'; o.el.style.top=sp.y+'px';
-      o.el.textContent = (cur.suffix||'') + (+toDisp(cur.value).toFixed(3)) + ' ' + lenLabel();
+      o.el.textContent = cur.angular
+        ? (+cur.value.toFixed(2))+'°'
+        : (cur.suffix||'')+(+toDisp(cur.value).toFixed(3))+' '+lenLabel();
     }
   }
 
@@ -3458,7 +3650,9 @@ const CSG = (function(){
     canvas.style.cursor=(m==='sketch')?'crosshair':'default';
     const nc=$('navcube'); if(nc)nc.style.display=(m==='sketch')?'none':'';
     if(m!=='sketch'){ closeDimInput(); clearDimLabels(); dragVtx=null; dragSnapPt=null; redrawHandles();
-      hoverSnap=null; hoverGuides=[]; hoverPt=null; drawSnapMark(); const tc=$('tool-cursor'); if(tc)tc.style.display='none';
+      hoverSnap=null; hoverGuides=[]; hoverPt=null; dimPick=null; sketchCursor=null;
+      drawSnapMark(); const tc=$('tool-cursor'); if(tc)tc.style.display='none';
+      const dp=$('dim-preview'); if(dp)dp.style.display='none';
       const ac=$('sk-anchor'); if(ac)ac.style.display='none'; }
     refreshStatus();updateHint();updateDatumVis();updatePlaneTraces();
   }
@@ -3538,6 +3732,7 @@ const CSG = (function(){
     if(mode==='sketch'&&editing){
       moveToolCursor(e);
       const p0=pointerToSketch(e);if(!p0)return;
+      sketchCursor=p0;
       hoverPt=(POINT_TOOLS.indexOf(tool)>=0)?nearestSketchPoint(p0):null;
       const p=applyDrawSnap(p0);
       drawSnapMark();
@@ -3772,7 +3967,7 @@ const CSG = (function(){
     buildCtxMenu(x,y,items,{cols:true});
   }
   function openSketchMenu(x,y){
-    const setTool=t=>()=>{tool=t;draftStage=0;draftA=null;paralRef=null;equalRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;drawSnapMark();redrawHandles();dockSel();};
+    const setTool=t=>()=>{tool=t;draftStage=0;draftA=null;paralRef=null;equalRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();redrawHandles();dockSel();};
     buildCtxMenu(x,y,[
       {sect:'Sketch tools'},
       {ic:'line',label:'Line',fn:setTool('line')},
@@ -4144,7 +4339,7 @@ const CSG = (function(){
     else addFeature(a);
   }));
   $('dock').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
-    tool=b.dataset.tool;draftStage=0;draftA=null;paralRef=null;equalRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;drawSnapMark();
+    tool=b.dataset.tool;draftStage=0;draftA=null;paralRef=null;equalRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();
     $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));
     redrawDraft(null);redrawHandles();updateHint();
   }));
@@ -4288,7 +4483,9 @@ const CSG = (function(){
     }
     if(mode==='sketch'){
       if(e.key==='Enter'){e.preventDefault();if(tool==='line')commitDraftLine();else finishSketch();}
-      else if(e.key==='Escape'){e.preventDefault();if(draftPts.length){draftPts.pop();redrawDraft(null);}else cancelSketch();}
+      else if(e.key==='Escape'){e.preventDefault();
+        if(dimPick){dimPick=null;drawSnapMark();setHint('Dimension cancelled');}
+        else if(draftPts.length){draftPts.pop();redrawDraft(null);}else cancelSketch();}
       else if(e.key==='Backspace'){e.preventDefault();if(draftPts.length)draftPts.pop();redrawDraft(null);}
       else if(e.key==='1'){tool='line';dockSel();}else if(e.key==='2'){tool='rect';dockSel();}
       else if(e.key==='3'){tool='circle';dockSel();}else if(e.key==='4'){tool='polygon';dockSel();}
