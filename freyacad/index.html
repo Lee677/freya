@@ -305,6 +305,29 @@ if(!window.THREE){
     padding:10px 16px;box-shadow:0 0 10px rgba(66,133,244,.3)}
   #gate .g-small{font-family:var(--mono);font-size:10.5px;color:var(--muted-2);max-width:40ch;line-height:1.6}
 
+  /* boot sequence — the kernel download as theatre */
+  #boot{position:fixed;left:246px;bottom:44px;z-index:24;pointer-events:none;display:none;
+    font-family:var(--mono);font-size:11px;line-height:1.75;color:var(--muted);
+    text-shadow:0 0 6px rgba(66,133,244,.25);transition:opacity .8s}
+  #boot .ok{color:var(--g-green);text-shadow:0 0 8px rgba(52,168,83,.6)}
+  #boot .run{color:var(--g-yellow)}
+  #boot .dim{color:var(--muted-2)}
+
+  /* view cube */
+  #navcube{position:fixed;right:14px;bottom:40px;z-index:15;width:104px;height:104px;cursor:pointer;
+    opacity:.85;transition:opacity .15s}
+  #navcube:hover{opacity:1}
+
+  /* sketch anchor chip — SW-style defined/under-defined status */
+  #sk-anchor{position:fixed;top:48px;left:50%;transform:translateX(-50%);z-index:24;display:none;
+    font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+    padding:4px 12px;border-radius:20px;border:1px solid var(--line);background:var(--panel);
+    pointer-events:none}
+  #sk-anchor.ok{color:var(--g-green);border-color:rgba(52,168,83,.5);text-shadow:0 0 6px rgba(52,168,83,.5)}
+  #sk-anchor.no{color:#8ab4f8;border-color:rgba(66,133,244,.45)}
+
+  html.mobile-gate #navcube,html.mobile-gate #boot,html.mobile-gate #sk-anchor{display:none!important}
+
   /* tool badge that rides up-right of the pointer while sketching */
   #tool-cursor{position:fixed;z-index:25;pointer-events:none;display:none;transform:translate(10px,-120%);
     color:var(--g-blue);filter:drop-shadow(0 0 4px rgba(66,133,244,.55))}
@@ -348,6 +371,9 @@ if(!window.THREE){
   <div class="g-small">also: you were just spared an 11&nbsp;MB CAD-kernel download. you&rsquo;re welcome.</div>
 </div>
 <div id="tool-cursor" aria-hidden="true"></div>
+<div id="boot" aria-hidden="true"></div>
+<canvas id="navcube" width="208" height="208" title="Drag to orbit · click a face for that view"></canvas>
+<div id="sk-anchor" aria-hidden="true"></div>
 <div id="app">
   <header class="toolbar">
     <a class="brand" href="/" title="freya.co.nz — home"><span class="mark">freya<svg class="asterism" viewBox="0 0 100 36" aria-hidden="true" focusable="false">
@@ -758,7 +784,168 @@ const CSG = (function(){
       lb.position.copy(B).lerp(A,0.09).addScaledVector(n.clone().cross(dir).normalize(),0.55);
       traceGroup.add(lb);
     }
-    traceGroup.visible=traceGroup.children.length>0;
+    // SW-style sketch origin: two red arrows at the plane's (0,0)
+    const oM=new THREE.LineBasicMaterial({color:0xEA4335,transparent:true,opacity:0.95,depthTest:false});
+    const OL=3, hd=0.55;
+    const seg=(a,b)=>{const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints([a,b]),oM);ln.renderOrder=6;traceGroup.add(ln);};
+    const og=fr.o.clone().addScaledVector(n,0.006);
+    for(const ax of [fr.u,fr.v]){
+      const tip=og.clone().addScaledVector(ax,OL);
+      const side=(ax===fr.u?fr.v:fr.u);
+      seg(og,tip);
+      seg(tip,tip.clone().addScaledVector(ax,-hd).addScaledVector(side,hd*0.45));
+      seg(tip,tip.clone().addScaledVector(ax,-hd).addScaledVector(side,-hd*0.45));
+    }
+    traceGroup.visible=true;
+  }
+
+  /* ============ interface candy: view cube, loop flash, anchor status ============ */
+
+  // ---- view cube: a second tiny renderer whose cube IS the world frame,
+  // counter-rotated by the camera each frame. Click a face/edge/corner to fly
+  // there; drag the cube to orbit.
+  const navCanvas=$('navcube');
+  let cubeRenderer=null,cubeScene=null,cubeCam=null,cubeMesh=null;
+  const cubeRay=new THREE.Raycaster(); let cubeAnimId=0;
+  (function buildNavCube(){
+    if(!navCanvas)return;
+    try{cubeRenderer=new THREE.WebGLRenderer({canvas:navCanvas,alpha:true,antialias:true});}
+    catch(_){navCanvas.style.display='none';return;}
+    cubeRenderer.setPixelRatio(1);cubeRenderer.setSize(208,208,false);
+    cubeScene=new THREE.Scene();
+    cubeCam=new THREE.OrthographicCamera(-1.75,1.75,1.75,-1.75,0.1,10);cubeCam.position.set(0,0,5);
+    const face=t=>{const c=document.createElement('canvas');c.width=c.height=128;const g=c.getContext('2d');
+      g.fillStyle='#0d1117';g.fillRect(0,0,128,128);
+      g.strokeStyle='rgba(66,133,244,.85)';g.lineWidth=5;g.strokeRect(4,4,120,120);
+      g.fillStyle='#9fb6d4';g.font='600 24px "Fira Code",Consolas,monospace';
+      g.textAlign='center';g.textBaseline='middle';g.fillText(t,64,66);
+      const tx=new THREE.CanvasTexture(c);tx.minFilter=THREE.LinearFilter;
+      return new THREE.MeshBasicMaterial({map:tx});};
+    cubeMesh=new THREE.Mesh(new THREE.BoxGeometry(2,2,2),
+      [face('RIGHT'),face('LEFT'),face('TOP'),face('BOTTOM'),face('FRONT'),face('BACK')]);
+    cubeMesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(cubeMesh.geometry),
+      new THREE.LineBasicMaterial({color:0x4285F4,transparent:true,opacity:0.9})));
+    cubeScene.add(cubeMesh);
+    let down=null,movedC=false;
+    navCanvas.addEventListener('pointerdown',e=>{down=[e.clientX,e.clientY];movedC=false;
+      try{navCanvas.setPointerCapture(e.pointerId);}catch(_){}});
+    navCanvas.addEventListener('pointermove',e=>{
+      if(!down)return;
+      const dx=e.clientX-down[0],dy=e.clientY-down[1];
+      if(Math.hypot(dx,dy)>3)movedC=true;
+      if(movedC&&mode!=='sketch'&&controls.enableRotate){
+        controls.sph.theta-=dx*0.012;
+        controls.sph.phi=Math.max(0.05,Math.min(Math.PI-0.05,controls.sph.phi-dy*0.012));
+        controls.update();
+      }
+      down=[e.clientX,e.clientY];
+    });
+    const upC=e=>{
+      if(down&&!movedC&&mode!=='sketch'){
+        const r=navCanvas.getBoundingClientRect();
+        const v=new THREE.Vector2(((e.clientX-r.left)/r.width)*2-1,-((e.clientY-r.top)/r.height)*2+1);
+        cubeRay.setFromCamera(v,cubeCam);
+        const h=cubeRay.intersectObject(cubeMesh,false)[0];
+        if(h){
+          // cube-local axes ARE world axes; snap the hit to face/edge/corner
+          const d=cubeMesh.worldToLocal(h.point.clone()).normalize();
+          let sx=Math.abs(d.x)>0.38?Math.sign(d.x):0,
+              sy=Math.abs(d.y)>0.38?Math.sign(d.y):0,
+              sz=Math.abs(d.z)>0.38?Math.sign(d.z):0;
+          if(!sx&&!sy&&!sz)sz=1;
+          const w=new THREE.Vector3(sx,sy,sz).normalize();
+          flyOrbit(Math.atan2(w.x,w.z),Math.acos(Math.max(-1,Math.min(1,w.y))));
+        }
+      }
+      down=null;
+    };
+    navCanvas.addEventListener('pointerup',upC);
+    navCanvas.addEventListener('pointercancel',()=>{down=null;});
+  })();
+  function flyOrbit(theta,phi){
+    controls.unlock();
+    const s=controls.sph,t0=s.theta,p0=s.phi;
+    let dT=theta-t0;dT=((dT+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;
+    const pT=Math.max(0.05,Math.min(Math.PI-0.05,phi));
+    const start=performance.now(),id=++cubeAnimId;
+    (function step(){
+      if(id!==cubeAnimId||mode==='sketch')return;
+      const t=Math.min(1,(performance.now()-start)/350),e=t*t*(3-2*t);
+      s.theta=t0+dT*e;s.phi=p0+(pT-p0)*e;controls.update();
+      if(t<1)requestAnimationFrame(step);
+    })();
+  }
+
+  // ---- closed-loop flash: a face-coloured pulse when a sketch loop closes
+  const flashes=[];
+  function flashLoop(sk,ent){
+    if(!editing||!editing.frame)return;
+    let loop;try{loop=entityLoops(Object.assign({},sk,{entities:[ent]}))[0];}catch(_){return;}
+    if(!loop||loop.length<3)return;
+    const fr=editing.frame;
+    const shape=new THREE.Shape(loop.map(p=>new THREE.Vector2(p.x,p.y)));
+    const m=new THREE.Mesh(new THREE.ShapeGeometry(shape),
+      new THREE.MeshBasicMaterial({color:0x34A853,transparent:true,opacity:0.45,depthTest:false,side:THREE.DoubleSide}));
+    m.applyMatrix4(new THREE.Matrix4().makeBasis(fr.u,fr.v,fr.n).setPosition(fr.o.clone().addScaledVector(fr.n,0.02)));
+    m.renderOrder=4;scene.add(m);flashes.push({mesh:m,t0:performance.now()});
+  }
+
+  // ---- per-frame candy: edge-glow pulse + flash fade (driven from the render loop)
+  function candyTick(now){
+    const k=0.72+0.28*Math.sin(now*0.005);
+    if(typeof selGroup!=='undefined')for(const g of [selGroup,hoverGroup])
+      for(const ch of g.children)if(ch.traverse)ch.traverse(o=>{
+        if(o.material&&o.userData.glow)o.material.opacity=o.userData.base*k;});
+    for(let i=flashes.length-1;i>=0;i--){
+      const f=flashes[i],t=(now-f.t0)/650;
+      if(t>=1){scene.remove(f.mesh);f.mesh.geometry.dispose();f.mesh.material.dispose();flashes.splice(i,1);}
+      else f.mesh.material.opacity=0.45*(1-t*t);
+    }
+  }
+
+  /* ---- SW-style anchor status: is the sketch tied back to the origin? ----
+     No constraint solver here, so "constrained" means what snapping makes
+     true: an entity is anchored if a point of it sits exactly on the origin,
+     or it shares a point with an anchored entity. Gold = tied, blue = floating
+     — same language as SolidWorks' black/blue. */
+  function entPoints(e){
+    if(e.type==='poly')return e.pts;
+    if(e.type==='rect')return [e.a,{x:e.a.x,y:e.b.y},e.b,{x:e.b.x,y:e.a.y}];
+    if(e.type==='circle'||e.type==='polygon')return [e.c];
+    return [];
+  }
+  function anchoredSet(sk){
+    const EPS=1e-4,ents=sk.entities,nE=ents.length,pts=ents.map(entPoints);
+    const anc=new Array(nE).fill(false);
+    for(let i=0;i<nE;i++)anc[i]=pts[i].some(p=>Math.hypot(p.x,p.y)<EPS);
+    let changed=true;
+    while(changed){changed=false;
+      for(let i=0;i<nE;i++){if(anc[i])continue;
+        for(let j=0;j<nE&&!anc[i];j++){if(!anc[j])continue;
+          for(const a of pts[i]){if(pts[j].some(b=>Math.hypot(a.x-b.x,a.y-b.y)<EPS)){anc[i]=true;changed=true;break;}}}}}
+    return anc;
+  }
+  function updateAnchorChip(sk){
+    const el=$('sk-anchor');if(!el)return;
+    if(mode!=='sketch'||!sk){el.style.display='none';return;}
+    el.style.display='block';
+    const anc=anchoredSet(sk),total=anc.length,tied=anc.filter(Boolean).length;
+    if(!total){el.className='';el.textContent='sketch empty — start at the origin marker';}
+    else if(tied===total){el.className='ok';el.textContent='⚓ anchored to origin — fully tied ('+total+'/'+total+')';}
+    else{el.className='no';el.textContent='◌ floating — '+tied+'/'+total+' tied to origin';}
+  }
+  function drawEntityLoopsColored(target,sk,frame){
+    const anc=anchoredSet(sk);
+    sk.entities.forEach((e,i)=>{
+      let loop;try{loop=entityLoops(Object.assign({},sk,{entities:[e]}))[0];}catch(_){return;}
+      if(!loop||loop.length<2)return;
+      const mat=new THREE.LineBasicMaterial({color:anc[i]?0xFBBC05:0x4285F4,transparent:true,
+        opacity:anc[i]?1.0:0.95,depthTest:false});
+      const pts=loop.map(p=>worldFromSketch(frame,p.x,p.y));pts.push(pts[0]);
+      const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),mat);
+      ln.renderOrder=2;target.add(ln);
+    });
+    updateAnchorChip(sk);
   }
 
   /* ---- demo part: an 11-feature pillow-block bearing mount ----
@@ -2029,6 +2216,7 @@ const CSG = (function(){
       if(f.type!=='sketch'||f.suppressed)continue;
       const sd=sketchData[f.id]; if(!sd)continue;
       const isSel=(f.id===selId)||(editing&&editing.id===f.id);
+      if(editing&&editing.id===f.id&&mode==='sketch'){drawEntityLoopsColored(sketchOverlay,f,sd.frame);continue;}
       const mat=new THREE.LineBasicMaterial({color:isSel?0xFBBC05:0x4285F4,transparent:true,opacity:isSel?1.0:0.6,depthTest:false});
       for(const loop of entityLoops(f)){
         if(loop.length<2)continue;
@@ -2110,6 +2298,7 @@ const CSG = (function(){
      Points beat lines; either is marked in the viewport as the mouse moves,
      so where the next point will land is never a surprise. */
   let hoverSnap=null;                        // {x,y,kind:'point'|'line'} in sketch UV
+  let hoverGuides=[];                        // dashed H/V inference guides, sketch UV
   const snapMarkGroup=new THREE.Group(); scene.add(snapMarkGroup);
   const DRAW_TOOLS=['line','rect','circle','polygon'];
   function drawSnapMark(){
@@ -2121,9 +2310,19 @@ const CSG = (function(){
       new THREE.MeshBasicMaterial({color:point?0x34d4a0:0xFBBC05,depthTest:false,transparent:true,opacity:point?0.75:0.9}));
     m.position.copy(worldFromSketch(editing.frame,hoverSnap.x,hoverSnap.y));
     m.renderOrder=8; snapMarkGroup.add(m);
+    for(const gd of hoverGuides){
+      const A=worldFromSketch(editing.frame,gd.from.x,gd.from.y);
+      const B=worldFromSketch(editing.frame,gd.to.x,gd.to.y);
+      const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints([A,B]),
+        new THREE.LineDashedMaterial({color:0x8ab4f8,transparent:true,opacity:0.8,dashSize:0.35,gapSize:0.25,depthTest:false}));
+      ln.computeLineDistances();ln.renderOrder=7;snapMarkGroup.add(ln);
+      const dot=new THREE.Mesh(new THREE.SphereGeometry(0.1,10,8),
+        new THREE.MeshBasicMaterial({color:0x8ab4f8,depthTest:false}));
+      dot.position.copy(A);dot.renderOrder=7;snapMarkGroup.add(dot);
+    }
   }
   function applyDrawSnap(p){
-    hoverSnap=null;
+    hoverSnap=null;hoverGuides=[];
     if(mode!=='sketch'||!editing||DRAW_TOOLS.indexOf(tool)<0)return p;
     const R=controls.sph.radius;
     const tolP=Math.max(0.5,R*0.035), tolL=Math.max(0.35,R*0.022);
@@ -2147,6 +2346,21 @@ const CSG = (function(){
     let best=null,bd=tolP;
     for(const c of pts){const d=Math.hypot(c.x-p.x,c.y-p.y);if(d<bd){bd=d;best=c;}}
     if(best){hoverSnap={x:best.x,y:best.y,kind:'point'};return{x:best.x,y:best.y};}
+    // inference: dashed guides when the cursor lines up H/V with a known point,
+    // and the point-to-place slides onto that alignment (SW-style)
+    let gx=null,gxd=tolP,gy=null,gyd=tolP;
+    for(const c of pts){
+      const dx=Math.abs(c.x-p.x),dy=Math.abs(c.y-p.y);
+      if(dx<gxd&&dy>tolP){gxd=dx;gx=c;}
+      if(dy<gyd&&dx>tolP){gyd=dy;gy=c;}
+    }
+    if(gx||gy){
+      const q={x:gx?gx.x:p.x,y:gy?gy.y:p.y};
+      if(gx)hoverGuides.push({from:{x:gx.x,y:gx.y},to:q});
+      if(gy)hoverGuides.push({from:{x:gy.x,y:gy.y},to:q});
+      hoverSnap={x:q.x,y:q.y,kind:'line'};
+      return q;
+    }
     // line candidates: the plane traces
     let bl=null,bld=tolL;
     for(const L of traceSnapUV){
@@ -2196,14 +2410,7 @@ const CSG = (function(){
   function liveSketchRedraw(){
     while(sketchOverlay.children.length){const c=sketchOverlay.children.pop();if(c.geometry)c.geometry.dispose();}
     const sd=sketchData[editing.id];
-    if(sd){
-      const mat=new THREE.LineBasicMaterial({color:0xFBBC05,depthTest:false});
-      for(const loop of entityLoops(editing)){
-        if(loop.length<2)continue;
-        const pts=loop.map(p=>worldFromSketch(sd.frame,p.x,p.y));pts.push(pts[0]);
-        sketchOverlay.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),mat));
-      }
-    }
+    if(sd)drawEntityLoopsColored(sketchOverlay,editing,sd.frame);
     redrawHandles();
   }
   // (the old blue dot that trailed the pointer is gone — the tool badge and
@@ -2313,11 +2520,11 @@ const CSG = (function(){
       if(last&&Math.abs(last.x-p.x)<1e-6&&Math.abs(last.y-p.y)<1e-6)return;
       draftPts.push({x:p.x,y:p.y}); redrawDraft(null);
     } else if(tool==='rect'){
-      if(draftStage===0){draftA=p;draftStage=1;} else {if(Math.abs(p.x-draftA.x)>1e-4&&Math.abs(p.y-draftA.y)>1e-4){editing.entities.push({type:'rect',a:{x:draftA.x,y:draftA.y},b:{x:p.x,y:p.y}});}draftStage=0;draftA=null;rebuild();}
+      if(draftStage===0){draftA=p;draftStage=1;} else {if(Math.abs(p.x-draftA.x)>1e-4&&Math.abs(p.y-draftA.y)>1e-4){const ent={type:'rect',a:{x:draftA.x,y:draftA.y},b:{x:p.x,y:p.y}};editing.entities.push(ent);flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
     } else if(tool==='circle'){
-      if(draftStage===0){draftA=p;draftStage=1;} else {const r=Math.hypot(p.x-draftA.x,p.y-draftA.y);if(r>1e-3){editing.entities.push({type:'circle',c:{x:draftA.x,y:draftA.y},r});}draftStage=0;draftA=null;rebuild();}
+      if(draftStage===0){draftA=p;draftStage=1;} else {const r=Math.hypot(p.x-draftA.x,p.y-draftA.y);if(r>1e-3){const ent={type:'circle',c:{x:draftA.x,y:draftA.y},r};editing.entities.push(ent);flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
     } else if(tool==='polygon'){
-      if(draftStage===0){draftA=p;draftStage=1;} else {const r=Math.hypot(p.x-draftA.x,p.y-draftA.y),rot=Math.atan2(p.y-draftA.y,p.x-draftA.x);if(r>1e-3){editing.entities.push({type:'polygon',c:{x:draftA.x,y:draftA.y},r,sides:polygonSides,rot});}draftStage=0;draftA=null;rebuild();}
+      if(draftStage===0){draftA=p;draftStage=1;} else {const r=Math.hypot(p.x-draftA.x,p.y-draftA.y),rot=Math.atan2(p.y-draftA.y,p.x-draftA.x);if(r>1e-3){const ent={type:'polygon',c:{x:draftA.x,y:draftA.y},r,sides:polygonSides,rot};editing.entities.push(ent);flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
     } else if(tool==='dim'){
       const d=dimHit(p); if(d) openDimInput(d);
     } else if(tool==='horiz' || tool==='vert'){
@@ -2347,7 +2554,7 @@ const CSG = (function(){
     }
   }
   function commitDraftLine(){
-    if(tool==='line'&&draftPts.length>=3){editing.entities.push({type:'poly',pts:draftPts.slice(),closed:true});}
+    if(tool==='line'&&draftPts.length>=3){const ent={type:'poly',pts:draftPts.slice(),closed:true};editing.entities.push(ent);flashLoop(editing,ent);}
     draftPts=[];redrawDraft(null);rebuild();
   }
 
@@ -2929,8 +3136,10 @@ const CSG = (function(){
     $('dock').style.display=m==='sketch'?'flex':'none';
     if(m==='sketch')ensureSketchProps(); else if(propsFeat===editing)closeProps();
     canvas.style.cursor=(m==='sketch')?'crosshair':'default';
+    const nc=$('navcube'); if(nc)nc.style.display=(m==='sketch')?'none':'';
     if(m!=='sketch'){ closeDimInput(); clearDimLabels(); dragVtx=null; dragSnapPt=null; redrawHandles();
-      hoverSnap=null; drawSnapMark(); const tc=$('tool-cursor'); if(tc)tc.style.display='none'; }
+      hoverSnap=null; hoverGuides=[]; drawSnapMark(); const tc=$('tool-cursor'); if(tc)tc.style.display='none';
+      const ac=$('sk-anchor'); if(ac)ac.style.display='none'; }
     refreshStatus();updateHint();updateDatumVis();updatePlaneTraces();
   }
   function refreshStatus(){ /* status bar removed */ }
@@ -3114,12 +3323,31 @@ const CSG = (function(){
     redrawEdgeSel();
   }
   function redrawEdgeSel(){
-    while(hoverGroup.children.length){const c=hoverGroup.children.pop();c.geometry.dispose();}
-    while(selGroup.children.length){const c=selGroup.children.pop();c.geometry.dispose();}
+    const scrap=g=>{while(g.children.length){const c=g.children.pop();
+      c.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose();});}};
+    scrap(hoverGroup);scrap(selGroup);
+    // core line + two additive sleeves = fake bloom (linewidth>1 is a no-op on ANGLE)
     const mkLine=(a,b,color)=>{
-      const g=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...a),new THREE.Vector3(...b)]);
-      const l=new THREE.Line(g,new THREE.LineBasicMaterial({color,depthTest:false,transparent:true,opacity:1,linewidth:2}));
-      l.renderOrder=8;return l;
+      const grp=new THREE.Group();
+      const va=new THREE.Vector3(...a),vb=new THREE.Vector3(...b);
+      const l=new THREE.Line(new THREE.BufferGeometry().setFromPoints([va,vb]),
+        new THREE.LineBasicMaterial({color,depthTest:false,transparent:true,opacity:1}));
+      l.renderOrder=9;grp.add(l);
+      const dir=vb.clone().sub(va),len=dir.length();
+      if(len>1e-6){
+        const R=Math.max(0.5,controls.sph.radius/24);
+        const mid=va.clone().add(vb).multiplyScalar(0.5);
+        const q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),dir.clone().normalize());
+        for(const [rad,op] of [[0.045*R,0.30],[0.11*R,0.12]]){
+          const cyl=new THREE.Mesh(new THREE.CylinderGeometry(rad,rad,len,10,1,true),
+            new THREE.MeshBasicMaterial({color,transparent:true,opacity:op,depthTest:false,
+              blending:THREE.AdditiveBlending,side:THREE.DoubleSide}));
+          cyl.position.copy(mid);cyl.quaternion.copy(q);cyl.renderOrder=8;
+          cyl.userData.glow=true;cyl.userData.base=op;
+          grp.add(cyl);
+        }
+      }
+      return grp;
     };
     
     const seedsToDraw = (draftFeat && draftFeat.type === 'fillet') ? draftFeat.seeds : selectedEdges;
@@ -3746,7 +3974,9 @@ const CSG = (function(){
 
   function resize(){const w=viewport.clientWidth,h=viewport.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();}
   window.addEventListener('resize',resize);resize();
-  (function loop(){requestAnimationFrame(loop);updateDimLabels();renderer.render(scene,camera);})();
+  (function loop(now){requestAnimationFrame(loop);updateDimLabels();candyTick(now||0);
+    if(cubeRenderer){cubeMesh.quaternion.copy(camera.quaternion).invert();cubeRenderer.render(cubeScene,cubeCam);}
+    renderer.render(scene,camera);})();
 
   // Test hook: the app state is otherwise unreachable from the console, which
   // makes features like fillet impossible to verify headlessly.
@@ -3780,6 +4010,39 @@ const CSG = (function(){
     setHint('Loading the Open CASCADE kernel — ~11 MB, first visit only…');
     window.addEventListener('kernel-ready', boot, { once:true });
   }
+
+  /* boot theatre: the kernel download as a terminal cascade */
+  (function bootFX(){
+    const el=$('boot');
+    if(!el||window.__MOBILE_GATE||window.OCCT){if(el)el.remove();return;}
+    el.style.display='block';el.style.opacity='1';
+    const LINES=[
+      ['FREYACAD SHELL','v2026.08'],
+      ['THREE.JS RENDERER','ONLINE'],
+      ['DATUM PLANES ×3','ALIGNED'],
+      ['OPEN CASCADE KERNEL (11 MB)','FETCHING'],
+      ['B-REP BOOLEAN ENGINE','STANDBY'],
+      ['FILLET / CHAMFER SURFACES','STANDBY'],
+      ['STEP AP214 WRITER','STANDBY'],
+    ];
+    let i=0,done=false;
+    const row=(name,state,cls)=>{const d=document.createElement('div');
+      d.innerHTML='<span class="dim">&gt; </span>'+name+' <span class="dim">....</span> <span class="'+cls+'">'+state+'</span>';
+      return d;};
+    const tick=setInterval(()=>{
+      if(i<LINES.length){const [nm,st]=LINES[i++];
+        el.appendChild(row(nm,st,(st==='ONLINE'||st==='ALIGNED'||st.charCodeAt(0)===118)?'ok':'run'));}
+    },260);
+    function finish(){
+      if(done)return;done=true;clearInterval(tick);
+      while(i<LINES.length){const [nm]=LINES[i++];el.appendChild(row(nm,'ONLINE','ok'));}
+      el.querySelectorAll('.run').forEach(s=>{s.textContent='ONLINE';s.className='ok';});
+      el.appendChild(row('ALL SYSTEMS','NOMINAL','ok'));
+      setTimeout(()=>{el.style.opacity='0';setTimeout(()=>el.remove(),900);},1500);
+    }
+    window.addEventListener('kernel-ready',finish,{once:true});
+    window.addEventListener('error',()=>{done=true;clearInterval(tick);el.remove();},{once:true});
+  })();
 })();
 </script>
 </body>
