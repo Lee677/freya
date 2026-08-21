@@ -347,6 +347,14 @@ if(!window.THREE){
     font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;
     color:var(--muted);text-shadow:0 0 6px rgba(0,0,0,.8)}
 
+  #tree-collapse{margin-left:auto;padding:1px 6px;font-size:11px;line-height:1.2;border-radius:5px}
+  .tree-sect{font-family:var(--mono);font-size:9px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--muted-2);padding:7px 10px 3px}
+  .feat .twist{width:11px;flex:0 0 auto;text-align:center;color:var(--muted-2);font-size:9px;cursor:pointer}
+  .feat .twist:hover{color:var(--g-blue)}
+  .feat.datum .fname{color:var(--muted)}
+  .feat.datum.shown .fname{color:var(--text)}
+
   /* a sketch nested under the feature that consumed it */
   .feat.child{padding-left:26px;position:relative;opacity:.82}
   .feat.child::before{content:"";position:absolute;left:13px;top:0;bottom:50%;
@@ -468,7 +476,8 @@ if(!window.THREE){
   </header>
 
   <aside class="tree-col" id="tree-col">
-    <div class="tree-head"><h2>Feature Tree</h2><span class="pill" id="tree-pill">0</span></div>
+    <div class="tree-head"><h2>Feature Tree</h2><span class="pill" id="tree-pill">0</span>
+      <button id="tree-collapse" class="btn-ghost" title="Collapse or expand every sketch">⌄</button></div>
     <div class="tree" id="tree"></div>
   </aside>
 
@@ -772,6 +781,7 @@ const CSG = (function(){
       border.renderOrder=2; m.userData.border=border;
       const lb=label(name);
       lb.position.copy(fr.o).addScaledVector(fr.u,SZ/2-1.7).addScaledVector(fr.v,SZ/2-0.65);
+      m.userData.label=lb;
       datumGroup.add(m); datumGroup.add(border); datumGroup.add(lb);
       datumPlanes.push(m);
     }
@@ -795,9 +805,18 @@ const CSG = (function(){
     return h?h.object:null;
   }
   function updateDatumVis(){
-    datumGroup.visible=(docMode==='part')&&(mode==='model')&&features.length===0;
-    if(!datumGroup.visible)setDatumHover(null);
-    const db=$('btn-demo'); if(db)db.style.display=datumGroup.visible?'':'none';
+    // shown automatically on an empty part, or individually from the tree
+    const auto=(docMode==='part')&&(mode==='model')&&features.length===0;
+    const anyPinned=datumShow.Top||datumShow.Front||datumShow.Right;
+    datumGroup.visible=(docMode==='part')&&(auto||anyPinned);
+    for(const m of datumPlanes){
+      const on=auto||!!datumShow[m.userData.plane];
+      m.visible=on;
+      if(m.userData.border)m.userData.border.visible=on;
+      if(m.userData.label)m.userData.label.visible=on;
+    }
+    if(!auto)setDatumHover(null);          // only clickable as the empty-part picker
+    const db=$('btn-demo'); if(db)db.style.display=auto?'':'none';
   }
 
   /* ---- plane traces: where the other datum planes cross the active sketch ----
@@ -1068,43 +1087,64 @@ const CSG = (function(){
           for(const a of pts[i]){if(pts[j].some(b=>Math.hypot(a.x-b.x,a.y-b.y)<EPS)){anc[i]=true;changed=true;break;}}}}}
     return anc;
   }
-  // How many size dimensions the entity wants, and how many it has. Stale
-  // segment dims (left behind when a polyline shrank) don't count.
-  function entityDims(sk,i){
-    const e=sk.entities[i]; if(!e)return {need:0,have:0};
-    let need=0,lim=0;
-    if(e.type==='circle'||e.type==='polygon') need=1;
-    else if(e.type==='rect') need=2;
-    else if(e.type==='poly'){ lim=e.closed?e.pts.length:Math.max(0,e.pts.length-1); need=lim; }
-    const seen=new Set();
+  /* Degrees of freedom, counted properly — "anchored plus its sizes" was wrong,
+     because it ignores rotation. A triangle pinned at the origin with all three
+     side lengths can still spin: 6 coordinates − 2 (pin) − 3 (lengths) = 1 DOF.
+     Same for a polygon, whose rot is a free parameter of its own. */
+  function entVarCount(e){
+    if(e.type==='poly')return 2*e.pts.length;   // x,y per point
+    if(e.type==='rect')return 4;                // two stored corners, axis-aligned
+    if(e.type==='circle')return 3;              // centre + radius
+    if(e.type==='polygon')return 4;             // centre + radius + rotation
+    return 0;
+  }
+  // dimensions bearing on this entity; each removes one DOF
+  function dimsOn(sk,i){
+    let n=0;
     for(const d of (sk.dims||[])){
+      if(d.kind==='p2p'||d.kind==='angle'){ if(d.a.ent===i||d.b.ent===i)n++; continue; }
       if(d.entIdx!==i)continue;
-      if(d.kind==='seg'&&!(d.seg>=0&&d.seg<lim))continue;
-      seen.add(d.kind+':'+(d.seg!=null?d.seg:''));
+      if(d.kind==='seg'){
+        const e=sk.entities[i];
+        const lim=(e&&e.type==='poly')?(e.closed?e.pts.length:e.pts.length-1):0;
+        if(!(d.seg>=0&&d.seg<lim))continue;     // stale after an edit
+      }
+      n++;
     }
-    return {need:need,have:Math.min(seen.size,need)};
+    return n;
+  }
+  // coincidences holding this entity: on the origin, or shared with another
+  // entity. Each pins two coordinates.
+  function pinsOn(sk,i){
+    const EPS=1e-4, e=sk.entities[i]; if(!e)return 0;
+    let n=0;
+    for(const p of entPoints(e)){
+      if(Math.hypot(p.x,p.y)<EPS){ n++; continue; }
+      for(let j=0;j<sk.entities.length;j++){
+        if(j===i)continue;
+        if(entPoints(sk.entities[j]).some(q=>Math.hypot(q.x-p.x,q.y-p.y)<EPS)){ n++; break; }
+      }
+    }
+    return n;
   }
   function defineState(sk){
-    const anc=anchoredSet(sk);
     return sk.entities.map(function(e,i){
-      const dm=entityDims(sk,i);
-      return {anchored:anc[i],need:dm.need,have:dm.have,defined:anc[i]&&dm.have>=dm.need};
+      const dof=Math.max(0, entVarCount(e) - 2*pinsOn(sk,i) - dimsOn(sk,i));
+      return {dof:dof, defined:dof<=0};
     });
   }
   function updateAnchorChip(sk){
     const el=$('sk-anchor');if(!el)return;
     if(mode!=='sketch'||!sk){el.style.display='none';return;}
     el.style.display='block';
-    const st=defineState(sk),total=st.length,def=st.filter(s=>s.defined).length;
+    const st=defineState(sk),total=st.length;
     if(!total){el.className='';el.textContent='sketch empty — start at the origin marker';return;}
-    if(def===total){el.className='ok';el.textContent='⚓ fully defined ('+total+'/'+total+')';return;}
-    const needAnchor=st.filter(s=>!s.anchored).length;
-    const needDims=st.reduce((a,s)=>a+Math.max(0,s.need-s.have),0);
-    const bits=[];
-    if(needAnchor)bits.push(needAnchor+' to anchor');
-    if(needDims)bits.push(needDims+' dimension'+(needDims>1?'s':''));
+    const dof=st.reduce((a,s)=>a+s.dof,0);
+    if(dof<=0){el.className='ok';el.textContent='⚓ fully defined — 0 degrees of freedom';return;}
+    const loose=st.filter(s=>s.dof>0).length;
     el.className='no';
-    el.textContent='◌ under-defined — '+def+'/'+total+' defined'+(bits.length?' · '+bits.join(', '):'');
+    el.textContent='◌ under-defined — '+dof+' degree'+(dof>1?'s':'')+' of freedom'+
+      ' · '+loose+'/'+total+' still free';
   }
   /* What an entity looks like on screen — as opposed to entityLoops(), which
      is about closed profiles for the kernel. Open polylines have no loop but
@@ -2530,6 +2570,22 @@ const CSG = (function(){
       new THREE.LineBasicMaterial({color:0x35d4e6,depthTest:false,transparent:true,opacity:1}));
     ln.renderOrder=10; selGroupSk.add(ln);
   }
+  /* Constraints work either way round: pick the tool then the line, or select a
+     line with the Pointer and press the tool. Returns true if it acted. */
+  function applyConstraintToSelection(t){
+    if(!editing||!sketchSel||sketchSel.seg==null)return false;
+    if(t!=='horiz'&&t!=='vert'&&t!=='paral'&&t!=='equal')return false;
+    const d={entIdx:sketchSel.entIdx,kind:'seg',seg:sketchSel.seg};
+    if(t==='horiz'||t==='vert'){
+      pushUndo(t); applyHVConstraint(d,t); rebuild();
+      setHint(t==='horiz'?'Line set horizontal':'Line set vertical');
+      return true;
+    }
+    // parallel / equal need a reference, so seed it from the selection
+    if(t==='paral'){ paralRef=d; setHint('Now click the line to make parallel'); }
+    else { equalRef=d; setHint('Now click the line to match its length'); }
+    return false;
+  }
   function deleteSketchSel(){
     if(!sketchSel||!editing)return false;
     const e=editing.entities[sketchSel.entIdx]; if(!e){sketchSel=null;return false;}
@@ -3369,7 +3425,8 @@ const CSG = (function(){
       if(!cur){ o.el.style.display='none'; continue; }
       const sp=screenOf(cur.anchor);
       o.el.style.display = sp.behind ? 'none' : 'block';
-      o.el.style.left=sp.x+'px'; o.el.style.top=sp.y+'px';
+      // whole pixels: sub-pixel churn on a translate(-50%,-50%) shimmers
+      o.el.style.left=Math.round(sp.x)+'px'; o.el.style.top=Math.round(sp.y)+'px';
       o.el.textContent = cur.angular
         ? (+cur.value.toFixed(2))+'°'
         : (cur.suffix||'')+(+toDisp(cur.value).toFixed(3))+' '+lenLabel();
@@ -3590,25 +3647,31 @@ const CSG = (function(){
   /* A sketch that has been consumed by a feature is that feature's business —
      it nests under it in the tree and stays out of the viewport. Sketches that
      nothing has used yet remain top-level, and visible. */
+  const collapsed=new Set();                 // feature ids whose sketch row is folded away
+  const datumShow={Top:false,Front:false,Right:false};
   function sketchConsumedBy(f){ return features.find(x=>x.sketchId===f.id)||null; }
   function sketchVisible(f){
     if(editing&&editing.id===f.id) return true;      // open for editing
     if(f.show) return true;                          // shown from the tree menu
     return !sketchConsumedBy(f);                     // not used yet: still on show
   }
-  function makeFeatRow(f,i,child){
+  function makeFeatRow(f,i,child,twist){
     const el=document.createElement('div');
     el.className='feat'+(child?' child':'')+(f.id===selId?' sel':'')+(i>=rollbackIndex?' rolled':'')
       +(f.error?' errored':'')+(f.suppressed?' suppressed':'');
     el.dataset.fid=f.id;
     const fname=(propsFeat&&propsFeat.id===f.id&&draftFeat)?draftFeat.name:f.name;
     el.title=fname;
-    el.innerHTML=icHTML(iconFor(f))+`<span class="fname">${fname}</span>`+
+    el.innerHTML=(twist?`<span class="twist" title="Collapse or expand">${twist==='open'?'▾':'▸'}</span>`:'')+
+      icHTML(iconFor(f))+`<span class="fname">${fname}</span>`+
       (f.type==='sketch'&&f.show?`<span class="fshow" title="shown in the viewport">👁</span>`:'')+
       (f.error?`<span class="ferr" title="Click to see error details">!</span>`:'')+
       (f.suppressed?`<span class="fsupp" title="suppressed">∅</span>`:'')+
       `<button class="fx" title="Delete">×</button>`;
     el.addEventListener('click',e=>{
+      if(e.target.classList.contains('twist')){ e.stopPropagation();
+        if(collapsed.has(f.id))collapsed.delete(f.id); else collapsed.add(f.id);
+        refreshTree(); return; }
       if(e.target.classList.contains('ferr')){ e.stopPropagation(); showErrorDialog(f); return; }
       if(e.target.classList.contains('fx')){deleteFeature(f.id);return;}
       selectFeature(f.id);
@@ -3622,20 +3685,49 @@ const CSG = (function(){
   }
   function refreshTree(){
     tree.innerHTML='';
+    // the three datum planes are always there, so they head the tree as their
+    // own section rather than being features
+    const sect=document.createElement('div'); sect.className='tree-sect'; sect.textContent='Origin';
+    tree.appendChild(sect);
+    for(const nm of ['Top','Front','Right']){
+      const el=document.createElement('div');
+      el.className='feat datum'+(datumShow[nm]?' shown':'');
+      el.title=nm+' plane — click to show or hide';
+      el.innerHTML='<span class="twist"></span>'+icHTML('dplane')+
+        `<span class="fname">${nm} plane</span>`+
+        (datumShow[nm]?'<span class="fshow" title="visible">👁</span>':'');
+      const toggle=()=>{ datumShow[nm]=!datumShow[nm]; updateDatumVis(); refreshTree(); };
+      el.addEventListener('click',toggle);
+      el.addEventListener('contextmenu',e=>{
+        e.preventDefault(); e.stopPropagation();
+        buildCtxMenu(e.clientX,e.clientY,[
+          {sect:nm+' plane'},
+          {ic:'sketch',label:'Sketch on this plane',fn:()=>addSketch(nm)},
+          {ic:'dplane',label:datumShow[nm]?'Hide':'Show',fn:toggle}
+        ]);
+      });
+      tree.appendChild(el);
+    }
+    const sect2=document.createElement('div'); sect2.className='tree-sect'; sect2.textContent='Features';
+    tree.appendChild(sect2);
+
     const nested=new Set();
     features.forEach(f=>{ if(f.sketchId!=null)nested.add(f.sketchId); });
     features.forEach((f,i)=>{
       if(i===rollbackIndex)tree.appendChild(makeRollbar());
       if(f.type==='sketch'&&nested.has(f.id))return;      // drawn under its feature
-      tree.appendChild(makeFeatRow(f,i,false));
-      if(f.sketchId!=null){
-        const s=features.find(x=>x.id===f.sketchId);
-        if(s)tree.appendChild(makeFeatRow(s,features.indexOf(s),true));
-      }
+      const kid=(f.sketchId!=null)?features.find(x=>x.id===f.sketchId):null;
+      const shut=collapsed.has(f.id);
+      tree.appendChild(makeFeatRow(f,i,false,kid?(shut?'shut':'open'):null));
+      if(kid&&!shut)tree.appendChild(makeFeatRow(kid,features.indexOf(kid),true));
     });
     if(rollbackIndex>=features.length)tree.appendChild(makeRollbar());
     $('tree-pill').textContent=features.length;
+    const cb=$('tree-collapse');
+    if(cb)cb.textContent=anyExpanded()?'⌄':'›';
   }
+  function parentsWithSketches(){ return features.filter(f=>f.sketchId!=null); }
+  function anyExpanded(){ return parentsWithSketches().some(f=>!collapsed.has(f.id)); }
   function esc(s){return (s+'').replace(/"/g,'&quot;');}
   function showErrorDialog(f){
     const old=document.getElementById('errdlg'); if(old) old.remove();
@@ -4552,6 +4644,12 @@ const CSG = (function(){
     try{localStorage.setItem('fcad-icons',v?'1':'0');}catch(_){}
   }
   $('btn-labels').addEventListener('click',()=>setIconsOnly(!document.body.classList.contains('icons-only')));
+  $('tree-collapse').addEventListener('click',()=>{
+    const shutAll=anyExpanded();
+    collapsed.clear();
+    if(shutAll)parentsWithSketches().forEach(f=>collapsed.add(f.id));
+    refreshTree();
+  });
   $('btn-undo').addEventListener('click',undo);
   $('btn-redo').addEventListener('click',redo);
   try{ if(localStorage.getItem('fcad-icons')==='1') setIconsOnly(true); }catch(_){}
@@ -4634,7 +4732,11 @@ const CSG = (function(){
   $('dock').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
     tool=b.dataset.tool;draftStage=0;draftA=null;paralRef=null;equalRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();
     $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));
+    // a line already picked with the Pointer? apply the constraint to it now,
+    // rather than making the user click the icon and then the line
+    if(applyConstraintToSelection(tool)){ tool='select'; }
     syncRotateGate(); if(tool!=='select')clearSketchSel();
+    $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.tool===tool));
     redrawDraft(null);redrawHandles();updateHint();
   }));
   $('btn-finish').addEventListener('click',finishSketch);
@@ -4803,7 +4905,14 @@ const CSG = (function(){
   function resize(){const w=viewport.clientWidth,h=viewport.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();
     if(mode==='sketch'&&typeof flashOrigin==='function')flashOrigin();}
   window.addEventListener('resize',resize);resize();
-  (function loop(now){requestAnimationFrame(loop);updateDimLabels();candyTick(now||0);tickOrigin(now||0);
+  (function loop(now){requestAnimationFrame(loop);
+    /* Project against *this* frame's camera. renderer.render() is what normally
+       refreshes matrixWorldInverse, so positioning HTML labels before it used
+       last frame's matrices — which reads as the labels shaking while you
+       orbit, because the geometry moves and the numbers lag one frame behind. */
+    camera.updateMatrixWorld();
+    camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+    updateDimLabels();candyTick(now||0);tickOrigin(now||0);
     if(traceGroup.visible)tickLabelScale();
     if(cubeRenderer){cubeMesh.quaternion.copy(camera.quaternion).invert();cubeRenderer.render(cubeScene,cubeCam);}
     renderer.render(scene,camera);})();
