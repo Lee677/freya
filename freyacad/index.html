@@ -2132,16 +2132,19 @@ const CSG = (function(){
     const d0=p0.clone().sub(t0v); const r0=Math.max(d0.length(),0.001); d0.normalize();
     if(d0.dot(n)<-0.98) d0.addScaledVector(vup,0.25).normalize();  // avoid the degenerate 180° path
     controls.enableRotate=false;
-    // unhurried on purpose: long enough to read how the 3D view lays down flat
-    const dur=800, start=performance.now();
+    // unhurried on purpose: long enough to read how the 3D view lays down flat.
+    // The clock starts on the first rendered frame, not at the call — so any
+    // synchronous work still in flight can delay the animation but never eat it.
+    const dur=800; let start=null;
     let finished=false;
     const finish=()=>{
       if(finished||id!==camAnimId)return; finished=true;
       controls.lockToFrame(frame); controls.sph.radius=radius; controls.update();
     };
-    function step(){
+    function step(ts){
       if(finished||id!==camAnimId||mode!=='sketch')return;
-      const t=Math.min(1,(performance.now()-start)/dur);
+      if(start===null)start=ts;
+      const t=Math.min(1,(ts-start)/dur);
       const e=t*t*(3-2*t);
       const dir=d0.clone().lerp(n,e).normalize();
       const tgt=t0v.clone().lerp(o,e);
@@ -2151,16 +2154,22 @@ const CSG = (function(){
       if(t<1)requestAnimationFrame(step); else finish();
     }
     requestAnimationFrame(step);
-    setTimeout(()=>{ if(mode==='sketch')finish(); },dur+150);  // background tabs: rAF may not fire
+    // background tabs: rAF may never fire, so snap to the locked view — but
+    // only if the flight never started; a paused mid-flight one completes on
+    // its own first frame back (t clamps to 1)
+    setTimeout(()=>{ if(mode==='sketch'&&start===null)finish(); },dur+150);
   }
   function startSketch(feature){
     editing=feature; selId=feature.id; tool='line'; draftPts=[]; draftStage=0; draftA=null;
     selectedEdges=[]; hoveredEdge=null; closeEdgeMenu();
     setMode('sketch');
+    // rebuild BEFORE the camera move: OCCT is synchronous and with a real part
+    // the rebuild blocks the main thread for most of a second — started after
+    // animateToFrame it ate the whole flight and the view just snapped flat.
+    rebuild(); redrawDraft(null);
     animateToFrame(feature.frame || planeFrame(feature.plane), 18);
     cursorMesh.visible=true;
     $('dock').querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.tool==='line'));
-    rebuild(); redrawDraft(null);
   }
   function finishSketch(){
     commitDraftLine();
