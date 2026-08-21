@@ -342,6 +342,13 @@ if(!window.THREE){
   #sk-anchor.ok{color:var(--g-green);border-color:rgba(52,168,83,.5);text-shadow:0 0 6px rgba(52,168,83,.5)}
   #sk-anchor.no{color:#8ab4f8;border-color:rgba(66,133,244,.45)}
 
+  /* a sketch nested under the feature that consumed it */
+  .feat.child{padding-left:26px;position:relative;opacity:.82}
+  .feat.child::before{content:"";position:absolute;left:13px;top:0;bottom:50%;
+    border-left:1px solid var(--line);border-bottom:1px solid var(--line);width:8px}
+  .feat.child:hover{opacity:1}
+  .feat .fshow{font-size:9px;opacity:.85;margin-left:2px}
+
   /* inline feature rename */
   .fname-edit{flex:1;min-width:0;font:inherit;font-size:11.5px;color:var(--text);
     background:#05070a;border:1px solid var(--g-blue);border-radius:4px;padding:1px 4px;outline:none}
@@ -461,8 +468,8 @@ if(!window.THREE){
 
   <main class="viewport" id="viewport">
     <div class="dock" id="dock" style="display:none">
+      <button data-tool="select" title="Pointer — rotate the view, drag points and dimensions, click a line and press Delete">Pointer</button>
       <button data-tool="line" class="active">Line</button>
-      <button data-tool="select" title="Pointer — rotate the view, drag points and dimensions, click a line and press Delete">↖ Pointer</button>
       <button data-tool="rect">Rect</button>
       <button data-tool="circle">Circle</button>
       <button data-tool="polygon">Polygon</button>
@@ -2364,9 +2371,9 @@ const CSG = (function(){
       if (propsFeat && propsFeat.id === f.id && draftFeat) f = draftFeat;
       if(f.type!=='sketch'||f.suppressed)continue;
       const sd=sketchData[f.id]; if(!sd)continue;
-      const isSel=(f.id===selId)||(editing&&editing.id===f.id);
       if(editing&&editing.id===f.id&&mode==='sketch'){drawEntityLoopsColored(sketchOverlay,f,sd.frame);continue;}
-      const mat=new THREE.LineBasicMaterial({color:isSel?0xFBBC05:0x4285F4,transparent:true,opacity:isSel?1.0:0.6,depthTest:false});
+      if(!sketchVisible(f))continue;           // consumed sketches stay out of the way
+      const mat=new THREE.LineBasicMaterial({color:0xFBBC05,transparent:true,opacity:0.9,depthTest:false});
       for(const loop of entityLoops(f)){
         if(loop.length<2)continue;
         const pts=loop.map(p=>worldFromSketch(sd.frame,p.x,p.y));pts.push(pts[0]);
@@ -3374,9 +3381,8 @@ const CSG = (function(){
   /* ---- rename a feature in place (tree context menu, or F2) ---- */
   function startRename(f){
     refreshTree();
-    const rows=[...tree.querySelectorAll('.feat')];
-    const idx=features.findIndex(x=>x.id===f.id); if(idx<0)return;
-    const row=rows[idx]; if(!row)return;
+    // rows no longer line up with feature indices once sketches nest, so find by id
+    const row=tree.querySelector('.feat[data-fid="'+f.id+'"]'); if(!row)return;
     const span=row.querySelector('.fname'); if(!span)return;
     const inp=document.createElement('input');
     inp.className='fname-edit'; inp.value=f.name||'';
@@ -3469,6 +3475,7 @@ const CSG = (function(){
   const ICONS={
     line:_sw(`<path d="M5 19 19 5" stroke="${_B}"/><circle cx="5" cy="19" r="1.8" fill="${_Y}"/><circle cx="19" cy="5" r="1.8" fill="${_Y}"/>`),
     move:_sw(`<path d="M12 3v18M3 12h18" stroke="${_B}"/><path d="M9.8 5.2 12 3l2.2 2.2M9.8 18.8 12 21l2.2-2.2M5.2 9.8 3 12l2.2 2.2M18.8 9.8 21 12l-2.2 2.2" stroke="${_Y}"/>`),
+    select:_sw(`<path d="M6.5 3.2 6.5 17.8 10.3 14.2 12.9 20 15.5 18.8 12.9 13.1 17.9 12.7z" stroke="#fff"/>`),
     rect:_sw(`<rect x="4" y="6" width="16" height="12" stroke="${_B}"/><circle cx="4" cy="6" r="1.7" fill="${_Y}"/><circle cx="20" cy="18" r="1.7" fill="${_Y}"/>`),
     circle:_sw(`<circle cx="12" cy="12" r="8" stroke="${_B}"/><circle cx="12" cy="12" r="1.6" fill="${_Y}"/>`),
     polygon:_sw(`<path d="M12 4.5l6.5 3.75v7.5L12 19.5l-6.5-3.75v-7.5z" stroke="${_B}"/><circle cx="12" cy="12" r="1.6" fill="${_Y}"/>`),
@@ -3516,29 +3523,51 @@ const CSG = (function(){
 
   /* ============================ TREE UI ============================ */
   const tree=$('tree');
+  /* A sketch that has been consumed by a feature is that feature's business —
+     it nests under it in the tree and stays out of the viewport. Sketches that
+     nothing has used yet remain top-level, and visible. */
+  function sketchConsumedBy(f){ return features.find(x=>x.sketchId===f.id)||null; }
+  function sketchVisible(f){
+    if(editing&&editing.id===f.id) return true;      // open for editing
+    if(f.show) return true;                          // shown from the tree menu
+    return !sketchConsumedBy(f);                     // not used yet: still on show
+  }
+  function makeFeatRow(f,i,child){
+    const el=document.createElement('div');
+    el.className='feat'+(child?' child':'')+(f.id===selId?' sel':'')+(i>=rollbackIndex?' rolled':'')
+      +(f.error?' errored':'')+(f.suppressed?' suppressed':'');
+    el.dataset.fid=f.id;
+    const fname=(propsFeat&&propsFeat.id===f.id&&draftFeat)?draftFeat.name:f.name;
+    el.title=fname;
+    el.innerHTML=icHTML(iconFor(f))+`<span class="fname">${fname}</span>`+
+      (f.type==='sketch'&&f.show?`<span class="fshow" title="shown in the viewport">👁</span>`:'')+
+      (f.error?`<span class="ferr" title="Click to see error details">!</span>`:'')+
+      (f.suppressed?`<span class="fsupp" title="suppressed">∅</span>`:'')+
+      `<button class="fx" title="Delete">×</button>`;
+    el.addEventListener('click',e=>{
+      if(e.target.classList.contains('ferr')){ e.stopPropagation(); showErrorDialog(f); return; }
+      if(e.target.classList.contains('fx')){deleteFeature(f.id);return;}
+      selectFeature(f.id);
+    });
+    el.addEventListener('dblclick',()=>{ if(f.type==='sketch')editSketch(f); else openProps(f); });
+    el.addEventListener('contextmenu',e=>{
+      e.preventDefault(); e.stopPropagation();
+      selectFeature(f.id); openTreeMenu(e.clientX,e.clientY,f);
+    });
+    return el;
+  }
   function refreshTree(){
     tree.innerHTML='';
+    const nested=new Set();
+    features.forEach(f=>{ if(f.sketchId!=null)nested.add(f.sketchId); });
     features.forEach((f,i)=>{
       if(i===rollbackIndex)tree.appendChild(makeRollbar());
-      const el=document.createElement('div');
-      el.className='feat'+(f.id===selId?' sel':'')+(i>=rollbackIndex?' rolled':'')+(f.error?' errored':'')+(f.suppressed?' suppressed':'');
-      const fname = (propsFeat && propsFeat.id === f.id && draftFeat) ? draftFeat.name : f.name;
-      el.title=fname;
-      el.innerHTML=icHTML(iconFor(f))+`<span class="fname">${fname}</span>`+
-        (f.error?`<span class="ferr" title="Click to see error details">!</span>`:'')+
-        (f.suppressed?`<span class="fsupp" title="suppressed">∅</span>`:'')+
-        `<button class="fx" title="Delete">×</button>`;
-      el.addEventListener('click',e=>{
-        if(e.target.classList.contains('ferr')){ e.stopPropagation(); showErrorDialog(f); return; }
-        if(e.target.classList.contains('fx')){deleteFeature(f.id);return;}
-        selectFeature(f.id);
-      });
-      el.addEventListener('dblclick',()=>{ if(f.type==='sketch')editSketch(f); else openProps(f); });
-      el.addEventListener('contextmenu',e=>{
-        e.preventDefault(); e.stopPropagation();
-        selectFeature(f.id); openTreeMenu(e.clientX,e.clientY,f);
-      });
-      tree.appendChild(el);
+      if(f.type==='sketch'&&nested.has(f.id))return;      // drawn under its feature
+      tree.appendChild(makeFeatRow(f,i,false));
+      if(f.sketchId!=null){
+        const s=features.find(x=>x.id===f.sketchId);
+        if(s)tree.appendChild(makeFeatRow(s,features.indexOf(s),true));
+      }
     });
     if(rollbackIndex>=features.length)tree.appendChild(makeRollbar());
     $('tree-pill').textContent=features.length;
@@ -4175,6 +4204,8 @@ const CSG = (function(){
     const items=[{sect:f.name}];
     if(f.type==='sketch'){
       items.push({ic:'edit',label:'Edit sketch',fn:()=>editSketch(f)});
+      items.push({ic:'sketch',label:f.show?'Hide':'Show',
+        fn:()=>{ pushUndo(f.show?'hide sketch':'show sketch'); f.show=!f.show; rebuild(); }});
       items.push({sect:'Use this sketch'});
       items.push({ic:'extrude',label:'Extrude boss',fn:()=>addFeature('extrude',f.id)});
       items.push({ic:'cut',label:'Extrude cut',fn:()=>addFeature('cut',f.id)});
@@ -4429,7 +4460,7 @@ const CSG = (function(){
   /* decorate every button with its pictogram; original text becomes a .lbl */
   (function decorate(){
     menu.querySelectorAll('[data-ic]').forEach(b=>{ b.innerHTML=icHTML(b.dataset.ic)+'<span class="lbl">'+b.textContent+'</span>'; });
-    const dockLbl={line:'Line',move:'Move',rect:'Rect',circle:'Circle',polygon:'Polygon',dim:'Dim',horiz:'Horiz',vert:'Vert',paral:'Parallel',equal:'Equal',erase:'Erase'};
+    const dockLbl={select:'Pointer',line:'Line',move:'Move',rect:'Rect',circle:'Circle',polygon:'Polygon',dim:'Dim',horiz:'Horiz',vert:'Vert',paral:'Parallel',equal:'Equal',erase:'Erase'};
     $('dock').querySelectorAll('button').forEach(b=>{ const t=b.dataset.tool; b.innerHTML=icHTML(t)+'<span class="lbl">'+(dockLbl[t]||t)+'</span>'; });
     const tb={'btn-save':'save','btn-load':'open','btn-export':'stl','btn-step':'step','btn-new':'newpart','btn-new-asm':'asm','btn-insert':'add','btn-finish':'finish','btn-cancel-sk':'cancel'};
     for(const id in tb){ const b=$(id); b.innerHTML=icHTML(tb[id])+'<span class="lbl">'+b.textContent+'</span>'; }
