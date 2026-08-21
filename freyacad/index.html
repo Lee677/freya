@@ -186,8 +186,14 @@ if(!window.THREE){
   .dock{position:absolute;top:14px;left:50%;transform:translateX(-50%);display:flex;gap:6px;background:rgba(13,17,23,.85);backdrop-filter:blur(8px);border:1px solid var(--g-blue);border-radius:10px;padding:6px;z-index:10;box-shadow:0 0 20px rgba(66,133,244,0.2)}
   .dock button{padding:7px 10px;font-size:12px;border:1px solid transparent;background:transparent}
   .dock button.active{background:rgba(66,133,244,.2);border-color:var(--g-blue);color:#fff;box-shadow:0 0 10px rgba(66,133,244,0.4);text-shadow:0 0 4px var(--g-blue)}
-  .dim-input{position:absolute;z-index:60;width:74px;transform:translate(-50%,-50%);padding:3px 6px;font-family:var(--mono);font-size:12px;
-    background:#0d1117;color:#fff;border:1px solid var(--g-yellow);border-radius:4px;box-shadow:0 0 10px rgba(251,188,5,.5);text-align:center}
+  /* editing a dimension should look like the dimension, not like a form field:
+     same chip, just with a caret. type=number draws stepper arrows, hence the
+     appearance resets. */
+  .dim-input{position:absolute;z-index:60;width:62px;transform:translate(-50%,-50%);padding:1px 6px;
+    font-family:var(--mono);font-size:11px;background:rgba(13,17,23,.95);color:#fff;
+    border:1px solid var(--g-yellow);border-radius:4px;text-align:center;outline:none;
+    -moz-appearance:textfield;appearance:textfield}
+  .dim-input::-webkit-outer-spin-button,.dim-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
   .dim-label{position:absolute;z-index:55;transform:translate(-50%,-50%);padding:1px 6px;font-family:var(--mono);font-size:11px;
     background:rgba(13,17,23,.82);color:var(--g-yellow);border:1px solid rgba(251,188,5,.45);border-radius:4px;cursor:pointer;pointer-events:auto;white-space:nowrap;user-select:none}
   .dim-label:hover{background:rgba(251,188,5,.18);color:#fff}
@@ -2403,24 +2409,43 @@ const CSG = (function(){
       if(dimPick.kind==='point') A=resolvePt(editing,dimPick.ref);
       else { const s=segPts(editing,{ent:dimPick.hit.entIdx,seg:dimPick.hit.seg});
              if(s)A={x:(s.a.x+s.b.x)/2,y:(s.a.y+s.b.y)/2}; }
-      if(A){
-        const w=[worldFromSketch(editing.frame,A.x,A.y),
-                 worldFromSketch(editing.frame,sketchCursor.x,sketchCursor.y)];
+      const dash=(p1,p2)=>{
+        const w=[worldFromSketch(editing.frame,p1.x,p1.y),worldFromSketch(editing.frame,p2.x,p2.y)];
         const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(w),
           new THREE.LineDashedMaterial({color:0xFBBC05,dashSize:0.42,gapSize:0.28,
             depthTest:false,transparent:true,opacity:0.95}));
         ln.computeLineDistances(); ln.renderOrder=9; snapMarkGroup.add(ln);
+      };
+      if(dimPick.kind==='ent'){
+        /* A line on its own is already dimensionable — show its length live and
+           let the cursor choose which side the dimension sits on. Clicking a
+           second line turns it into an angle instead. */
+        const g=dimResolve(editing,dimPick.hit);
+        if(g&&prev){
+          if(g.type!=='angle'&&g.n){
+            const mid={x:(g.a.x+g.b.x)/2,y:(g.a.y+g.b.y)/2};
+            dimPick.off=(sketchCursor.x-mid.x)*g.n.x+(sketchCursor.y-mid.y)*g.n.y;
+            const o=dimPick.off;
+            dash({x:g.a.x+g.n.x*o,y:g.a.y+g.n.y*o},{x:g.b.x+g.n.x*o,y:g.b.y+g.n.y*o});
+          }
+          const sp=screenOf(sketchCursor);
+          prev.style.display=sp.behind?'none':'block';
+          prev.style.left=sp.x+'px'; prev.style.top=(sp.y-18)+'px';
+          prev.textContent=g.angular?(+g.value.toFixed(2))+'°'
+                                    :(g.suffix||'')+(+toDisp(g.value).toFixed(2))+' '+lenLabel();
+        }
+      } else if(A){
+        dash(A,sketchCursor);
         const dot=new THREE.Mesh(new THREE.SphereGeometry(0.13,12,10),
           new THREE.MeshBasicMaterial({color:0xFBBC05,depthTest:false}));
-        dot.position.copy(w[0]); dot.renderOrder=9; snapMarkGroup.add(dot);
-        if(prev){                                   // live readout by the cursor
+        dot.position.copy(worldFromSketch(editing.frame,A.x,A.y));
+        dot.renderOrder=9; snapMarkGroup.add(dot);
+        if(prev){
           const L=Math.hypot(sketchCursor.x-A.x,sketchCursor.y-A.y);
           const sp=screenOf({x:(A.x+sketchCursor.x)/2,y:(A.y+sketchCursor.y)/2});
           prev.style.display=sp.behind?'none':'block';
           prev.style.left=sp.x+'px'; prev.style.top=sp.y+'px';
-          prev.textContent=(dimPick.kind==='point')
-            ? (+toDisp(L).toFixed(2))+' '+lenLabel()
-            : 'pick a second line';
+          prev.textContent=(+toDisp(L).toFixed(2))+' '+lenLabel();
         }
       }
     } else { const prev=$('dim-preview'); if(prev)prev.style.display='none'; }
@@ -2674,7 +2699,7 @@ const CSG = (function(){
         const A=first.hit;
         if(eh&&eh.kind==='seg'&&A.kind==='seg'&&!(eh.entIdx===A.entIdx&&eh.seg===A.seg))
           openDimInput({kind:'angle',a:{ent:A.entIdx,seg:A.seg},b:{ent:eh.entIdx,seg:eh.seg}});
-        else openDimInput(A);
+        else openDimInput(Object.assign({},A,{off:first.off}));
       }
       drawSnapMark(); return;
     } else if(tool==='horiz' || tool==='vert'){
@@ -2807,8 +2832,8 @@ const CSG = (function(){
   /* A dimension resolves to the two points it measures plus the side to throw
      the dimension line out to. Offsets are in millimetres, like a real drawing,
      so they don't swim about as you zoom. */
-  // arrowhead ~3:1 long-to-wide, the usual drafting proportion
-  const DIM_OFF=2.6, DIM_GAP=0.5, DIM_OVER=0.4, DIM_ARROW=0.8, DIM_BARB=0.14;
+  // arrowhead ~3:1 long-to-wide, and small — SolidWorks draws a slim dart, not a wedge
+  const DIM_OFF=2.6, DIM_GAP=0.5, DIM_OVER=0.4, DIM_ARROW=0.45, DIM_BARB=0.075;
   /* ---- point and segment references, so a dimension can span two entities ----
      ent:-1 is the sketch origin. Returning the live point object matters: the
      driving dimensions mutate it in place. */
@@ -2857,13 +2882,14 @@ const CSG = (function(){
   }
 
   function dimResolve(f,d){
+    const OFF=(d.off!=null?d.off:DIM_OFF);      // per-dimension, draggable
     if(d.kind==='p2p'){
       const A=resolvePt(f,d.a), B=resolvePt(f,d.b); if(!A||!B) return null;
       const dx=B.x-A.x, dy=B.y-A.y, L=Math.hypot(dx,dy)||1;
       const nx=-dy/L, ny=dx/L;
-      return {value:Math.hypot(dx,dy), suffix:'', type:'linear',
+      return {value:Math.hypot(dx,dy), suffix:'', type:'linear', off:OFF,
               a:{x:A.x,y:A.y}, b:{x:B.x,y:B.y}, n:{x:nx,y:ny},
-              anchor:{x:(A.x+B.x)/2+nx*(DIM_OFF+0.9), y:(A.y+B.y)/2+ny*(DIM_OFF+0.9)}};
+              anchor:{x:(A.x+B.x)/2+nx*(OFF+0.9), y:(A.y+B.y)/2+ny*(OFF+0.9)}};
     }
     if(d.kind==='angle'){
       const S1=segPts(f,d.a), S2=segPts(f,d.b); if(!S1||!S2) return null;
@@ -2881,15 +2907,15 @@ const CSG = (function(){
       const ang=Math.abs(Math.atan2(o1.x*o2.y-o1.y*o2.x, o1.x*o2.x+o1.y*o2.y))*180/Math.PI;
       let bx=o1.x+o2.x, by=o1.y+o2.y; const BL=Math.hypot(bx,by)||1; bx/=BL; by/=BL;
       return {value:ang, angular:true, suffix:'', type:'angle', vertex:P, o1:o1, o2:o2,
-              a:S1.a, b:S2.a,
-              anchor:{x:P.x+bx*(DIM_OFF+2.2), y:P.y+by*(DIM_OFF+2.2)}};
+              a:S1.a, b:S2.a, off:OFF,
+              anchor:{x:P.x+bx*(OFF+2.2), y:P.y+by*(OFF+2.2)}};
     }
     const e=f.entities[d.entIdx]; if(!e) return null;
     const mk=(a,b,nx,ny,suffix,type)=>{
       const value=(type==='dia')?2*e.r:Math.hypot(b.x-a.x,b.y-a.y);
       const mid={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
-      const off=(type==='dia')?0:DIM_OFF;
-      return {value:value,suffix:suffix||'',a:a,b:b,n:{x:nx,y:ny},type:type||'linear',
+      const off=(type==='dia')?0:OFF;
+      return {value:value,suffix:suffix||'',a:a,b:b,n:{x:nx,y:ny},type:type||'linear',off:OFF,
               anchor:{x:mid.x+nx*(off+0.9), y:mid.y+ny*(off+0.9)}};
     };
     if(d.kind==='dia'&&e.type==='circle'||d.kind==='pdia'&&e.type==='polygon'){
@@ -2947,7 +2973,7 @@ const CSG = (function(){
         continue;
       }
       if(g.type==='angle'){
-        const R=DIM_OFF+1.6, P=g.vertex;
+        const R=(g.off!=null?g.off:DIM_OFF)+1.6, P=g.vertex;
         const a1=Math.atan2(g.o1.y,g.o1.x);
         let da=Math.atan2(g.o2.y,g.o2.x)-a1;
         while(da>Math.PI)da-=2*Math.PI; while(da<-Math.PI)da+=2*Math.PI;
@@ -2965,11 +2991,11 @@ const CSG = (function(){
         arrow({x:P.x+Math.cos(a1+da)*R,y:P.y+Math.sin(a1+da)*R},tang(a1+da,-sg));
         continue;
       }
-      const n=g.n, A=g.a, B=g.b;
-      const A2={x:A.x+n.x*DIM_OFF,y:A.y+n.y*DIM_OFF}, B2={x:B.x+n.x*DIM_OFF,y:B.y+n.y*DIM_OFF};
+      const n=g.n, A=g.a, B=g.b, OFFv=(g.off!=null?g.off:DIM_OFF), sgn=OFFv<0?-1:1;
+      const A2={x:A.x+n.x*OFFv,y:A.y+n.y*OFFv}, B2={x:B.x+n.x*OFFv,y:B.y+n.y*OFFv};
       // witness lines, held off the geometry by a gap and overshooting a touch
-      segs.push([{x:A.x+n.x*DIM_GAP,y:A.y+n.y*DIM_GAP},{x:A2.x+n.x*DIM_OVER,y:A2.y+n.y*DIM_OVER}]);
-      segs.push([{x:B.x+n.x*DIM_GAP,y:B.y+n.y*DIM_GAP},{x:B2.x+n.x*DIM_OVER,y:B2.y+n.y*DIM_OVER}]);
+      segs.push([{x:A.x+n.x*DIM_GAP*sgn,y:A.y+n.y*DIM_GAP*sgn},{x:A2.x+n.x*DIM_OVER*sgn,y:A2.y+n.y*DIM_OVER*sgn}]);
+      segs.push([{x:B.x+n.x*DIM_GAP*sgn,y:B.y+n.y*DIM_GAP*sgn},{x:B2.x+n.x*DIM_OVER*sgn,y:B2.y+n.y*DIM_OVER*sgn}]);
       segs.push([A2,B2]);
       const u={x:B2.x-A2.x,y:B2.y-A2.y},L=Math.hypot(u.x,u.y)||1; u.x/=L;u.y/=L;
       arrow(A2,{x:u.x,y:u.y}); arrow(B2,{x:-u.x,y:-u.y});
@@ -3068,8 +3094,8 @@ const CSG = (function(){
     editing.dims = editing.dims || [];
     if(editing.dims.some(x=>dimKey(x)===dimKey(d))) return;
     editing.dims.push((d.kind==='p2p'||d.kind==='angle')
-      ? {kind:d.kind, a:Object.assign({},d.a), b:Object.assign({},d.b)}
-      : {entIdx:d.entIdx, kind:d.kind, seg:d.seg});
+      ? {kind:d.kind, a:Object.assign({},d.a), b:Object.assign({},d.b), off:d.off}
+      : {entIdx:d.entIdx, kind:d.kind, seg:d.seg, off:d.off});
   }
   function screenOf(anchor){
     const fr=(sketchData[editing.id]&&sketchData[editing.id].frame)||editing.frame;
@@ -3102,10 +3128,34 @@ const CSG = (function(){
     if(mode!=='sketch'||!editing||!editing.dims) return;
     editing.dims.forEach(d=>{
       const el=document.createElement('div'); el.className='dim-label';
-      el.addEventListener('click',ev=>{ ev.stopPropagation();
+      // drag the number to walk the dimension line in or out; a plain click edits
+      el.addEventListener('pointerdown',ev=>{
+        ev.stopPropagation(); ev.preventDefault();
         if(tool==='erase'){ const i=editing.dims.indexOf(d);
           if(i>=0){ pushUndo('erase dimension'); editing.dims.splice(i,1); rebuild(); } return; }
-        openDimInput(d); });
+        const g0=dimResolve(editing,d); if(!g0)return;
+        let moved=false, undone=false;
+        try{ el.setPointerCapture(ev.pointerId); }catch(_){}
+        const onMove=ev2=>{
+          const p=pointerToSketch(ev2); if(!p)return;
+          if(!moved){ moved=true; pushUndo('move dimension'); }
+          if(g0.type==='angle')
+            d.off=Math.max(0.4,Math.hypot(p.x-g0.vertex.x,p.y-g0.vertex.y)-1.6);
+          else {
+            const mid={x:(g0.a.x+g0.b.x)/2,y:(g0.a.y+g0.b.y)/2};
+            d.off=(p.x-mid.x)*g0.n.x+(p.y-mid.y)*g0.n.y;
+          }
+          drawDimGeometry(); updateDimLabels();
+        };
+        const onUp=ev2=>{
+          el.removeEventListener('pointermove',onMove);
+          el.removeEventListener('pointerup',onUp);
+          try{ el.releasePointerCapture(ev2.pointerId); }catch(_){}
+          if(!moved&&!undone){ undone=true; openDimInput(d); }
+        };
+        el.addEventListener('pointermove',onMove);
+        el.addEventListener('pointerup',onUp);
+      });
       viewport.appendChild(el); dimLabelEls.push({el,d});
     });
     drawDimGeometry();
@@ -4550,8 +4600,14 @@ const CSG = (function(){
     const T0=performance.now(), MIN_MS=16000;
     let kernelReady=!!window.OCCT;
     window.addEventListener('kernel-ready',()=>{kernelReady=true;},{once:true});
+    // build stamp comes from the served file's Last-Modified, so it tracks the
+    // real deploy without anyone remembering to bump a constant
+    const bd=new Date(document.lastModified), pad=n=>String(n).padStart(2,'0');
+    const stamp=isNaN(bd.getTime())?'v2026.08'
+      :'v'+bd.getFullYear()+'.'+pad(bd.getMonth()+1)+'.'+pad(bd.getDate())
+        +' '+pad(bd.getHours())+':'+pad(bd.getMinutes());
     const LINES=[
-      ['FREYACAD SHELL','v2026.08'],
+      ['FREYACAD SHELL',stamp],
       ['THREE.JS RENDERER','ONLINE'],
       ['DATUM PLANES ×3','ALIGNED'],
       ['OPEN CASCADE KERNEL (11 MB)','FETCHING'],
@@ -4572,6 +4628,13 @@ const CSG = (function(){
       if(done)return;done=true;clearInterval(tick);
       el.querySelectorAll('.run').forEach(s=>{s.textContent='ONLINE';s.className='ok';});
       el.appendChild(row('ALL SYSTEMS','NOMINAL','ok'));
+      const src=document.createElement('div');
+      src.style.cssText='margin-top:7px;pointer-events:auto';   // #boot is click-through
+      src.innerHTML='<span class="dim">&gt; source </span>'+
+        '<a href="https://github.com/Lee677/freya" target="_blank" rel="noopener" '+
+        'style="color:var(--g-blue);text-decoration:none;border-bottom:1px solid rgba(66,133,244,.45)">'+
+        'github.com/Lee677/freya</a>';
+      el.appendChild(src);
       const hold=Math.max(0,MIN_MS-(performance.now()-T0));
       setTimeout(()=>{el.style.opacity='0';setTimeout(()=>el.remove(),1600);},hold);
     }
