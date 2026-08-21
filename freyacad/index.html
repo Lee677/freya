@@ -304,6 +304,12 @@ if(!window.THREE){
     background:rgba(66,133,244,.12);border:1px solid var(--g-blue);border-radius:var(--radius);
     padding:10px 16px;box-shadow:0 0 10px rgba(66,133,244,.3)}
   #gate .g-small{font-family:var(--mono);font-size:10.5px;color:var(--muted-2);max-width:40ch;line-height:1.6}
+
+  /* tool badge that rides up-right of the pointer while sketching */
+  #tool-cursor{position:fixed;z-index:25;pointer-events:none;display:none;transform:translate(10px,-120%);
+    color:var(--g-blue);filter:drop-shadow(0 0 4px rgba(66,133,244,.55))}
+  #tool-cursor svg{width:15px;height:15px;display:block}
+  #tool-cursor span{font:700 13px/1 var(--mono)}
 </style>
 <!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "bf566b1bebe84eaa8c4f3d6a83251b4a"}'></script><!-- End Cloudflare Web Analytics -->
 <!-- link preview -->
@@ -341,6 +347,7 @@ if(!window.THREE){
   <a class="g-home" href="/">&larr; The rest of freya.co.nz works fine on your phone</a>
   <div class="g-small">also: you were just spared an 11&nbsp;MB CAD-kernel download. you&rsquo;re welcome.</div>
 </div>
+<div id="tool-cursor" aria-hidden="true"></div>
 <div id="app">
   <header class="toolbar">
     <a class="brand" href="/" title="freya.co.nz — home"><span class="mark">freya<svg class="asterism" viewBox="0 0 100 36" aria-hidden="true" focusable="false">
@@ -702,6 +709,7 @@ const CSG = (function(){
      axis lines, so on a Top sketch the traces lie exactly over them. */
   const traceGroup=new THREE.Group(); traceGroup.visible=false; scene.add(traceGroup);
   const TRACE_COL={Top:0x5a9e6f, Front:0xc0584f, Right:0x4f86c0};
+  let traceSnapUV=[];   // the same traces in sketch UV, kept for hover snapping
   function traceLabel(text,color){
     const c=document.createElement('canvas');c.width=192;c.height=48;
     const g=c.getContext('2d');
@@ -718,6 +726,7 @@ const CSG = (function(){
       if(c.material){ if(c.material.map)c.material.map.dispose(); c.material.dispose(); }
     }
     traceGroup.visible=false;
+    traceSnapUV=[];
     if(mode!=='sketch'||!editing)return;
     let fr; try{ fr=editing.frame||planeFrame(editing.plane); }catch(_){ return; }
     const n=fr.n.clone().normalize(), d1=n.dot(fr.o), h=GRID/2;
@@ -738,6 +747,7 @@ const CSG = (function(){
         else{ const t=Q[i]/P[i]; if(P[i]<0){ if(t>t0)t0=t; } else if(t<t1)t1=t; }
       }
       if(!ok||t0>=t1)continue;                       // it crosses outside the grid
+      traceSnapUV.push({u0,v0,du,dv,t0,t1});
       const A=worldFromSketch(fr,u0+t0*du,v0+t0*dv).addScaledVector(n,0.004);
       const B=worldFromSketch(fr,u0+t1*du,v0+t1*dv).addScaledVector(n,0.004);
       const col=TRACE_COL[name];
@@ -2092,6 +2102,82 @@ const CSG = (function(){
   function nearestSnap(p,exclude,maxd){
     let best=null,bd=maxd; for(const h of sketchHandles()){ if(h.kind!=='v'||h.pt===exclude)continue; const d=Math.hypot(h.pt.x-p.x,h.pt.y-p.y); if(d<bd){bd=d;best=h.pt;} } return best;
   }
+
+  /* ---- hover snap for the drawing tools --------------------------------
+     Before a click lands, the cursor hunts for something worth snapping to:
+     the origin, a crossing of two datum-plane traces, the traces themselves,
+     and every point already drawn (including the run being placed now).
+     Points beat lines; either is marked in the viewport as the mouse moves,
+     so where the next point will land is never a surprise. */
+  let hoverSnap=null;                        // {x,y,kind:'point'|'line'} in sketch UV
+  const snapMarkGroup=new THREE.Group(); scene.add(snapMarkGroup);
+  const DRAW_TOOLS=['line','rect','circle','polygon'];
+  function drawSnapMark(){
+    while(snapMarkGroup.children.length){const c=snapMarkGroup.children.pop();if(c.geometry)c.geometry.dispose();}
+    if(!hoverSnap||mode!=='sketch'||!editing||!editing.frame)return;
+    const s=Math.max(0.6,controls.sph.radius/18);
+    const point=hoverSnap.kind==='point';
+    const m=new THREE.Mesh(new THREE.SphereGeometry(point?0.24*s:0.13*s,14,10),
+      new THREE.MeshBasicMaterial({color:point?0x34d4a0:0xFBBC05,depthTest:false,transparent:true,opacity:point?0.75:0.9}));
+    m.position.copy(worldFromSketch(editing.frame,hoverSnap.x,hoverSnap.y));
+    m.renderOrder=8; snapMarkGroup.add(m);
+  }
+  function applyDrawSnap(p){
+    hoverSnap=null;
+    if(mode!=='sketch'||!editing||DRAW_TOOLS.indexOf(tool)<0)return p;
+    const R=controls.sph.radius;
+    const tolP=Math.max(0.5,R*0.035), tolL=Math.max(0.35,R*0.022);
+    // point candidates
+    const pts=[];
+    let fr=null; try{ fr=editing.frame||planeFrame(editing.plane); }catch(_){ }
+    if(fr){
+      const rel=fr.o.clone().negate();       // the world origin, if it lies on this plane
+      if(Math.abs(rel.dot(fr.n))<1e-6)pts.push({x:rel.dot(fr.u),y:rel.dot(fr.v)});
+    }
+    for(let i=0;i<traceSnapUV.length;i++)for(let j=i+1;j<traceSnapUV.length;j++){
+      const a=traceSnapUV[i],b=traceSnapUV[j];
+      const den=a.du*b.dv-a.dv*b.du; if(Math.abs(den)<1e-9)continue;
+      const dx=b.u0-a.u0,dy=b.v0-a.v0;
+      const t=(dx*b.dv-dy*b.du)/den, s2=(dx*a.dv-dy*a.du)/den;
+      if(t<a.t0||t>a.t1||s2<b.t0||s2>b.t1)continue;
+      pts.push({x:a.u0+t*a.du,y:a.v0+t*a.dv});   // where two datum planes cross this one
+    }
+    for(const h of sketchHandles())pts.push({x:h.pt.x,y:h.pt.y});
+    for(const dp of draftPts)pts.push({x:dp.x,y:dp.y});
+    let best=null,bd=tolP;
+    for(const c of pts){const d=Math.hypot(c.x-p.x,c.y-p.y);if(d<bd){bd=d;best=c;}}
+    if(best){hoverSnap={x:best.x,y:best.y,kind:'point'};return{x:best.x,y:best.y};}
+    // line candidates: the plane traces
+    let bl=null,bld=tolL;
+    for(const L of traceSnapUV){
+      let t=(p.x-L.u0)*L.du+(p.y-L.v0)*L.dv;   // (du,dv) is unit length
+      t=Math.max(L.t0,Math.min(L.t1,t));
+      const qx=L.u0+t*L.du,qy=L.v0+t*L.dv;
+      const d=Math.hypot(qx-p.x,qy-p.y);
+      if(d<bld){bld=d;bl={x:qx,y:qy};}
+    }
+    if(bl){hoverSnap={x:bl.x,y:bl.y,kind:'line'};return bl;}
+    return p;
+  }
+
+  /* ---- the cursor badge: a small glyph of the active tool, up-right of the pointer ---- */
+  const TOOL_BADGES={
+    line:'<svg viewBox="0 0 16 16"><path d="M3.5 12.5 12.5 3.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="3.5" cy="12.5" r="1.6" fill="currentColor"/><circle cx="12.5" cy="3.5" r="1.6" fill="currentColor"/></svg>',
+    move:'<span>&#10021;</span>',
+    rect:'<svg viewBox="0 0 16 16"><rect x="3" y="4.5" width="10" height="7.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+    circle:'<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4.8" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+    polygon:'<svg viewBox="0 0 16 16"><path d="M8 2.8 12.5 5.4 12.5 10.6 8 13.2 3.5 10.6 3.5 5.4Z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+    dim:'<span>&#10231;</span>', horiz:'<span>&#8866;</span>', vert:'<span>&#8869;</span>',
+    paral:'<span>&#8741;</span>', equal:'<span>=</span>',
+    erase:'<svg viewBox="0 0 16 16"><path d="M4 12 12 4M4 4l8 8" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>'
+  };
+  let toolBadgeShown=null;
+  function moveToolCursor(e){
+    const tc=$('tool-cursor'); if(!tc)return;
+    if(toolBadgeShown!==tool){ tc.innerHTML=TOOL_BADGES[tool]||''; toolBadgeShown=tool; }
+    tc.style.left=e.clientX+'px'; tc.style.top=e.clientY+'px';
+    tc.style.display=TOOL_BADGES[tool]?'block':'none';
+  }
   function redrawHandles(){
     while(handleGroup.children.length){const c=handleGroup.children.pop();if(c.geometry)c.geometry.dispose();}
     if(mode!=='sketch'||!editing||tool!=='move')return;
@@ -2120,8 +2206,8 @@ const CSG = (function(){
     }
     redrawHandles();
   }
-  const cursorMesh=new THREE.Mesh(new THREE.SphereGeometry(0.1,12,10),new THREE.MeshBasicMaterial({color:0x4285F4,depthTest:false}));
-  cursorMesh.renderOrder=6;cursorMesh.visible=false;scene.add(cursorMesh);
+  // (the old blue dot that trailed the pointer is gone — the tool badge and
+  // the snap markers do that job now)
 
   /* fly the camera round to look square at a sketch plane, then lock it */
   let camAnimId=0;
@@ -2168,18 +2254,17 @@ const CSG = (function(){
     // animateToFrame it ate the whole flight and the view just snapped flat.
     rebuild(); redrawDraft(null);
     animateToFrame(feature.frame || planeFrame(feature.plane), 18);
-    cursorMesh.visible=true;
     $('dock').querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.tool==='line'));
   }
   function finishSketch(){
     commitDraftLine();
-    editing=null; setMode('model'); controls.unlock(); cursorMesh.visible=false; clearDraft();
+    editing=null; setMode('model'); controls.unlock(); clearDraft();
     rebuild();
     refreshTree(); selectFeature(selId);
   }
   function cancelSketch(){
     if(editing && editing._isNew && editing.entities.length===0){ features=features.filter(x=>x!==editing); rollbackIndex=features.length; }
-    editing=null;setMode('model');controls.unlock();cursorMesh.visible=false;clearDraft();rebuild();
+    editing=null;setMode('model');controls.unlock();clearDraft();rebuild();
   }
   function clearDraft(){while(draftGroup.children.length){const c=draftGroup.children.pop();if(c.geometry)c.geometry.dispose();}draftPts=[];draftStage=0;draftA=null;}
 
@@ -2843,7 +2928,9 @@ const CSG = (function(){
     $('tb-sketch').style.display=m==='sketch'?'flex':'none';
     $('dock').style.display=m==='sketch'?'flex':'none';
     if(m==='sketch')ensureSketchProps(); else if(propsFeat===editing)closeProps();
-    if(m!=='sketch'){ closeDimInput(); clearDimLabels(); dragVtx=null; dragSnapPt=null; redrawHandles(); }
+    canvas.style.cursor=(m==='sketch')?'crosshair':'default';
+    if(m!=='sketch'){ closeDimInput(); clearDimLabels(); dragVtx=null; dragSnapPt=null; redrawHandles();
+      hoverSnap=null; drawSnapMark(); const tc=$('tool-cursor'); if(tc)tc.style.display='none'; }
     refreshStatus();updateHint();updateDatumVis();updatePlaneTraces();
   }
   function refreshStatus(){ /* status bar removed */ }
@@ -2920,8 +3007,10 @@ const CSG = (function(){
         return;
     }
     if(mode==='sketch'&&editing){
-      const p=pointerToSketch(e);if(!p)return;
-      cursorMesh.position.copy(worldFromSketch(editing.frame,p.x,p.y));cursorMesh.visible=true;
+      moveToolCursor(e);
+      const p0=pointerToSketch(e);if(!p0)return;
+      const p=applyDrawSnap(p0);
+      drawSnapMark();
       redrawDraft(p);
     } else if(mode==='model'&&!pendingFaceSketch){
       if(datumGroup.visible){
@@ -2957,7 +3046,7 @@ const CSG = (function(){
       const hit=pickBody(e); if(hit&&hit.face)makeFaceSketch(hit); else setHint('No face there — click on a solid');
       return;
     }
-    if(mode==='sketch'&&editing){ if(e.button===0){const p=pointerToSketch(e);if(p)sketchClick(p);} return; }
+    if(mode==='sketch'&&editing){ if(e.button===0){const p=pointerToSketch(e);if(p)sketchClick(applyDrawSnap(p));} return; }
     if(mode==='model'&&e.button===0){
       if(datumGroup.visible){
         const d=pickDatum(e);
@@ -2981,6 +3070,10 @@ const CSG = (function(){
           selectedEdges=[]; redrawEdgeSel(); 
       }
     }
+  });
+  canvas.addEventListener('pointerleave',()=>{
+    const tc=$('tool-cursor'); if(tc)tc.style.display='none';
+    if(mode==='sketch'&&editing){ hoverSnap=null; drawSnapMark(); redrawDraft(null); }
   });
   canvas.addEventListener('contextmenu',e=>{
     if(Math.hypot(e.clientX-downX,e.clientY-downY)>5)return;
@@ -3130,7 +3223,7 @@ const CSG = (function(){
     buildCtxMenu(x,y,items,{cols:true});
   }
   function openSketchMenu(x,y){
-    const setTool=t=>()=>{tool=t;draftStage=0;draftA=null;paralRef=null;equalRef=null;dragVtx=null;dragSnapPt=null;redrawHandles();dockSel();};
+    const setTool=t=>()=>{tool=t;draftStage=0;draftA=null;paralRef=null;equalRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;drawSnapMark();redrawHandles();dockSel();};
     buildCtxMenu(x,y,[
       {sect:'Sketch tools'},
       {ic:'line',label:'Line',fn:setTool('line')},
@@ -3499,7 +3592,7 @@ const CSG = (function(){
     else addFeature(a);
   }));
   $('dock').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
-    tool=b.dataset.tool;draftStage=0;draftA=null;paralRef=null;equalRef=null;dragVtx=null;dragSnapPt=null;
+    tool=b.dataset.tool;draftStage=0;draftA=null;paralRef=null;equalRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;drawSnapMark();
     $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));
     redrawDraft(null);redrawHandles();updateHint();
   }));
