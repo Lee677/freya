@@ -694,6 +694,63 @@ const CSG = (function(){
     const db=$('btn-demo'); if(db)db.style.display=datumGroup.visible?'':'none';
   }
 
+  /* ---- plane traces: where the other datum planes cross the active sketch ----
+     Once the camera goes square-on, the third dimension disappears and with it
+     any sense of where Front or Right went. These are the datum planes drawn
+     as what they now are from this angle: a dashed, colour-keyed line each
+     (with a name tag), clipped to the sketch grid. Colours match the world
+     axis lines, so on a Top sketch the traces lie exactly over them. */
+  const traceGroup=new THREE.Group(); traceGroup.visible=false; scene.add(traceGroup);
+  const TRACE_COL={Top:0x5a9e6f, Front:0xc0584f, Right:0x4f86c0};
+  function traceLabel(text,color){
+    const c=document.createElement('canvas');c.width=192;c.height=48;
+    const g=c.getContext('2d');
+    g.font='600 26px "Fira Code",Consolas,monospace';g.textAlign='center';g.textBaseline='middle';
+    g.fillStyle='#'+color.toString(16).padStart(6,'0');g.fillText(text.toUpperCase()+' PLANE',96,26);
+    const t=new THREE.CanvasTexture(c);t.minFilter=THREE.LinearFilter;
+    const s=new THREE.Sprite(new THREE.SpriteMaterial({map:t,transparent:true,depthTest:false,opacity:0.8}));
+    s.scale.set(3.1,0.78,1); s.renderOrder=4; return s;
+  }
+  function updatePlaneTraces(){
+    while(traceGroup.children.length){
+      const c=traceGroup.children.pop();
+      if(c.geometry)c.geometry.dispose();
+      if(c.material){ if(c.material.map)c.material.map.dispose(); c.material.dispose(); }
+    }
+    traceGroup.visible=false;
+    if(mode!=='sketch'||!editing)return;
+    let fr; try{ fr=editing.frame||planeFrame(editing.plane); }catch(_){ return; }
+    const n=fr.n.clone().normalize(), d1=n.dot(fr.o), h=GRID/2;
+    for(const name of ['Top','Front','Right']){
+      const nP=DATUM[name].n, dot=n.dot(nP);
+      if(Math.abs(dot)>0.9999)continue;              // the sketch's own plane, or parallel to it
+      // a point on both planes (datum planes pass through the world origin)
+      const det=1-dot*dot;
+      const x0=n.clone().multiplyScalar(d1/det).addScaledVector(nP,-d1*dot/det);
+      const dir=n.clone().cross(nP).normalize();     // in-plane direction of the trace
+      // clip the trace to the sketch grid square, in sketch UV (Liang–Barsky)
+      const rel=x0.clone().sub(fr.o);
+      const u0=rel.dot(fr.u), v0=rel.dot(fr.v), du=dir.dot(fr.u), dv=dir.dot(fr.v);
+      let t0=-Infinity,t1=Infinity,ok=true;
+      const P=[-du,du,-dv,dv], Q=[u0+h,h-u0,v0+h,h-v0];
+      for(let i=0;i<4;i++){
+        if(Math.abs(P[i])<1e-9){ if(Q[i]<0){ok=false;break;} }
+        else{ const t=Q[i]/P[i]; if(P[i]<0){ if(t>t0)t0=t; } else if(t<t1)t1=t; }
+      }
+      if(!ok||t0>=t1)continue;                       // it crosses outside the grid
+      const A=worldFromSketch(fr,u0+t0*du,v0+t0*dv).addScaledVector(n,0.004);
+      const B=worldFromSketch(fr,u0+t1*du,v0+t1*dv).addScaledVector(n,0.004);
+      const col=TRACE_COL[name];
+      const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints([A,B]),
+        new THREE.LineDashedMaterial({color:col,transparent:true,opacity:0.55,dashSize:0.45,gapSize:0.3,depthTest:false}));
+      ln.computeLineDistances(); ln.renderOrder=3; traceGroup.add(ln);
+      const lb=traceLabel(name,col);
+      lb.position.copy(B).lerp(A,0.09).addScaledVector(n.clone().cross(dir).normalize(),0.55);
+      traceGroup.add(lb);
+    }
+    traceGroup.visible=traceGroup.children.length>0;
+  }
+
   /* ---- demo part: an 11-feature pillow-block bearing mount ----
      Built with the app itself; the fillet/chamfer seeds are real mesh-edge
      descriptors captured from that session, matched to B-rep edges on load. */
@@ -2075,7 +2132,8 @@ const CSG = (function(){
     const d0=p0.clone().sub(t0v); const r0=Math.max(d0.length(),0.001); d0.normalize();
     if(d0.dot(n)<-0.98) d0.addScaledVector(vup,0.25).normalize();  // avoid the degenerate 180° path
     controls.enableRotate=false;
-    const dur=300, start=performance.now();
+    // unhurried on purpose: long enough to read how the 3D view lays down flat
+    const dur=800, start=performance.now();
     let finished=false;
     const finish=()=>{
       if(finished||id!==camAnimId)return; finished=true;
@@ -2777,7 +2835,7 @@ const CSG = (function(){
     $('dock').style.display=m==='sketch'?'flex':'none';
     if(m==='sketch')ensureSketchProps(); else if(propsFeat===editing)closeProps();
     if(m!=='sketch'){ closeDimInput(); clearDimLabels(); dragVtx=null; dragSnapPt=null; redrawHandles(); }
-    refreshStatus();updateHint();updateDatumVis();
+    refreshStatus();updateHint();updateDatumVis();updatePlaneTraces();
   }
   function refreshStatus(){ /* status bar removed */ }
   function refreshExport(){
