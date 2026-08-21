@@ -94,6 +94,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line-soft);
   <a href="#snap">Snapping</a>
   <a href="#dims">Dimensions</a>
   <a href="#constrain">Constraints &amp; DOF</a>
+  <a href="#colours">Reading the colours</a>
   <a href="#editsk">Editing a sketch</a>
   <div class="grp">Modelling</div>
   <a href="#features">Features</a>
@@ -315,6 +316,14 @@ building on it, because nothing can shift underneath a feature later.</p>
 <p>These are cheap and worth using freely. A line pinned horizontal loses a degree of
 freedom that no dimension then has to spend.</p>
 
+<h3>Defined geometry won't drag</h3>
+<p>Once something is fully defined, its position is decided by its dimensions — so the
+only way to move it is to <b>change a dimension value</b>. Dragging it does nothing but
+flash the point red and say so.</p>
+<p>This is not the program being awkward. If a drag could move defined geometry, it would
+have to silently break a dimension you set on purpose, and you'd have no way of knowing
+which. Amber means settled; if you want it somewhere else, say where by editing the number.</p>
+
 <div class="note">
   <span class="tag">Why "fully defined" matters</span>
   <p>An underdefined sketch isn't broken — you can extrude it perfectly well. The risk is
@@ -323,10 +332,27 @@ freedom that no dimension then has to spend.</p>
   means the part can only change the way you asked it to.</p>
 </div>
 
+<h2 id="colours">Reading the colours</h2>
+<p>Nothing in the sketch is coloured decoratively. Each colour means one thing:</p>
+<table>
+  <tr><th>Colour</th><th>Means</th></tr>
+  <tr><td><b style="color:#4285F4">Blue</b></td><td>Under-defined — still free to drag</td></tr>
+  <tr><td><b style="color:#FBBC05">Amber</b></td><td>Fully defined — pinned by its dimensions</td></tr>
+  <tr><td><b style="color:#D6A2F5">Violet</b></td><td>A dimension. Annotation, never geometry</td></tr>
+  <tr><td><b style="color:#EA4335">Red</b></td><td>The origin, and the first point of a chain</td></tr>
+  <tr><td><b style="color:#8ab4f8">Dashed light blue</b></td><td>Plane traces</td></tr>
+  <tr><td><b style="color:#34d4a0">Teal</b></td><td>A live snap — what you're about to catch</td></tr>
+  <tr><td><b style="color:#34A853">Green</b></td><td>Edges of the solid model</td></tr>
+</table>
+<p>Points follow the same rule as the lines they belong to, so a blue dot can be dragged
+and an amber one can't. Dimensions keep a hue of their own precisely so they can never be
+mistaken for geometry in any state.</p>
+
 <h2 id="editsk">Editing a sketch</h2>
 <p>All of this needs the <b>pointer</b> tool active.</p>
 <ul>
-  <li><b>Move a point</b> — drag any endpoint. The view stays put while you drag.</li>
+  <li><b>Move a point</b> — drag any endpoint, as long as it's still blue. The view stays
+      put while you drag.</li>
   <li><b>Resize or spin a polygon</b> — drag one of its corners.</li>
   <li><b>Delete</b> — click a line to select it, then <kbd>Delete</kbd>. Or use the eraser
       to remove individual segments and dimensions.</li>
