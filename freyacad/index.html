@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>freyacad — parametric solid modelling</title>
+<title>Freya Cad</title>
 <link rel="icon" type="image/svg+xml" href="/freyacad/favicon.svg">
 
 <script>
@@ -360,7 +360,25 @@ if(!window.THREE){
   .feat.child::before{content:"";position:absolute;left:13px;top:0;bottom:50%;
     border-left:1px solid var(--line);border-bottom:1px solid var(--line);width:8px}
   .feat.child:hover{opacity:1}
-  .feat .fshow{font-size:9px;opacity:.85;margin-left:2px}
+  /* The manual, shown over the app rather than in a tab you'd lose track of. */
+  #manual-ov{position:fixed;inset:0;z-index:400;background:rgba(3,5,8,.74);
+    backdrop-filter:blur(3px);display:flex;flex-direction:column;align-items:center;
+    justify-content:center;padding:26px}
+  #manual-ov .mv-bar{width:min(1180px,100%);display:flex;align-items:center;gap:14px;
+    background:var(--panel-2);border:1px solid var(--line);border-bottom:0;
+    border-radius:10px 10px 0 0;padding:9px 13px}
+  #manual-ov .mv-t{font-family:var(--mono);font-size:12px;color:var(--muted);
+    letter-spacing:.06em;flex:1}
+  #manual-ov .mv-open{font-size:12px;color:var(--g-blue);text-decoration:none}
+  #manual-ov .mv-open:hover{text-decoration:underline}
+  #manual-ov .mv-x{background:none;border:0;color:var(--muted);font-size:15px;
+    cursor:pointer;padding:2px 7px;border-radius:5px;line-height:1}
+  #manual-ov .mv-x:hover{color:var(--text);background:var(--panel)}
+  #manual-ov iframe{width:min(1180px,100%);flex:1;min-height:0;border:1px solid var(--line);
+    border-radius:0 0 10px 10px;background:var(--bg)}
+  /* A drawn eye, not the emoji — at this size the glyph was an unreadable smudge. */
+  .feat .fshow{display:inline-flex;align-items:center;margin-left:4px;color:var(--cyan);opacity:.95;flex:0 0 auto}
+  .feat .fshow svg{width:14px;height:14px;display:block}
 
   /* inline feature rename */
   .fname-edit{flex:1;min-width:0;font:inherit;font-size:11.5px;color:var(--text);
@@ -464,10 +482,12 @@ if(!window.THREE){
       <button id="btn-normal" class="btn-ghost" title="Normal to — look square at the sketch or selected plane (Ctrl+8)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 11.5 8 14l6.5-2.5L8 9z"/><path d="M8 1.5v5.5"/><path d="M6 5.2 8 7.2l2-2"/></svg><span class="lbl">Normal to</span></button>
       <button id="btn-iso" class="btn-ghost" title="Isometric view (Ctrl+7)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 1.7 14 5v6l-6 3.3L2 11V5z"/><path d="M2 5l6 3.2L14 5M8 8.2V14.3"/></svg><span class="lbl">Iso</span></button>
       <button id="btn-fitall" class="btn-ghost" title="Fit everything in view (F)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg><span class="lbl">Fit</span></button>
+      <button id="btn-proj" class="btn-ghost" title="Perspective — converging, depth-cued (Ctrl+5)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.2 3.2h11.6L11.6 12.8H4.4z"/><path d="M4.4 12.8 2.2 3.2M11.6 12.8 13.8 3.2"/></svg><span class="lbl">Persp</span></button>
       <button id="btn-undo" class="btn-ghost" title="Undo (Ctrl+Z)" disabled>↶</button>
       <button id="btn-redo" class="btn-ghost" title="Redo (Ctrl+Y)" disabled>↷</button>
       <button id="btn-labels" class="btn-ghost" title="Show or hide button and menu labels — icons only">Aa</button>
       <button id="btn-help" class="btn-ghost" title="Live help — tips that follow what you're doing">?</button>
+      <button id="btn-manual" class="btn-ghost" title="The manual — every tool, explained (F1)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.2 2.6h4.2c.9 0 1.6.7 1.6 1.6v9.2c0-.7-.6-1.3-1.3-1.3H2.2z"/><path d="M13.8 2.6H9.6c-.9 0-1.6.7-1.6 1.6v9.2c0-.7.6-1.3 1.3-1.3h4.5z"/></svg><span class="lbl">Manual</span></button>
       <button id="btn-demo-tgl" class="btn-ghost" title="Show or hide the pillow-block demo part (also controls whether it loads on startup)">Demo</button>
     </div>
     <div class="tb-gap"></div>
@@ -629,7 +649,14 @@ const CSG = (function(){
   /* ---- scene ---- */
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog(0x0a0e12, 55, 150);
-  const camera = new THREE.PerspectiveCamera(46, 1, 0.05, 4000);
+  /* Two cameras, one orbit. `camera` is the live binding everything else reads,
+     so switching projection is a reassignment plus a pose copy. The ortho
+     frustum is derived from the orbit radius and the perspective fov, which is
+     what makes the swap look like a projection change rather than a jump. */
+  let camera = new THREE.PerspectiveCamera(46, 1, 0.05, 4000);
+  const perspCam = camera;
+  const orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.05, 4000);
+  let orthoOn = false;
   const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
   renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
   renderer.shadowMap.enabled = true;
@@ -690,7 +717,8 @@ const CSG = (function(){
   };
   Controls.prototype._pan=function(dx,dy){
     const cam=this.cam, dist=cam.position.distanceTo(this.target), h=this.dom.clientHeight||1;
-    const k=2*dist*Math.tan((cam.fov*Math.PI/180)/2)/h;
+    const k=cam.isOrthographicCamera ? (cam.top-cam.bottom)/(cam.zoom*h)
+                                     : 2*dist*Math.tan((cam.fov*Math.PI/180)/2)/h;
     this.target.add(new THREE.Vector3().setFromMatrixColumn(cam.matrix,0).multiplyScalar(-dx*k));
     this.target.add(new THREE.Vector3().setFromMatrixColumn(cam.matrix,1).multiplyScalar(dy*k));
   };
@@ -1053,6 +1081,49 @@ const CSG = (function(){
     }
     flyOrbit(0.82,1.0);
     setHint('Isometric');
+  }
+  /* Size the ortho box so it frames exactly what the perspective camera would
+     at the same orbit radius. Called every frame: the wheel only changes the
+     radius, which an orthographic camera would otherwise ignore entirely. */
+  function syncOrtho(){
+    if(!orthoOn)return;
+    const w=viewport.clientWidth||1,h=viewport.clientHeight||1;
+    const dist=camera.position.distanceTo(controls.target)||1;
+    const halfH=dist*Math.tan((perspCam.fov*Math.PI/180)/2), halfW=halfH*(w/h);
+    if(orthoCam.top===halfH&&orthoCam.right===halfW)return;
+    orthoCam.top=halfH;orthoCam.bottom=-halfH;orthoCam.right=halfW;orthoCam.left=-halfW;
+    orthoCam.updateProjectionMatrix();
+  }
+  function setProjection(on){
+    if(on===orthoOn)return;
+    const from=camera,to=on?orthoCam:perspCam;
+    to.position.copy(from.position);to.up.copy(from.up);to.quaternion.copy(from.quaternion);
+    orthoOn=on;camera=to;controls.cam=to;
+    if(on){syncOrtho();}
+    else{const w=viewport.clientWidth||1,h=viewport.clientHeight||1;
+         perspCam.aspect=w/h;perspCam.updateProjectionMatrix();}
+    controls.update();
+    const b=$('btn-proj');
+    if(b){b.classList.toggle('active',on);
+          const l=b.querySelector('.lbl');if(l)l.textContent=on?'Ortho':'Persp';
+          b.title=on?'Orthographic — parallel projection, true lengths (Ctrl+5)'
+                    :'Perspective — converging, depth-cued (Ctrl+5)';}
+    setHint(on?'Orthographic projection':'Perspective projection');
+  }
+  /* Arrow keys step the view round in 30° bites. Each press snaps to the nearest
+     multiple on the axis it moves, so the first press tidies a hand-dragged angle
+     onto the grid and every press after it is exactly 30°. The axis you didn't
+     press is left alone — nudging left shouldn't also jump the elevation. */
+  function nudgeView(dTheta,dPhi){
+    const STEP=Math.PI/6, q=(a,d)=>d?Math.round((a+d)/STEP)*STEP:a;
+    if(mode==='sketch'&&controls.fb){
+      controls.fTheta=q(controls.fTheta,dTheta);
+      controls.fPhi=Math.max(0,Math.min(Math.PI*0.47,q(controls.fPhi,dPhi)));
+      controls.update();
+    }else{
+      const s=controls.sph;
+      flyOrbit(q(s.theta,dTheta),Math.max(0.05,Math.min(Math.PI-0.05,q(s.phi,dPhi))));
+    }
   }
   function flyOrbit(theta,phi){
     controls.unlock();
@@ -3665,6 +3736,7 @@ const CSG = (function(){
     edit:_sw(`<path d="M4 20l1.2-4.2L16.5 4.5l3 3L8.2 18.8z" stroke="${_B}"/><path d="M14.5 6.5l3 3" stroke="${_B}"/>`),
     iso:_sw(`<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" stroke="${_B}"/><path d="M12 12l8-4.5M12 12 4 7.5M12 12v9" stroke="${_B}" opacity=".7"/>`),
     fit:_sw(`<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" stroke="${_B}"/><rect x="9.5" y="9.5" width="5" height="5" stroke="${_Y}"/>`),
+    proj:_sw(`<path d="M3.5 5h17L17.5 19h-11z" stroke="${_B}"/><path d="M6.5 19 3.5 5M17.5 19l3-14" stroke="${_Y}"/>`),
     stl:_sw(`<path d="M12 4l8 16H4z" stroke="${_B}"/><path d="M12 4 9.5 20M12 4l3 16M7.2 13.6h9.6" stroke="${_B}" opacity=".55"/>`),
     step:_sw(`<ellipse cx="12" cy="6.5" rx="7" ry="2.7" stroke="${_B}"/><path d="M5 6.5v11M19 6.5v11" stroke="${_B}"/><path d="M5 17.5c0 1.5 3.1 2.7 7 2.7s7-1.2 7-2.7" stroke="${_B}"/>`),
     save:_sw(`<path d="M12 3v10M8.5 9.5 12 13l3.5-3.5" stroke="${_Y}"/><path d="M4 14.5V20h16v-5.5" stroke="${_B}"/>`),
@@ -3691,6 +3763,9 @@ const CSG = (function(){
      it nests under it in the tree and stays out of the viewport. Sketches that
      nothing has used yet remain top-level, and visible. */
   const collapsed=new Set();                 // feature ids whose sketch row is folded away
+  const EYE_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" '+
+    'stroke-linecap="round" stroke-linejoin="round"><path d="M1.8 12S5.6 5.4 12 5.4 22.2 12 22.2 12'+
+    ' 18.4 18.6 12 18.6 1.8 12 1.8 12Z"/><circle cx="12" cy="12" r="3.1"/></svg>';
   const datumShow={Top:false,Front:false,Right:false};
   function sketchConsumedBy(f){ return features.find(x=>x.sketchId===f.id)||null; }
   function sketchVisible(f){
@@ -3707,7 +3782,7 @@ const CSG = (function(){
     el.title=fname;
     el.innerHTML=(twist?`<span class="twist" title="Collapse or expand">${twist==='open'?'▾':'▸'}</span>`:'')+
       icHTML(iconFor(f))+`<span class="fname">${fname}</span>`+
-      (f.type==='sketch'&&f.show?`<span class="fshow" title="shown in the viewport">👁</span>`:'')+
+      (f.type==='sketch'&&f.show?`<span class="fshow" title="shown in the viewport">${EYE_SVG}</span>`:'')+
       (f.error?`<span class="ferr" title="Click to see error details">!</span>`:'')+
       (f.suppressed?`<span class="fsupp" title="suppressed">∅</span>`:'')+
       `<button class="fx" title="Delete">×</button>`;
@@ -3738,7 +3813,7 @@ const CSG = (function(){
       el.title=nm+' plane — click to show or hide';
       el.innerHTML='<span class="twist"></span>'+icHTML('dplane')+
         `<span class="fname">${nm} plane</span>`+
-        (datumShow[nm]?'<span class="fshow" title="visible">👁</span>':'');
+        (datumShow[nm]?`<span class="fshow" title="visible">${EYE_SVG}</span>`:'');
       const toggle=()=>{ datumShow[nm]=!datumShow[nm]; updateDatumVis(); refreshTree(); };
       el.addEventListener('click',toggle);
       el.addEventListener('contextmenu',e=>{
@@ -4369,6 +4444,7 @@ const CSG = (function(){
     items.push({ic:'normal',label:'Normal to',fn:viewNormalTo});
     items.push({ic:'iso',label:'Isometric',fn:viewIso});
     items.push({ic:'fit',label:'Fit all',fn:fitAll});
+    items.push({ic:'proj',label:orthoOn?'Perspective':'Orthographic',fn:()=>setProjection(!orthoOn)});
     if(sf&&sf.type==='sketch'){
       items.push({sect:sf.name});
       items.push({ic:'edit',label:'Edit sketch',fn:()=>editSketch(sf)});
@@ -4416,6 +4492,7 @@ const CSG = (function(){
       {ic:'normal',label:'Normal to',fn:viewNormalTo},
       {ic:'iso',label:'Isometric',fn:viewIso},
       {ic:'fit',label:'Fit all',fn:fitAll},
+      {ic:'proj',label:orthoOn?'Perspective':'Orthographic',fn:()=>setProjection(!orthoOn)},
       {sect:'Sketch'},
       {ic:'finish',label:'Finish sketch',fn:finishSketch},
       {ic:'extrude',label:'Finish + extrude',fn:()=>{finishSketch();addFeature('extrude');}},
@@ -4698,6 +4775,22 @@ const CSG = (function(){
   $('btn-normal').addEventListener('click',viewNormalTo);
   $('btn-iso').addEventListener('click',viewIso);
   $('btn-fitall').addEventListener('click',fitAll);
+  $('btn-proj').addEventListener('click',()=>setProjection(!orthoOn));
+  $('btn-manual').addEventListener('click',openManual);
+  function openManual(){
+    if($('manual-ov'))return;
+    const ov=document.createElement('div');ov.id='manual-ov';
+    ov.innerHTML='<div class="mv-bar"><span class="mv-t">freyacad · manual</span>'+
+      '<a class="mv-open" href="help.html" target="_blank" rel="noopener">Open in a tab &#8599;</a>'+
+      '<button class="mv-x" title="Close (Esc)">&#10005;</button></div>'+
+      '<iframe src="help.html" title="freyacad manual"></iframe>';
+    document.body.appendChild(ov);
+    const esc=e=>{if(e.key==='Escape'){e.stopPropagation();close();}};
+    function close(){ov.remove();document.removeEventListener('keydown',esc,true);}
+    ov.querySelector('.mv-x').addEventListener('click',close);
+    ov.addEventListener('click',e=>{if(e.target===ov)close();});
+    document.addEventListener('keydown',esc,true);
+  }
   $('tree-collapse').addEventListener('click',()=>{
     const shutAll=anyExpanded();
     collapsed.clear();
@@ -4891,7 +4984,7 @@ const CSG = (function(){
     let box=partBox();
     if(!box){ if(datumGroup.visible){ box=new THREE.Box3().setFromObject(datumGroup); } else return; }
     const c=box.getCenter(new THREE.Vector3()),sz=Math.max(2,box.getSize(new THREE.Vector3()).length());
-    const fov=camera.fov*Math.PI/180;
+    const fov=perspCam.fov*Math.PI/180;   // ortho derives its box from the same fov
     controls.target.copy(c);
     controls.sph.radius=Math.max(4,Math.min(controls.maxR,(sz/2)/Math.tan(fov/2)*1.15+0.5));
     controls.update();
@@ -4933,6 +5026,15 @@ const CSG = (function(){
       if(k==='y'||(k==='z'&&e.shiftKey)){e.preventDefault();redo();return;}
       if(e.key==='7'){e.preventDefault();viewIso();return;}         // as in SolidWorks
       if(e.key==='8'){e.preventDefault();viewNormalTo();return;}
+      if(e.key==='5'){e.preventDefault();setProjection(!orthoOn);return;}
+    }
+    if(e.key==='F1'){e.preventDefault();openManual();return;}
+    if(!e.ctrlKey&&!e.metaKey&&!e.altKey&&/^Arrow(Left|Right|Up|Down)$/.test(e.key)){
+      e.preventDefault();
+      const S=Math.PI/6;
+      nudgeView(e.key==='ArrowLeft'?-S:e.key==='ArrowRight'?S:0,
+                e.key==='ArrowUp'?-S:e.key==='ArrowDown'?S:0);
+      return;
     }
     if(mode==='sketch'){
       if(e.key==='Enter'){e.preventDefault();if(tool==='line')commitDraftLine();else finishSketch();}
@@ -4958,10 +5060,11 @@ const CSG = (function(){
   function dockSel(){$('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.tool===tool));
     syncRotateGate(); if(tool!=='select')clearSketchSel(); redrawDraft(null);updateHint();}
 
-  function resize(){const w=viewport.clientWidth,h=viewport.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();
+  function resize(){const w=viewport.clientWidth,h=viewport.clientHeight;renderer.setSize(w,h,false);perspCam.aspect=w/h;perspCam.updateProjectionMatrix();syncOrtho();
     if(mode==='sketch'&&typeof flashOrigin==='function')flashOrigin();}
   window.addEventListener('resize',resize);resize();
   (function loop(now){requestAnimationFrame(loop);
+    syncOrtho();          // the wheel moves the camera; ortho only sees the box
     /* Project against *this* frame's camera. renderer.render() is what normally
        refreshes matrixWorldInverse, so positioning HTML labels before it used
        last frame's matrices — which reads as the labels shaking while you
@@ -4985,7 +5088,8 @@ const CSG = (function(){
     get propsFeat(){ return propsFeat; },
     get draftFeat(){ return draftFeat; },
     insertFeature, defaults, addFeature, rebuild, openProps, closeProps,
-    selectFeature, nextId: () => nextId(), renderer, scene, camera, controls, fitAll,
+    selectFeature, nextId: () => nextId(), renderer, scene,
+    get camera(){return camera}, setProjection, get orthoOn(){return orthoOn}, controls, fitAll,
     OCK, featureEdges,
     get docMode(){ return docMode; },
     get asm(){ return asm; },

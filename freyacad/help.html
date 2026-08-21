@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>freyacad — manual</title>
+<style>
+:root{
+  --bg:#05070a; --panel:#0d1117; --panel-2:#161b22;
+  --line:#30363d; --line-soft:#21262d;
+  --text:#e8eaed; --muted:#9aa0a6; --muted-2:#5f6368;
+  --blue:#4285F4; --red:#EA4335; --yellow:#FBBC05; --green:#34A853;
+  --mono:"Fira Code",ui-monospace,"SF Mono","JetBrains Mono",monospace;
+  --sans:"Google Sans","Product Sans","Inter",system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);
+  font-size:15px;line-height:1.65;-webkit-font-smoothing:antialiased}
+.wrap{display:grid;grid-template-columns:232px minmax(0,1fr);gap:0;
+  max-width:1180px;margin:0 auto;min-height:100vh}
+
+/* ---- table of contents ---- */
+nav{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
+  padding:26px 18px 40px;border-right:1px solid var(--line-soft);background:var(--panel)}
+nav .brand{font-family:var(--mono);font-size:15px;letter-spacing:.04em;color:var(--text);
+  margin-bottom:2px}
+nav .brand b{color:var(--blue);font-weight:600}
+nav .sub{font-size:11px;color:var(--muted-2);letter-spacing:.16em;text-transform:uppercase;
+  margin-bottom:20px}
+nav a{display:block;color:var(--muted);text-decoration:none;font-size:13.5px;
+  padding:5px 9px;border-radius:6px;border-left:2px solid transparent;line-height:1.4}
+nav a:hover{color:var(--text);background:var(--panel-2)}
+nav a.on{color:var(--text);background:var(--panel-2);border-left-color:var(--blue)}
+nav .grp{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted-2);
+  margin:16px 0 5px 9px}
+
+/* ---- body ---- */
+main{padding:34px 44px 120px;min-width:0}
+h1{font-size:30px;line-height:1.2;margin:0 0 6px;letter-spacing:-.01em}
+.tagline{color:var(--muted);font-size:16px;margin:0 0 8px}
+.stamp{font-family:var(--mono);font-size:11.5px;color:var(--muted-2);margin-bottom:30px}
+h2{font-size:21px;margin:44px 0 12px;padding-top:14px;border-top:1px solid var(--line-soft);
+  letter-spacing:-.01em;scroll-margin-top:14px}
+h2:first-of-type{border-top:0;margin-top:26px}
+h3{font-size:15.5px;margin:24px 0 7px;color:var(--text)}
+p{margin:0 0 12px;color:#c9cdd2}
+ul,ol{margin:0 0 12px;padding-left:22px;color:#c9cdd2}
+li{margin-bottom:5px}
+li::marker{color:var(--muted-2)}
+b,strong{color:var(--text);font-weight:600}
+code,kbd{font-family:var(--mono);font-size:12.5px}
+code{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:4px;
+  padding:1px 5px;color:#d7dbe0}
+kbd{background:var(--panel-2);border:1px solid var(--line);border-bottom-width:2px;
+  border-radius:5px;padding:2px 6px;color:var(--text);white-space:nowrap;font-size:12px}
+a{color:var(--blue)}
+table{width:100%;border-collapse:collapse;margin:6px 0 16px;font-size:14px}
+th,td{text-align:left;padding:7px 12px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+th{color:var(--muted);font-weight:500;font-size:11px;letter-spacing:.12em;text-transform:uppercase}
+td:first-child{white-space:nowrap;width:1%}
+tr:last-child td{border-bottom:0}
+.note{border-left:2px solid var(--blue);background:rgba(66,133,244,.06);
+  padding:11px 15px;margin:14px 0;border-radius:0 6px 6px 0}
+.note.warn{border-left-color:var(--yellow);background:rgba(251,188,5,.06)}
+.note p:last-child{margin-bottom:0}
+.note .tag{font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);
+  display:block;margin-bottom:4px}
+.lede{font-size:16px;color:#c9cdd2}
+footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line-soft);
+  color:var(--muted-2);font-size:12.5px}
+@media(max-width:840px){
+  .wrap{grid-template-columns:1fr}
+  nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line-soft)}
+  nav a{display:inline-block;margin-right:4px}
+  main{padding:24px 20px 80px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <div class="brand"><b>freya</b>cad</div>
+  <div class="sub">Manual</div>
+  <a href="#start">Start here</a>
+  <div class="grp">Interface</div>
+  <a href="#layout">The layout</a>
+  <a href="#navigate">Getting around</a>
+  <a href="#views">Views &amp; projection</a>
+  <div class="grp">Sketching</div>
+  <a href="#sketch">Making a sketch</a>
+  <a href="#draw">The drawing tools</a>
+  <a href="#snap">Snapping</a>
+  <a href="#dims">Dimensions</a>
+  <a href="#constrain">Constraints &amp; DOF</a>
+  <a href="#editsk">Editing a sketch</a>
+  <div class="grp">Modelling</div>
+  <a href="#features">Features</a>
+  <a href="#tree">The feature tree</a>
+  <a href="#datum">Datum geometry</a>
+  <a href="#undo">Undo</a>
+  <div class="grp">Files</div>
+  <a href="#save">Saving &amp; opening</a>
+  <a href="#export">Exporting</a>
+  <a href="#assembly">Assemblies</a>
+  <div class="grp">Reference</div>
+  <a href="#keys">Keyboard</a>
+  <a href="#limits">Known limits</a>
+  <a href="#about">About</a>
+</nav>
+
+<main>
+<h1>freyacad</h1>
+<p class="tagline">Parametric solid modelling that runs entirely in your browser.</p>
+<p class="stamp" id="stamp">Manual — last revised 21 August 2026</p>
+
+<h2 id="start">Start here</h2>
+<p class="lede">freyacad is a small CAD program with a real geometry kernel. You sketch on a
+plane, turn sketches into solids, and export STL for printing or STEP for other CAD. There
+is nothing to install and no account.</p>
+
+<p>The workflow is the same one every mainstream CAD package uses, and it is worth
+knowing before you touch anything:</p>
+<ol>
+  <li><b>Sketch</b> a closed profile on a flat plane.</li>
+  <li><b>Dimension</b> it until it can't move.</li>
+  <li><b>Extrude or revolve</b> that profile into a solid.</li>
+  <li><b>Repeat</b> — each new feature builds on the last, and the whole stack rebuilds
+      whenever you change something earlier in it.</li>
+</ol>
+
+<p>That last point is what "parametric" means. Your part is not a mesh you sculpted; it is
+a <em>recipe</em>. Change a dimension near the bottom of the tree and everything above it
+is recalculated from scratch.</p>
+
+<div class="note">
+  <span class="tag">Good to know</span>
+  <p><b>Nothing leaves your machine.</b> There is no server, no upload, and no telemetry.
+  The geometry kernel runs as WebAssembly inside the page, so your part exists only in
+  the tab until you save or export it — which also means <b>closing the tab loses your
+  work</b>. Save early.</p>
+</div>
+
+<h3>What you need</h3>
+<ul>
+  <li>A desktop or laptop browser — Chrome, Edge, Firefox or Safari, reasonably current.</li>
+  <li>WebGL2 and WebAssembly, both of which those browsers have had for years.</li>
+  <li>A mouse with a wheel. A trackpad works, but a wheel makes zooming far nicer.</li>
+</ul>
+<p>Phones and tablets are blocked deliberately. The kernel is an ~11&nbsp;MB download and
+the interface needs a hover cursor and real screen space, so rather than let it half-work
+on a phone, freyacad shows a friendly note and stops.</p>
+
+<h3>The fastest way to learn it</h3>
+<p>Press <b>Demo</b> in the toolbar. It builds a finished part in front of you, feature by
+feature, so you can watch the tree fill in and see what a normal modelling session looks
+like. Then open the tree items and see how each was made.</p>
+
+<h2 id="layout">The layout</h2>
+<table>
+  <tr><th>Area</th><th>What it does</th></tr>
+  <tr><td><b>Toolbar</b></td><td>Along the top. Files, units, view tools, undo/redo, export.
+    The <b>Add</b> button is the main menu — everything you can create lives there.</td></tr>
+  <tr><td><b>Feature tree</b></td><td>Down the left. The recipe for your part, in build
+    order, with the origin and datum planes at the top.</td></tr>
+  <tr><td><b>Viewport</b></td><td>The 3D scene. Right-click anywhere in it for a context
+    menu that changes with what you're doing.</td></tr>
+  <tr><td><b>Tool dock</b></td><td>Appears at the bottom while a sketch is open — the
+    drawing tools, dimension, pointer and eraser.</td></tr>
+  <tr><td><b>Status chip</b></td><td>Top left while sketching. Tells you whether the sketch
+    is fully defined and how many degrees of freedom remain.</td></tr>
+  <tr><td><b>Plane name</b></td><td>Just below the chip — which plane you're sketching on.</td></tr>
+  <tr><td><b>View cube</b></td><td>Bottom right. Shows the current orientation; click a
+    face to snap the camera to it.</td></tr>
+  <tr><td><b>Hint line</b></td><td>The <kbd>?</kbd> button toggles a live help panel that
+    tracks whatever tool you're holding.</td></tr>
+</table>
+<p>If the toolbar feels crowded, <b>Aa</b> collapses the buttons to icons only. The feature
+tree keeps its full text either way — the tree is the one place where names matter more
+than space.</p>
+
+<h2 id="navigate">Getting around</h2>
+<table>
+  <tr><th>Do this</th><th>To get</th></tr>
+  <tr><td>Drag with the left button</td><td>Orbit around the part</td></tr>
+  <tr><td>Drag with the middle button</td><td>Pan</td></tr>
+  <tr><td>Wheel</td><td>Zoom toward the cursor</td></tr>
+  <tr><td><kbd>F</kbd></td><td>Fit everything on screen</td></tr>
+  <tr><td>Click a view-cube face</td><td>Snap to that orientation</td></tr>
+</table>
+<p>Orbiting inside an open sketch works too, but only while the <b>pointer</b> tool is
+selected. That is deliberate: when a drawing tool is live, a drag should draw, not spin the
+model. Switch to the pointer and the view is yours again.</p>
+
+<h2 id="views">Views &amp; projection</h2>
+<h3>Normal to <span style="color:var(--muted-2);font-weight:400">— <kbd>Ctrl</kbd>+<kbd>8</kbd></span></h3>
+<p>Looks square down whatever plane is relevant: the sketch you have open, or a plane you
+have selected in the tree, or the Top plane if you haven't picked anything. This is the
+view you want for drawing and for reading dimensions — it's the only one where what you
+see on screen matches the true shape of the profile.</p>
+
+<h3>Isometric <span style="color:var(--muted-2);font-weight:400">— <kbd>Ctrl</kbd>+<kbd>7</kbd></span></h3>
+<p>The standard three-quarter view. Inside a sketch it tilts the camera off the sketch
+plane without closing the sketch, so you can see what you're drawing in context and then
+drop back with <kbd>Ctrl</kbd>+<kbd>8</kbd>.</p>
+
+<h3>Perspective and orthographic <span style="color:var(--muted-2);font-weight:400">— <kbd>Ctrl</kbd>+<kbd>5</kbd></span></h3>
+<p>The <b>Persp / Ortho</b> button swaps how the scene is projected.</p>
+<ul>
+  <li><b>Perspective</b> converges, like an eye or a camera. Distant parts get smaller.
+      It reads as more natural and gives a better sense of depth.</li>
+  <li><b>Orthographic</b> keeps parallel edges parallel and holds scale across depth.
+      Equal lengths measure equal wherever they sit, which is why engineering drawings use
+      it, and why it's the projection to check a part in when you want to trust your eyes.</li>
+</ul>
+<p>Both cameras share one orbit, so the swap holds your position and framing — only the
+projection changes.</p>
+
+<h2 id="sketch">Making a sketch</h2>
+<p><b>Add → Sketch</b>, then pick a plane: Top, Front, Right, or a flat face of an existing
+solid. The camera flies round to look straight at it and the drawing tools appear.</p>
+<p>While a sketch is open you'll see:</p>
+<ul>
+  <li><b>The origin</b> — a small pair of arrows at 0,0. This is the anchor of your part;
+      geometry tied back to it can't drift. The arrows flash when the sketch opens and
+      whenever you resize, then fade so they don't clutter the view.</li>
+  <li><b>Plane traces</b> — dashed, colour-keyed lines showing where the other two datum
+      planes slice through the one you're on. They're the sketch equivalent of a centre
+      line: extremely useful for keeping things symmetrical.</li>
+  <li><b>The status chip</b> — a live count of what's still loose.</li>
+</ul>
+<p>Finish with <kbd>Enter</kbd> or the <b>Finish</b> button. <kbd>Esc</kbd> backs out of
+whatever you're mid-way through, and again to leave the sketch.</p>
+
+<h2 id="draw">The drawing tools</h2>
+<table>
+  <tr><th>Tool</th><th>Key</th><th>How it works</th></tr>
+  <tr><td><b>Line</b></td><td><kbd>1</kbd></td><td>Click each point in turn to chain
+    segments. <kbd>Enter</kbd> ends the chain; close it back on its own start point to
+    make a sealed loop.</td></tr>
+  <tr><td><b>Rectangle</b></td><td><kbd>2</kbd></td><td>Click one corner, then the
+    opposite one.</td></tr>
+  <tr><td><b>Circle</b></td><td><kbd>3</kbd></td><td>Click the centre, then a point on
+    the radius.</td></tr>
+  <tr><td><b>Polygon</b></td><td><kbd>4</kbd></td><td>Regular n-sided polygon: centre
+    first, then a corner, which sets both size and rotation.</td></tr>
+  <tr><td><b>Dimension</b></td><td><kbd>D</kbd></td><td>See below.</td></tr>
+  <tr><td><b>Pointer</b></td><td>—</td><td>Select, drag and orbit. Nothing is drawn while
+    it's active.</td></tr>
+  <tr><td><b>Eraser</b></td><td>—</td><td>Deletes one thing at a time — a single segment,
+    a circle, a dimension.</td></tr>
+</table>
+<div class="note warn">
+  <span class="tag">Closed profiles</span>
+  <p>Extrude and revolve need a <b>closed</b> loop. A chain of lines that doesn't return
+  to its start has no inside, so there's nothing to give thickness to. If a feature refuses
+  to build, an open profile is the first thing to check.</p>
+</div>
+
+<h2 id="snap">Snapping</h2>
+<p>As the cursor nears something worth catching, it locks on and the target lights up
+<em>before</em> you click, so you always know what you're about to get. It snaps to:</p>
+<ul>
+  <li>the sketch <b>origin</b>;</li>
+  <li><b>plane traces</b>, and the point where two of them cross;</li>
+  <li><b>endpoints</b> of lines you've already drawn — these glow as you approach.</li>
+</ul>
+<p>Snapping isn't cosmetic. A point snapped to the origin is genuinely attached to it, and
+that costs it its freedom to move — which is how a sketch becomes defined without you
+dimensioning every last thing.</p>
+<p>The cursor also shows a small glyph of the active tool up and to the right, so you can
+tell at a glance whether you're about to draw a line or a circle.</p>
+
+<h2 id="dims">Dimensions</h2>
+<p>Press <kbd>D</kbd> or pick the dimension tool, then click what you want to measure. A
+greyed preview with real leaders and arrowheads follows the cursor, so you can see the
+dimension forming before you commit. Type a number and press <kbd>Enter</kbd> and the
+geometry <b>moves to match</b> — dimensions here drive the model, they don't just report it.</p>
+<table>
+  <tr><th>To dimension</th><th>Click</th></tr>
+  <tr><td>The length of a line</td><td>The line, then <kbd>Enter</kbd> a value</td></tr>
+  <tr><td>Between two points</td><td>One endpoint, then another</td></tr>
+  <tr><td>A point back to the origin</td><td>The point, then the origin</td></tr>
+  <tr><td>The angle between two lines</td><td>One line, then the other</td></tr>
+  <tr><td>A circle</td><td>The circle — you get its diameter</td></tr>
+</table>
+<p>Drag any dimension to reposition its leader line; long chains get unreadable fast if
+they all sit on top of each other. Values accept up to four decimal places, and the input
+box grows to fit what you type.</p>
+<div class="note warn">
+  <span class="tag">Current limitation</span>
+  <p>Dimensions are applied <b>one at a time</b>, not solved together. Each one moves
+  geometry to satisfy itself, which can disturb a dimension you set earlier — add an angle
+  and a length you already fixed may shift. Work outward from the origin, dimension in the
+  order you'd actually build the shape, and check earlier values afterwards. A proper
+  constraint solver is the fix, and is the biggest single improvement still to come.</p>
+</div>
+
+<h2 id="constrain">Constraints &amp; degrees of freedom</h2>
+<p>The chip in the top-left corner is doing real arithmetic, not guessing. Every entity
+carries a number of free values — a line has four (two endpoints, two coordinates each), a
+circle three, a rectangle four — and every dimension, snap or constraint removes one. What
+is left over is the <b>degrees of freedom</b>: the number of independent ways your sketch
+can still deform.</p>
+<p>When it hits zero the sketch is <b>fully defined</b>. That is the state you want before
+building on it, because nothing can shift underneath a feature later.</p>
+
+<h3>Horizontal and vertical</h3>
+<p>Two ways round, whichever suits:</p>
+<ul>
+  <li><b>Select first</b> — click a line with the pointer, then click the H or V icon.</li>
+  <li><b>Tool first</b> — click the H or V icon, then click the line.</li>
+</ul>
+<p>These are cheap and worth using freely. A line pinned horizontal loses a degree of
+freedom that no dimension then has to spend.</p>
+
+<div class="note">
+  <span class="tag">Why "fully defined" matters</span>
+  <p>An underdefined sketch isn't broken — you can extrude it perfectly well. The risk is
+  later: change something upstream and an unconstrained profile can wander to a shape you
+  never intended, and the first you'll know is a rebuild that looks wrong. Fully defined
+  means the part can only change the way you asked it to.</p>
+</div>
+
+<h2 id="editsk">Editing a sketch</h2>
+<p>All of this needs the <b>pointer</b> tool active.</p>
+<ul>
+  <li><b>Move a point</b> — drag any endpoint. The view stays put while you drag.</li>
+  <li><b>Resize or spin a polygon</b> — drag one of its corners.</li>
+  <li><b>Delete</b> — click a line to select it, then <kbd>Delete</kbd>. Or use the eraser
+      to remove individual segments and dimensions.</li>
+  <li><b>Change a dimension</b> — click its value and type a new one.</li>
+</ul>
+<p>To edit a sketch you've already finished, find it in the tree and open it from the
+right-click menu. Everything downstream rebuilds when you're done.</p>
+
+<h2 id="features">Features</h2>
+<p>Everything lives under <b>Add</b>. Features that need something they haven't got — a
+sketch, or an existing solid — stay greyed out until it exists.</p>
+<table>
+  <tr><th>Feature</th><th>Needs</th><th>What it does</th></tr>
+  <tr><td><b>Extrude boss</b></td><td>A sketch</td><td>Pushes a closed profile along the
+    plane normal to make a solid. The everyday one.</td></tr>
+  <tr><td><b>Extrude cut</b></td><td>A sketch + a solid</td><td>The same sweep, subtracted.
+    Holes, slots, pockets.</td></tr>
+  <tr><td><b>Revolve boss</b></td><td>A sketch</td><td>Spins a profile around an axis.
+    Anything turned on a lathe — shafts, knobs, bottles.</td></tr>
+  <tr><td><b>Revolve cut</b></td><td>A sketch + a solid</td><td>The same spin, subtracted.
+    Grooves and undercuts.</td></tr>
+  <tr><td><b>Fillet</b></td><td>A solid</td><td>Rounds edges to a radius. Softens corners
+    and removes stress risers.</td></tr>
+  <tr><td><b>Chamfer</b></td><td>A solid</td><td>Cuts a flat bevel on an edge. Good for
+    lead-ins and de-burring.</td></tr>
+  <tr><td><b>Mirror</b></td><td>A solid</td><td>Reflects the model across a plane.
+    Model half a symmetrical part, mirror the rest.</td></tr>
+  <tr><td><b>Linear pattern</b></td><td>A solid</td><td>Repeats along a direction at a
+    fixed spacing.</td></tr>
+  <tr><td><b>Circular pattern</b></td><td>A solid</td><td>Repeats around an axis — bolt
+    circles, splines, cooling fins.</td></tr>
+</table>
+<p>Select a feature in the tree and its parameters appear in a panel — depth, radius,
+count, spacing. Edit them and the model rebuilds.</p>
+<div class="note warn">
+  <span class="tag">Worth knowing</span>
+  <p>Edits made in the parameter panel are <b>not covered by undo</b>. <kbd>Ctrl</kbd>+<kbd>Z</kbd>
+  tracks sketching and tree operations; it won't walk back an extrude depth you retyped.
+  Note the old number before you change it.</p>
+</div>
+<p>Fillets and chamfers are the usual place a rebuild fails, and it's rarely a bug: a
+radius bigger than the material it has to blend into has no valid solution. Reduce it, or
+put the fillet earlier in the tree before the geometry gets tight.</p>
+
+<h2 id="tree">The feature tree</h2>
+<p>Build order, top to bottom. Click any item to select and highlight it.</p>
+<table>
+  <tr><th>Action</th><th>How</th></tr>
+  <tr><td>Rename</td><td><kbd>F2</kbd>, or right-click → Rename</td></tr>
+  <tr><td>Delete</td><td>Select, then <kbd>Delete</kbd></td></tr>
+  <tr><td>Show or hide</td><td>Right-click → Show / Hide</td></tr>
+  <tr><td>Collapse a feature</td><td>Click its twisty</td></tr>
+  <tr><td>Collapse everything</td><td>The collapse control at the top of the tree</td></tr>
+</table>
+<p>Naming things pays off quickly. <em>Extrude 3</em> tells you nothing six features later;
+<em>Mounting boss</em> does. The demo part is named this way for exactly that reason.</p>
+<p>Sketches nest <b>inside</b> the feature built from them, since once consumed they're an
+ingredient rather than a step of their own. They're hidden by default; right-click → Show
+displays one in yellow when you need to see what a feature was made from. An eye icon on
+the row marks anything currently visible.</p>
+
+<h2 id="datum">Datum geometry</h2>
+<p>The three planes — <b>Top</b>, <b>Front</b>, <b>Right</b> — meet at the origin and are
+the reference everything else hangs off. They sit at the top of the tree, above your
+features, because they exist before the part does.</p>
+<p>They're hidden until wanted; right-click one and toggle its visibility. You can also add
+your own:</p>
+<ul>
+  <li><b>Add plane</b> — a new sketching plane, typically offset from an existing one.
+      This is how you sketch somewhere that isn't a face of the model.</li>
+  <li><b>Add axis</b> — a reference line, useful as the spin axis for a revolve or a
+      circular pattern.</li>
+</ul>
+
+<h2 id="undo">Undo</h2>
+<p><kbd>Ctrl</kbd>+<kbd>Z</kbd> steps back, <kbd>Ctrl</kbd>+<kbd>Y</kbd> forward, up to
+60 steps. Undo captures the whole document, so stepping back into a sketch reopens that
+sketch as it was.</p>
+<p>The exception is the parameter panel, as noted above.</p>
+
+<h2 id="save">Saving &amp; opening</h2>
+<p><b>Save</b> writes a <code>.sketchcad</code> file — plain JSON holding the entire
+recipe: every sketch, dimension, feature and parameter. It's small, diffable, and opens
+back up fully editable. This is your working format; use it for anything you might revisit.</p>
+<p><b>Open</b> loads one back. <b>New part</b> starts fresh.</p>
+<div class="note warn">
+  <span class="tag">Save early</span>
+  <p>There is no autosave and no recovery. Everything lives in the tab, so a crash, a
+  closed window or a stray refresh takes the part with it. Save whenever you've made
+  progress you'd be annoyed to redo.</p>
+</div>
+
+<h3>Units</h3>
+<p>The <b>Units</b> button switches what dimensions are displayed and typed in. It changes
+presentation, not the model — the underlying geometry is unaffected.</p>
+
+<h2 id="export">Exporting</h2>
+<h3>STL — for 3D printing</h3>
+<p>A triangle mesh. Every slicer reads it, and it's what you want for printing. Curves
+become facets, so a cylinder is really a many-sided prism; fine for printing, lossy as a
+master copy. STL carries no feature history — keep the <code>.sketchcad</code> file too.</p>
+
+<h3>STEP — for other CAD</h3>
+<p>Real B-rep geometry written straight out of the kernel: planes stay planes, cylinders
+stay cylinders, fillets stay analytic blend surfaces. Nothing is tessellated. This is the
+format to hand to a machine shop, to import into Fusion or SolidWorks, or to keep as a
+neutral archive. If you're choosing between the two and not printing, choose STEP.</p>
+
+<h2 id="assembly">Assemblies</h2>
+<p><b>New assembly</b> starts a document that holds several parts rather than one.
+<b>Insert</b> brings a saved part in as a component; select one and <kbd>Delete</kbd>
+removes it. Assemblies save as <code>.asmcad</code>.</p>
+<p>This is the newest and least developed corner of freyacad — treat it as useful for
+laying parts out together and checking how they sit, rather than as a full assembly
+environment with mates and joints.</p>
+
+<h2 id="keys">Keyboard</h2>
+<table>
+  <tr><th>Key</th><th>Does</th></tr>
+  <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></td><td>Line, rectangle, circle, polygon</td></tr>
+  <tr><td><kbd>D</kbd></td><td>Dimension</td></tr>
+  <tr><td><kbd>Enter</kbd></td><td>End the current line chain, or finish the sketch</td></tr>
+  <tr><td><kbd>Esc</kbd></td><td>Cancel the current action; again to leave the sketch</td></tr>
+  <tr><td><kbd>Delete</kbd></td><td>Delete what's selected</td></tr>
+  <tr><td><kbd>F</kbd></td><td>Fit everything in view</td></tr>
+  <tr><td><kbd>F2</kbd></td><td>Rename the selected feature</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>Undo / redo</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>5</kbd></td><td>Perspective ↔ orthographic</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>7</kbd></td><td>Isometric</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>8</kbd></td><td>Normal to</td></tr>
+</table>
+
+<h2 id="limits">Known limits</h2>
+<p>Stated plainly, so nothing surprises you mid-part:</p>
+<ul>
+  <li><b>No constraint solver yet.</b> Dimensions apply one at a time and can disturb each
+      other. See the note under <a href="#dims">Dimensions</a>.</li>
+  <li><b>Dimensioning to the datum planes isn't in yet.</b> You can dimension to the origin;
+      distances and angles measured to a plane trace are still to come.</li>
+  <li><b>No parallel / perpendicular / equal constraints.</b> Horizontal and vertical only,
+      for now.</li>
+  <li><b>The parameter panel is outside undo.</b></li>
+  <li><b>Desktop only</b>, by design.</li>
+  <li><b>No autosave.</b> The tab is the only copy until you save.</li>
+  <li><b>Assemblies are early.</b> No mates or joints.</li>
+</ul>
+
+<h2 id="about">About</h2>
+<p>freyacad is built on <b>Open CASCADE</b> — the same B-rep kernel behind FreeCAD —
+compiled to WebAssembly and running in the page. That's why STEP export is genuine solid
+geometry rather than a mesh dressed up as one. The interface is drawn with
+<b>three.js</b>. The whole application is a single HTML file with no build step and no
+framework.</p>
+<p>Source, issues and history: <a href="https://github.com/Lee677/freya" target="_blank"
+rel="noopener">github.com/Lee677/freya</a></p>
+
+<footer>
+  freyacad manual · revised 21 August 2026 · part of <a href="https://freya.co.nz">freya.co.nz</a><br>
+  This manual is kept in step with the application; if something here doesn't match what
+  you see, the manual is the thing that's wrong.
+</footer>
+</main>
+</div>
+
+<script>
+/* Highlight the section you're reading. Plain observer, no library. */
+(function(){
+  var links = [].slice.call(document.querySelectorAll('nav a'));
+  var map = {};
+  links.forEach(function(a){ map[a.getAttribute('href').slice(1)] = a; });
+  var seen = new Set();
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(e.isIntersecting) seen.add(e.target.id); else seen.delete(e.target.id);
+    });
+    var order = [].slice.call(document.querySelectorAll('main h2'));
+    var top = order.find(function(h){ return seen.has(h.id); });
+    links.forEach(function(a){ a.classList.remove('on'); });
+    if(top && map[top.id]) map[top.id].classList.add('on');
+  }, {rootMargin:'-8% 0px -70% 0px'});
+  document.querySelectorAll('main h2').forEach(function(h){ io.observe(h); });
+})();
+</script>
+</body>
+</html>
