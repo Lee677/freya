@@ -239,8 +239,9 @@ whatever you're mid-way through, and again to leave the sketch.</p>
 <table>
   <tr><th>Tool</th><th>Key</th><th>How it works</th></tr>
   <tr><td><b>Line</b></td><td><kbd>1</kbd></td><td>Click each point in turn to chain
-    segments. <kbd>Enter</kbd> ends the chain; close it back on its own start point to
-    make a sealed loop.</td></tr>
+    segments. Two clicks and <kbd>Enter</kbd> makes a single standalone segment; with
+    three or more points <kbd>Enter</kbd> closes the loop, as does clicking back on the
+    start point.</td></tr>
   <tr><td><b>Rectangle</b></td><td><kbd>2</kbd></td><td>Click one corner, then the
     opposite one.</td></tr>
   <tr><td><b>Circle</b></td><td><kbd>3</kbd></td><td>Click the centre, then a point on
@@ -320,8 +321,8 @@ can still deform.</p>
 <p>When it hits zero the sketch is <b>fully defined</b>. That is the state you want before
 building on it, because nothing can shift underneath a feature later.</p>
 
-<h3>Horizontal, vertical, parallel, equal</h3>
-<p>Four constraints live in the tool dock. Horizontal and vertical work either way round:</p>
+<h3>Horizontal, vertical, parallel, equal, concentric</h3>
+<p>Five constraints live in the tool dock. Horizontal and vertical work either way round:</p>
 <ul>
   <li><b>Select first</b> — click a line with the pointer, then click the H or V icon.</li>
   <li><b>Tool first</b> — click the H or V icon, then click the line.</li>
@@ -329,17 +330,26 @@ building on it, because nothing can shift underneath a feature later.</p>
 <p><b>Parallel</b> (∥) and <b>equal</b> (=) relate two lines, so they always want a
 reference first: click the icon (or have a line selected when you click it), click the
 line to copy from, then click the line to change. Parallel matches its direction; equal
-matches its length.</p>
+matches its length. <b>Concentric</b> (◎) does the same for circles and polygons: click
+the reference, then the one to move onto its centre. The shared centre then counts as a
+coincidence, so it shows up in the degrees-of-freedom arithmetic like any other join.</p>
+<p>Constraints respect what's already anchored. A line drawn from the origin is attached
+there, so making it vertical swings its <em>free</em> end round — it won't drag the
+anchored end off its datum. Only when neither end is held does the line pivot about its
+middle.</p>
 <p>These are cheap and worth using freely. A line pinned horizontal loses a degree of
 freedom that no dimension then has to spend.</p>
 
-<h3>Defined geometry won't drag</h3>
-<p>Once something is fully defined, its position is decided by its dimensions — so the
-only way to move it is to <b>change a dimension value</b>. Dragging it does nothing but
-flash the point red and say so.</p>
-<p>This is not the program being awkward. If a drag could move defined geometry, it would
-have to silently break a dimension you set on purpose, and you'd have no way of knowing
-which. Amber means settled; if you want it somewhere else, say where by editing the number.</p>
+<h3>Dimensioned geometry won't drag</h3>
+<p>The rule is simple: <b>a drag must never change a dimension's value</b>. If any
+dimension depends on a point — a length on its line, an angle, a distance to a plane, a
+diameter on its polygon — that point refuses to drag, whether or not the sketch is fully
+defined yet. It flashes red and the status line says which way out you have: edit the
+dimension's number.</p>
+<p>This is not the program being awkward. If a drag could move dimensioned geometry, it
+would silently rewrite a number you set on purpose, and you'd have no way of knowing
+which. Points nothing has measured yet stay free to drag; once you've said what a thing
+measures, only the measurement moves it.</p>
 
 <div class="note">
   <span class="tag">Why "fully defined" matters</span>
@@ -456,6 +466,22 @@ sketch as it was.</p>
 recipe: every sketch, dimension, feature and parameter. It's small, diffable, and opens
 back up fully editable. This is your working format; use it for anything you might revisit.</p>
 <p><b>Open</b> loads one back. <b>New part</b> starts fresh.</p>
+
+<h3>Importing STEP and STL</h3>
+<p>The same <b>Open</b> button also takes <code>.step</code> / <code>.stp</code> and
+<code>.stl</code> files. They come into the current part as an <b>import feature</b> in
+the tree — the file's bytes travel inside your <code>.sketchcad</code>, so the part still
+saves, reopens and replays as one self-contained recipe.</p>
+<ul>
+  <li><b>STEP</b> arrives as true B-rep solid geometry, read by the same kernel that
+      writes it. An imported STEP body is a first-class citizen: fillet its edges,
+      cut it, mirror it, pattern it, export it again.</li>
+  <li><b>STL</b> is only ever triangles, so it arrives as a faceted body. It's exactly
+      right for viewing, placing and re-exporting; fillets and smooth-surface work need
+      real surfaces that a mesh simply doesn't have.</li>
+</ul>
+<p>Files over 30&nbsp;MB are refused — they'd make the saved part unwieldy. Decimate
+large scans first.</p>
 <div class="note warn">
   <span class="tag">Save early</span>
   <p>There is no autosave and no recovery. Everything lives in the tab, so a crash, a
@@ -508,8 +534,10 @@ environment with mates and joints.</p>
 <ul>
   <li><b>No constraint solver yet.</b> Dimensions apply one at a time and can disturb each
       other. See the note under <a href="#dims">Dimensions</a>.</li>
-  <li><b>No perpendicular constraint.</b> Horizontal, vertical, parallel and equal are in;
-      perpendicular isn't yet.</li>
+  <li><b>No perpendicular constraint.</b> Horizontal, vertical, parallel, equal and
+      concentric are in; perpendicular isn't yet.</li>
+  <li><b>STL imports are faceted.</b> A mesh has no true surfaces, so an imported STL
+      can be viewed, placed and exported but not filleted or chamfered.</li>
   <li><b>The parameter panel is outside undo.</b></li>
   <li><b>Desktop only</b>, by design.</li>
   <li><b>No autosave.</b> The tab is the only copy until you save.</li>

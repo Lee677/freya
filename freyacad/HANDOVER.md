@@ -63,6 +63,24 @@ the overlay iframe.
    unreadable smudge; it's a drawn SVG now. Anything under ~16 px should be vector.
 7. **A diagonal distance doesn't lock a point** — it leaves it free on a circle. Locking a
    point takes two dimensions, which is why FreeCAD has DistanceX/DistanceY.
+8. **The WASM build's binary STL reader is broken** (its OSD file layer is only partly
+   compiled in — `RWStl.ReadFile_*` returns null for valid binary files; ASCII works).
+   STL import therefore parses both flavours in JS and builds a `Poly_Triangulation`
+   directly. When attaching it: `BRep_Builder.UpdateFace_2(face, handle, true)` — with
+   `theToReset=false` the triangulation is appended but never marked active and
+   `BRep_Tool.Triangulation` comes back null.
+9. **Mesh-only bodies kill exact-geometry code paths.** `BRepBndLib.Add(s, box, false)`
+   and `BRepMesh_IncrementalMesh` both throw raw C++ exceptions (a bare number in JS) on
+   a face with no surface. `OCK.bounds`/`OCK.mesh` carry fallbacks; STEP export filters
+   mesh bodies out via `OCK.hasSurfaces` and says so in the hint.
+10. **The dev server serves stale HTML often enough to burn you.** Symptoms look exactly
+    like "my new click handler is dead" while other new code visibly works. Between an
+    edit and a browser test, always `location.reload(true)` — plain reload trusted the
+    cache at least once in a way that cost half an hour of phantom debugging.
+11. **Drags must never rewrite a dimension.** `dragWouldBreakDim` refuses the grab of any
+    point a dim depends on, defined or not — full-definition locking alone let a 1-DOF
+    entity drag its dimensioned points and silently change the numbers, which the user
+    rightly called out. If a new dim kind is added, teach `dragWouldBreakDim` about it.
 
 ## Biggest thing still missing
 

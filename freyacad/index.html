@@ -474,7 +474,7 @@ if(!window.THREE){
       <button id="btn-new" class="btn-ghost">New part</button>
       <button id="btn-new-asm" class="btn-ghost">New assembly</button>
       <button id="btn-load" class="btn-ghost">Open</button>
-      <input type="file" id="file-load" style="display:none" accept=".json,.sketchcad,.asmcad">
+      <input type="file" id="file-load" style="display:none" accept=".json,.sketchcad,.asmcad,.step,.stp,.stl">
       <input type="file" id="file-insert" style="display:none" accept=".json,.sketchcad">
     </div>
     <div class="tb-spacer"></div>
@@ -517,6 +517,7 @@ if(!window.THREE){
       <button data-tool="vert" title="Make a line vertical">⊥ Vert</button>
       <button data-tool="paral" title="Make one line parallel to another">∥ Parallel</button>
       <button data-tool="equal" title="Make one line the same length as another">= Equal</button>
+      <button data-tool="conc" title="Make a circle or polygon share another's centre">◎ Conc</button>
       <button data-tool="erase">Erase</button>
     </div>
     <div class="hint" id="hint"></div>
@@ -1236,21 +1237,26 @@ const CSG = (function(){
   }
   // coincidences holding this entity: on the origin, or shared with another
   // entity. Each pins two coordinates.
-  function pinsOn(sk,i){
+  function pinsOn(sk,i,anc){
     const EPS=1e-4, e=sk.entities[i]; if(!e)return 0;
+    if(!anc)anc=anchoredSet(sk);
     let n=0;
     for(const p of entPoints(e)){
       if(Math.hypot(p.x,p.y)<EPS){ n++; continue; }
       for(let j=0;j<sk.entities.length;j++){
-        if(j===i)continue;
+        /* Only a grounded partner can hold a point still. Two floating shapes
+           glued to each other used to pin one another and read "defined" while
+           the pair could still slide around the plane as one. */
+        if(j===i||!anc[j])continue;
         if(entPoints(sk.entities[j]).some(q=>Math.hypot(q.x-p.x,q.y-p.y)<EPS)){ n++; break; }
       }
     }
     return n;
   }
   function defineState(sk){
+    const anc=anchoredSet(sk);          // once, not per entity — it's a flood fill
     return sk.entities.map(function(e,i){
-      const dof=Math.max(0, entVarCount(e) - 2*pinsOn(sk,i) - dimsOn(sk,i));
+      const dof=Math.max(0, entVarCount(e) - 2*pinsOn(sk,i,anc) - dimsOn(sk,i));
       return {dof:dof, defined:dof<=0};
     });
   }
@@ -1260,6 +1266,40 @@ const CSG = (function(){
      and so do we. Deliberately the *same* count the chip reports, so the two can
      never disagree about what "defined" means. */
   function lockedEnts(sk){ return defineState(sk).map(s=>s.defined); }
+  /* The rule that actually matters at the pointer: a drag must never change a
+     dimension's value — only editing the dimension may. Full-definition locking
+     alone let any entity with one loose DOF drag its dimensioned points and
+     silently rewrite the numbers. So: if any dim depends on this handle's
+     point, the drag is refused, defined or not. */
+  function dragWouldBreakDim(sk,h){
+    const e=sk.entities[h.ei]; if(!e||!(sk.dims&&sk.dims.length))return false;
+    const pi = e.type==='poly' ? e.pts.indexOf(h.pt) : -1;
+    const segTouch=r=>{                       // does this seg-ref span the handle?
+      if(!r||r.ent!==h.ei||r.seg==null)return false;
+      if(e.type!=='poly')return true;
+      if(pi<0)return false;
+      const b=e.closed?(r.seg+1)%e.pts.length:r.seg+1;
+      return pi===r.seg||pi===b;
+    };
+    const ptTouch=r=>{
+      if(!r||r.ent!==h.ei)return false;
+      if(e.type==='poly')return pi>=0&&r.idx===pi;
+      if(e.type==='circle'||e.type==='polygon')return h.kind==='c'; // spin leaves the centre put
+      return true;                            // rect: either handle moves every corner
+    };
+    for(const d of sk.dims){
+      if(d.kind==='seg'){ if(segTouch({ent:d.entIdx,seg:d.seg}))return true; }
+      else if(d.kind==='p2p'){ if(ptTouch(d.a)||ptTouch(d.b))return true; }
+      else if(d.kind==='angle'){ if(segTouch(d.a)||segTouch(d.b))return true; }
+      else if(d.kind==='ptrace'){ if(ptTouch(d.ref))return true; }
+      else if(d.entIdx===h.ei){               // dia / pdia / width / height
+        if(e.type==='circle'){ }              // a centre drag can't change a diameter
+        else if(e.type==='polygon'){ if(h.kind==='pg')return true; } // corner drag resizes
+        else return true;
+      }
+    }
+    return false;
+  }
   function updateAnchorChip(sk){
     const el=$('sk-anchor');if(!el)return;
     if(mode!=='sketch'||!sk){el.style.display='none';return;}
@@ -1701,7 +1741,10 @@ const CSG = (function(){
   OCK.bounds = function(s){
     const oc = OC();
     const box = new oc.Bnd_Box_1();
-    oc.BRepBndLib.Add(s, box, false);
+    // exact geometry first; a mesh-only body (STL import) has none, so fall
+    // back to letting the box read the triangulation instead of throwing
+    try{ oc.BRepBndLib.Add(s, box, false); }
+    catch(_){ oc.BRepBndLib.Add(s, box, true); }
     const mn = box.CornerMin(), mx = box.CornerMax();
     return { min: [mn.X(), mn.Y(), mn.Z()], max: [mx.X(), mx.Y(), mx.Z()] };
   };
@@ -1846,7 +1889,10 @@ const CSG = (function(){
     const b = OCK.bounds(shape);
     const diag = Math.hypot(b.max[0]-b.min[0], b.max[1]-b.min[1], b.max[2]-b.min[2]) || 1;
     const defl = Math.min(0.8, Math.max(0.02, diag*0.004));
-    new oc.BRepMesh_IncrementalMesh_2(shape, defl, false, 0.35, false);
+    // mesh-only bodies carry their triangulation already and have no surfaces
+    // for the mesher to work on — skip remeshing rather than die
+    try{ new oc.BRepMesh_IncrementalMesh_2(shape, defl, false, 0.35, false); }
+    catch(_){ }
     const pos = [], idx = [];
     const fx = new oc.TopExp_Explorer_2(shape, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
     while(fx.More()){
@@ -1874,18 +1920,101 @@ const CSG = (function(){
     geo.userData.isCSG = true;
     return geo;
   };
+  /* Read a STEP or STL file (base64 bytes) into a shape via the kernel's own
+     readers. STEP arrives as true B-rep — planes, cylinders, blends — and can
+     be filleted, cut and patterned like anything modelled here. STL is only
+     ever triangles, so it lands as a faceted shell: fine to view, place and
+     re-export, meaningless to fillet. */
+  OCK.importShape = function(fmt, b64){
+    const oc = OC();
+    const bin = atob(b64), bytes = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+    const path = '/import_tmp.' + fmt;
+    oc.FS.writeFile(path, bytes);
+    try{
+      let shape;
+      if(fmt==='step'){
+        const rd = new oc.STEPControl_Reader_1();
+        const st=rd.ReadFile(path), done=oc.IFSelect_ReturnStatus.IFSelect_RetDone;
+        if(!(st===done||(st&&done&&st.value===done.value)))
+          throw new Error('the kernel could not read it as STEP');
+        rd.TransferRoots(new oc.Message_ProgressRange_1());
+        shape = rd.OneShape();
+      } else {
+        /* STL is parsed here, not by the kernel: this WASM build's binary STL
+           reader comes back empty (its file layer is only partly compiled in),
+           while both flavours are trivial to read in JS. The triangles go into
+           a Poly_Triangulation on a bare face — the display, bounds and export
+           pipelines all read triangulation, so a mesh body needs nothing more. */
+        const tris=[];
+        const head=new TextDecoder().decode(bytes.subarray(0,Math.min(512,bytes.length)));
+        if(/^\s*solid/.test(head)&&/facet/i.test(head)){
+          const txt=new TextDecoder().decode(bytes);
+          const re=/vertex\s+([\-\d.eE+]+)\s+([\-\d.eE+]+)\s+([\-\d.eE+]+)/g;
+          let m,v=[];
+          while((m=re.exec(txt))){ v.push([+m[1],+m[2],+m[3]]); if(v.length===3){tris.push(v);v=[];} }
+        } else {
+          if(bytes.length<84) throw new Error('not a valid STL file');
+          const dv=new DataView(bytes.buffer,bytes.byteOffset,bytes.length);
+          const n=dv.getUint32(80,true);
+          if(84+n*50>bytes.length) throw new Error('binary STL is truncated');
+          for(let i=0;i<n;i++){
+            const o=84+i*50, v=[];
+            for(let j=0;j<3;j++)v.push([dv.getFloat32(o+12+j*12,true),
+              dv.getFloat32(o+16+j*12,true),dv.getFloat32(o+20+j*12,true)]);
+            tris.push(v);
+          }
+        }
+        if(!tris.length) throw new Error('no triangles in the STL file');
+        // weld shared corners so the mesh is one connected surface, not confetti
+        const idx=new Map(), nodes=[];
+        const key=p=>p[0].toFixed(5)+','+p[1].toFixed(5)+','+p[2].toFixed(5);
+        const faces=tris.map(t=>t.map(p=>{
+          const k=key(p); let i=idx.get(k);
+          if(i==null){ i=nodes.length; nodes.push(p); idx.set(k,i); }
+          return i+1;                                  // OCCT is 1-based
+        }));
+        const tri=new oc.Poly_Triangulation_2(nodes.length,faces.length,false,false);
+        nodes.forEach((p,i)=>tri.SetNode(i+1,new oc.gp_Pnt_3(p[0],p[1],p[2])));
+        faces.forEach((f,i)=>tri.SetTriangle(i+1,new oc.Poly_Triangle_2(f[0],f[1],f[2])));
+        const bb=new oc.BRep_Builder(), face=new oc.TopoDS_Face();
+        bb.MakeFace_1(face);
+        // theToReset=true: without it the triangulation is appended but never
+        // marked active, and BRep_Tool.Triangulation comes back null
+        bb.UpdateFace_2(face,new oc.Handle_Poly_Triangulation_2(tri),true);
+        shape=face;
+      }
+      if(!shape || shape.IsNull()) throw new Error('the file contained no shape');
+      return shape;
+    } finally { try{ oc.FS.unlink(path); }catch(_){ } }
+  };
+  // a mesh-only body (STL import) has no surfaces for STEP to describe — the
+  // writer dies on it, so those bodies are left out and counted for the caller
+  OCK.hasSurfaces = function(s){
+    const oc = OC();
+    const fx = new oc.TopExp_Explorer_2(s, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+    while(fx.More()){
+      try{ if(!oc.BRep_Tool.Surface_2(oc.TopoDS.Face_1(fx.Current())).IsNull()) return true; }
+      catch(_){ }
+      fx.Next();
+    }
+    return false;
+  };
   OCK.stepBlob = function(shapes, name){
     const oc = OC();
     const comp = new oc.TopoDS_Compound();
     const bld = new oc.BRep_Builder();
     bld.MakeCompound(comp);
-    for(const s of shapes) bld.Add(comp, s);
+    let skipped = 0;
+    for(const s of shapes){ if(OCK.hasSurfaces(s)) bld.Add(comp, s); else skipped++; }
     const w = new oc.STEPControl_Writer_1();
     w.Transfer(comp, oc.STEPControl_StepModelType.STEPControl_AsIs, true, new oc.Message_ProgressRange_1());
     w.Write(name);
     const data = oc.FS.readFile(name, {encoding: 'utf8'});
     oc.FS.unlink(name);
-    return new Blob([data], {type: 'application/step'});
+    const blob = new Blob([data], {type: 'application/step'});
+    blob.skipped = skipped;
+    return blob;
   };
 
   /* ===================== EDGE TREATMENT (Subtractive Solidworks style) ===================== */
@@ -2414,6 +2543,12 @@ const CSG = (function(){
       return;
     }
     if(f.type==='dplane'||f.type==='daxis') return;   // reference geometry only
+    if(f.type==='import'){
+      // the file's bytes live in the feature, so the recipe replays offline
+      const shp=OCK.importShape(f.fmt, f.data);
+      resultShapes.push(shp);
+      return;
+    }
     if(f.type==='extrude'||f.type==='cut'){
       const sd=sketchData[f.sketchId]; if(!sd)throw new Error('needs a sketch');
       const sk={entities:sd.sk.entities,fillet:sd.sk.fillet,chamfer:sd.sk.chamfer,frame:sd.frame};
@@ -2703,7 +2838,16 @@ const CSG = (function(){
   /* Constraints work either way round: pick the tool then the line, or select a
      line with the Pointer and press the tool. Returns true if it acted. */
   function applyConstraintToSelection(t){
-    if(!editing||!sketchSel||sketchSel.seg==null)return false;
+    if(!editing||!sketchSel)return false;
+    if(t==='conc'){
+      // a selected circle or polygon seeds the reference, same as paral/equal
+      const e=editing.entities[sketchSel.entIdx];
+      if(!e||(e.type!=='circle'&&e.type!=='polygon'))return false;
+      concRef={entIdx:sketchSel.entIdx,kind:e.type==='circle'?'dia':'pdia'};
+      setHint('Now click the circle or polygon to move onto that centre');
+      return false;
+    }
+    if(sketchSel.seg==null)return false;
     if(t!=='horiz'&&t!=='vert'&&t!=='paral'&&t!=='equal')return false;
     const d={entIdx:sketchSel.entIdx,kind:'seg',seg:sketchSel.seg};
     if(t==='horiz'||t==='vert'){
@@ -2921,6 +3065,7 @@ const CSG = (function(){
     polygon:'<svg viewBox="0 0 16 16"><path d="M8 2.8 12.5 5.4 12.5 10.6 8 13.2 3.5 10.6 3.5 5.4Z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
     dim:'<span>&#10231;</span>', horiz:'<span>&#8866;</span>', vert:'<span>&#8869;</span>',
     paral:'<span>&#8741;</span>', equal:'<span>=</span>',
+    conc:'<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
     erase:'<svg viewBox="0 0 16 16"><path d="M4 12 12 4M4 4l8 8" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>'
   };
   let toolBadgeShown=null;
@@ -3077,7 +3222,7 @@ const CSG = (function(){
     // one snapshot per committed shape; the in-progress polyline is covered by
     // Backspace/Escape, so only the commit is worth an undo step
     if(tool==='rect'||tool==='circle'||tool==='polygon'){ if(draftStage===1)pushUndo('draw '+tool); }
-    else if(tool==='erase'||tool==='horiz'||tool==='vert'||tool==='paral'||tool==='equal'){ pushUndo(tool); }
+    else if(tool==='erase'||tool==='horiz'||tool==='vert'||tool==='paral'||tool==='equal'||tool==='conc'){ pushUndo(tool); }
     if(tool==='line'){
       if(draftPts.length>=3){const f=draftPts[0];if(Math.hypot(p.x-f.x,p.y-f.y)<=Math.max(snapSize,0.6)){commitDraftLine();return;}}
       const last=draftPts[draftPts.length-1];
@@ -3143,6 +3288,13 @@ const CSG = (function(){
         if(!equalRef){ equalRef=d; redrawDraft(null); setHint('Now click the line to match its length'); }
         else { applyEqual(equalRef, d); equalRef=null; rebuild(); setHint('Lines made equal length'); }
       } else setHint('Click a reference line segment first');
+    } else if(tool==='conc'){
+      const d=dimHit(p);
+      if(d && (d.kind==='dia'||d.kind==='pdia')){
+        if(!concRef){ concRef=d; redrawDraft(null); setHint('Now click the circle or polygon to move onto that centre'); }
+        else { if(applyConcentric(concRef, d)) setHint('Centres made concentric');
+               concRef=null; rebuild(); }
+      } else setHint('Click a reference circle or polygon first');
     } else if(tool==='erase'){
       if(eraseAt(p))rebuild(); else setHint('Nothing under the cursor to erase');
     }
@@ -3220,7 +3372,10 @@ const CSG = (function(){
   }
 
   function commitDraftLine(){
-    if(tool==='line'&&draftPts.length>=3){pushUndo('draw polyline');const ent={type:'poly',pts:draftPts.slice(),closed:true};editing.entities.push(ent);flashLoop(editing,ent);}
+    /* Two points is a real segment — Enter used to silently discard it, which
+       made "draw one line from the origin" impossible. Three or more still
+       close, matching the hint; a pair stays an open stick. */
+    if(tool==='line'&&draftPts.length>=2){pushUndo('draw polyline');const ent={type:'poly',pts:draftPts.slice(),closed:draftPts.length>=3};editing.entities.push(ent);flashLoop(editing,ent);}
     draftPts=[];redrawDraft(null);rebuild();
   }
 
@@ -3236,8 +3391,34 @@ const CSG = (function(){
     if(!a||!b) return null;
     return {a,b};
   }
+  /* Which end of a segment a constraint must not move: an end on the origin,
+     else one coincident with a grounded entity. A line drawn from the origin is
+     already attached there, so making it vertical should swing the free end
+     round — not drag the anchored one off its datum, which is what pivoting
+     about the midpoint did. Both-or-neither anchored falls back to the
+     midpoint treatment, which at least shares the damage evenly. */
+  function heldEnd(d,s){
+    const EPS=1e-4, anc=anchoredSet(editing);
+    const held=q=>{
+      if(Math.hypot(q.x,q.y)<EPS)return true;
+      for(let j=0;j<editing.entities.length;j++){
+        if(j===d.entIdx||!anc[j])continue;
+        if(entPoints(editing.entities[j]).some(o=>Math.hypot(o.x-q.x,o.y-q.y)<EPS))return true;
+      }
+      return false;
+    };
+    const ha=held(s.a), hb=held(s.b);
+    return ha!==hb ? (ha?s.a:s.b) : null;
+  }
   function applyHVConstraint(d, kind){
     const s=polySeg(d); if(!s) return;
+    const keep=heldEnd(d,s);
+    if(keep){
+      const mv=(keep===s.a)?s.b:s.a, L=Math.hypot(mv.x-keep.x,mv.y-keep.y);
+      if(kind==='horiz'){ const sgn=mv.x>=keep.x?1:-1; mv.x=keep.x+sgn*L; mv.y=keep.y; }
+      else              { const sgn=mv.y>=keep.y?1:-1; mv.y=keep.y+sgn*L; mv.x=keep.x; }
+      return;
+    }
     const mx=(s.a.x+s.b.x)/2, my=(s.a.y+s.b.y)/2, L=Math.hypot(s.b.x-s.a.x,s.b.y-s.a.y)/2;
     // keep the end that's further along the constrained axis on the same side
     if(kind==='horiz'){ const sgn=s.b.x>=s.a.x?1:-1; s.a.x=mx-sgn*L; s.b.x=mx+sgn*L; s.a.y=my; s.b.y=my; }
@@ -3247,6 +3428,13 @@ const CSG = (function(){
     const r=polySeg(refD), t=polySeg(tgtD); if(!r||!t) return;
     let dx=r.b.x-r.a.x, dy=r.b.y-r.a.y; const RL=Math.hypot(dx,dy)||1; dx/=RL; dy/=RL;
     const tl=Math.hypot(t.b.x-t.a.x, t.b.y-t.a.y);
+    const keep=heldEnd(tgtD,t);
+    if(keep){                                       // swing about the anchored end
+      const mv=(keep===t.a)?t.b:t.a;
+      const sgn=((mv.x-keep.x)*dx + (mv.y-keep.y)*dy) < 0 ? -1 : 1;
+      mv.x=keep.x+sgn*dx*tl; mv.y=keep.y+sgn*dy*tl;
+      return;
+    }
     const mx=(t.a.x+t.b.x)/2, my=(t.a.y+t.b.y)/2;
     const sgn=((t.b.x-t.a.x)*dx + (t.b.y-t.a.y)*dy) < 0 ? -1 : 1;  // keep closest orientation
     t.a.x=mx - sgn*dx*tl/2; t.a.y=my - sgn*dy*tl/2;
@@ -3256,16 +3444,34 @@ const CSG = (function(){
     const r=polySeg(refD), t=polySeg(tgtD); if(!r||!t) return;
     const RL=Math.hypot(r.b.x-r.a.x, r.b.y-r.a.y);           // reference length
     let dx=t.b.x-t.a.x, dy=t.b.y-t.a.y; const TL=Math.hypot(dx,dy)||1; dx/=TL; dy/=TL;
+    const keep=heldEnd(tgtD,t);
+    if(keep){                                       // stretch away from the anchored end
+      const mv=(keep===t.a)?t.b:t.a;
+      const sx=(mv.x-keep.x)/(TL||1), sy=(mv.y-keep.y)/(TL||1);
+      mv.x=keep.x+sx*RL; mv.y=keep.y+sy*RL;
+      return;
+    }
     const mx=(t.a.x+t.b.x)/2, my=(t.a.y+t.b.y)/2;            // rescale about target midpoint, keep its direction
     t.a.x=mx - dx*RL/2; t.a.y=my - dy*RL/2;
     t.b.x=mx + dx*RL/2; t.b.y=my + dy*RL/2;
+  }
+  // concentric: move one circle or polygon onto another's centre. entPoints
+  // exposes centres, so the shared centre then reads as a coincidence pin.
+  function centreOf(d){
+    const e=editing.entities[d.entIdx];
+    return (e&&(e.type==='circle'||e.type==='polygon'))?e.c:null;
+  }
+  function applyConcentric(refD, tgtD){
+    const ca=centreOf(refD), cb=centreOf(tgtD);
+    if(!ca||!cb||ca===cb) return false;
+    cb.x=ca.x; cb.y=ca.y; return true;
   }
 
   /* ===================== SKETCH DIMENSIONS (driving) =====================
      A dimension writes its value straight back to the shape parameter, so the
      geometry moves to match — true driving behaviour. Each dim is stored on the
      sketch feature and shown as an editable label. */
-  let dimInputEl=null, dimLabelEls=[], paralRef=null, equalRef=null;
+  let dimInputEl=null, dimLabelEls=[], paralRef=null, equalRef=null, concRef=null;
   function seg2Dist(p,a,b){
     const dx=b.x-a.x, dy=b.y-a.y, L2=dx*dx+dy*dy;
     let t = L2>0 ? ((p.x-a.x)*dx+(p.y-a.y)*dy)/L2 : 0; t=Math.max(0,Math.min(1,t));
@@ -3942,6 +4148,8 @@ const CSG = (function(){
     vert:_sw(`<path d="M12 4v16" stroke="${_B}" stroke-width="2.2"/><text x="6" y="15" text-anchor="middle" font-size="10" font-weight="700" font-family="monospace" fill="${_G}" stroke="none">V</text>`),
     paral:_sw(`<path d="M6 20 12 4M12 20 18 4" stroke="${_G}" stroke-width="2"/>`),
     equal:_sw(`<path d="M6 10h12M6 14h12" stroke="${_G}" stroke-width="2.2"/>`),
+    conc:_sw(`<circle cx="12" cy="12" r="8" stroke="${_G}"/><circle cx="12" cy="12" r="3.5" stroke="${_G}"/>`),
+    import:_sw(`<path d="M4 14v5h16v-5" stroke="${_B}"/><path d="M12 3v11M7.5 9.5 12 14l4.5-4.5" stroke="${_Y}"/>`),
     erase:_sw(`<path d="M14.5 4.5 20 10l-8.5 8.5H7l-2.5-2.5z" stroke="${_R}"/><path d="M11 8l5.5 5.5" stroke="${_R}"/><path d="M4 20.5h16" stroke="${_B}" opacity=".5"/>`),
     sketch:_sw(`<path d="M4 20V6M4 20h13" stroke="${_B}"/><path d="M9 15 18 6l2 2-9 9-3.4 1.4z" stroke="${_Y}"/>`),
     'face-sketch':_sw(`<rect x="4" y="4" width="16" height="16" stroke="${_B}" opacity=".55"/><path d="M9 15 16 8l1.8 1.8-7 7-3 1.2z" stroke="${_Y}"/>`),
@@ -4213,6 +4421,16 @@ const CSG = (function(){
 
   function buildPropsBody(body,f){
     const add=el=>body.appendChild(el);
+    if(f.type==='import'){
+      const p=document.createElement('p');
+      p.style.cssText='font-size:12px;color:var(--muted);margin:4px 0 0;line-height:1.5';
+      p.textContent=(f.fmt==='step'
+        ? 'STEP body — true B-rep from the file. Fillets, cuts, mirrors and patterns all work on it.'
+        : 'STL body — faceted mesh from the file. View, place and export it; fillets need real surfaces.')
+        +' ~'+(Math.ceil((f.data||'').length*3/4/1024))+' KB embedded in the part.';
+      add(p);
+      return;
+    }
     if(f.type==='extrude'){
       add(fieldNumber('Depth',f.depth,0.5,0.1,null,'units',v=>{f.depth=v;rerun();}));
       add(fieldCheck('Symmetric (both sides)',f.symmetric,v=>{f.symmetric=v;rerun();}));
@@ -4319,6 +4537,9 @@ const CSG = (function(){
   }
 
   function loadProject(file) {
+      const ext=(file.name.match(/\.([a-z0-9]+)$/i)||[])[1];
+      const fmt=/^ste?p$/i.test(ext||'')?'step':/^stl$/i.test(ext||'')?'stl':null;
+      if(fmt) return importModelFile(file, fmt);
       const reader = new FileReader();
       reader.onload = e => {
           try {
@@ -4343,6 +4564,38 @@ const CSG = (function(){
           } catch(err) { alert('Invalid file'); }
       };
       reader.readAsText(file);
+  }
+  /* A STEP or STL from the Open button becomes an import feature in the tree —
+     bytes and all — so the part saves, reopens and replays like anything else.
+     It lands in the current part rather than replacing it: opening a STEP next
+     to work in progress reads as "bring this in", not "throw that away". */
+  function importModelFile(file, fmt){
+    if(file.size > 30*1024*1024){
+      setHint('That file is over 30 MB — too big to embed in a part. Decimate it first.');
+      return;
+    }
+    if(docMode==='asm'){ setHint('Switch to a part document to import STEP or STL'); return; }
+    const reader=new FileReader();
+    reader.onload=e=>{
+      const bytes=new Uint8Array(e.target.result);
+      let bin=''; const CH=0x8000;
+      for(let i=0;i<bytes.length;i+=CH) bin+=String.fromCharCode.apply(null,bytes.subarray(i,i+CH));
+      const f={id:nextId(), type:'import', name:file.name.replace(/\.[^.]+$/,''),
+               fmt:fmt, data:btoa(bin), suppressed:false};
+      pushUndo('import '+fmt);
+      features.push(f); rollbackIndex=features.length;
+      try{
+        rebuild();
+        const bad=features.find(x=>x.id===f.id&&x.error);
+        if(bad){ setHint('Import failed: '+bad.error); }
+        else { selectFeature(f.id); fitAll();
+               setHint(fmt==='step'
+                 ? 'STEP imported as a solid body — fillets, cuts and patterns all work on it'
+                 : 'STL imported as a faceted body — good for viewing and export, not for fillets'); }
+      }catch(err){ setHint('Import failed: '+(err.message||err)); }
+      refreshTree();
+    };
+    reader.readAsArrayBuffer(file);
   }
 
   /* ============================ MODES / STATUS ============================ */
@@ -4382,6 +4635,8 @@ const CSG = (function(){
       const a=document.createElement('a');
       a.href=url;a.download='freyacad.step';document.body.appendChild(a);a.click();a.remove();
       URL.revokeObjectURL(url);
+      if(blob.skipped) setHint(blob.skipped+(blob.skipped>1?' mesh bodies':' mesh body')+
+        ' left out — STL imports have no surfaces for STEP to carry. Use Export STL for those.');
     }catch(e){ setHint('STEP export failed: '+(e.message||e)); }
   }
   let hintTimer=null;
@@ -4396,6 +4651,7 @@ const CSG = (function(){
       else if(tool==='horiz')h.innerHTML='<span class="pip"></span> Horizontal: click a line segment to lay it flat';
       else if(tool==='vert')h.innerHTML='<span class="pip"></span> Vertical: click a line segment to stand it upright';
       else if(tool==='paral')h.innerHTML='<span class="pip"></span> Parallel: click the reference line, then the line to align to it';
+      else if(tool==='conc')h.innerHTML='<span class="pip"></span> Concentric: click the reference circle or polygon, then the one to move onto its centre';
       else if(tool==='equal')h.innerHTML='<span class="pip"></span> Equal: click the reference line, then the line to match its length';
       else h.innerHTML=`<span class="pip"></span> ${tool}: click two points`;
     } else h.classList.remove('show');
@@ -4413,14 +4669,17 @@ const CSG = (function(){
       if(mode==='sketch'&&editing&&tool==='select'&&e.button===0){
         const p=pointerToSketch(e);
         if(p){ const tol=Math.max(0.6,controls.sph.radius*0.04); const h=nearestHandle(p,tol);
-          if(h&&lockedEnts(editing)[h.ei]){
-            /* Fully defined: its position is the dimensions' to decide. Swallow
-               the gesture rather than orbiting instead — a view that spins when
-               you meant to drag reads as a bug, not as a refusal. */
+          if(h&&(lockedEnts(editing)[h.ei]||dragWouldBreakDim(editing,h))){
+            /* Held still: either fully defined, or a dimension depends on this
+               point and a drag would silently rewrite it. Swallow the gesture
+               rather than orbiting instead — a view that spins when you meant
+               to drag reads as a bug, not as a refusal. */
             controls._s=0; lockFlash={x:h.pt.x,y:h.pt.y}; redrawHandles();
             clearTimeout(lockFlashT);
             lockFlashT=setTimeout(()=>{lockFlash=null;redrawHandles();},900);
-            setHint('Fully defined — change a dimension to move this point');
+            setHint(lockedEnts(editing)[h.ei]
+              ?'Fully defined — change a dimension to move this point'
+              :'A dimension holds this point — edit the dimension value to move it');
             return;
           }
           if(h){ pushUndo('move point'); dragVtx=h; dragSnapPt=null;
@@ -4712,7 +4971,7 @@ const CSG = (function(){
     buildCtxMenu(x,y,items,{cols:true});
   }
   function openSketchMenu(x,y){
-    const setTool=t=>()=>{tool=t;draftStage=0;draftA=null;paralRef=null;equalRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();redrawHandles();dockSel();};
+    const setTool=t=>()=>{tool=t;draftStage=0;draftA=null;paralRef=null;equalRef=null;concRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();redrawHandles();dockSel();};
     buildCtxMenu(x,y,[
       {sect:'Sketch tools'},
       {ic:'move',label:'Pointer — select & rotate',fn:setTool('select')},
@@ -4727,6 +4986,7 @@ const CSG = (function(){
       {ic:'vert',label:'Vertical',fn:setTool('vert')},
       {ic:'paral',label:'Parallel',fn:setTool('paral')},
       {ic:'equal',label:'Equal length',fn:setTool('equal')},
+      {ic:'conc',label:'Concentric',fn:setTool('conc')},
       {sect:'View'},
       {ic:'normal',label:'Normal to',fn:viewNormalTo},
       {ic:'iso',label:'Isometric',fn:viewIso},
@@ -4999,7 +5259,7 @@ const CSG = (function(){
   /* decorate every button with its pictogram; original text becomes a .lbl */
   (function decorate(){
     menu.querySelectorAll('[data-ic]').forEach(b=>{ b.innerHTML=icHTML(b.dataset.ic)+'<span class="lbl">'+b.textContent+'</span>'; });
-    const dockLbl={select:'Pointer',line:'Line',move:'Move',rect:'Rect',circle:'Circle',polygon:'Polygon',dim:'Dim',horiz:'Horiz',vert:'Vert',paral:'Parallel',equal:'Equal',erase:'Erase'};
+    const dockLbl={select:'Pointer',line:'Line',move:'Move',rect:'Rect',circle:'Circle',polygon:'Polygon',dim:'Dim',horiz:'Horiz',vert:'Vert',paral:'Parallel',equal:'Equal',conc:'Conc',erase:'Erase'};
     $('dock').querySelectorAll('button').forEach(b=>{ const t=b.dataset.tool; b.innerHTML=icHTML(t)+'<span class="lbl">'+(dockLbl[t]||t)+'</span>'; });
     const tb={'btn-save':'save','btn-load':'open','btn-export':'stl','btn-step':'step','btn-new':'newpart','btn-new-asm':'asm','btn-insert':'add','btn-finish':'finish','btn-cancel-sk':'cancel'};
     for(const id in tb){ const b=$(id); b.innerHTML=icHTML(tb[id])+'<span class="lbl">'+b.textContent+'</span>'; }
@@ -5116,7 +5376,7 @@ const CSG = (function(){
     else addFeature(a);
   }));
   $('dock').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
-    tool=b.dataset.tool;draftStage=0;draftA=null;paralRef=null;equalRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();
+    tool=b.dataset.tool;draftStage=0;draftA=null;paralRef=null;equalRef=null;concRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();
     $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));
     // a line already picked with the Pointer? apply the constraint to it now,
     // rather than making the user click the icon and then the line
