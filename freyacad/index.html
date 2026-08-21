@@ -461,6 +461,9 @@ if(!window.THREE){
     <div class="tb-spacer"></div>
     <div class="tb-group">
       <button id="btn-units" class="btn-ghost">Units: mm</button>
+      <button id="btn-normal" class="btn-ghost" title="Normal to — look square at the sketch or selected plane (Ctrl+8)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 11.5 8 14l6.5-2.5L8 9z"/><path d="M8 1.5v5.5"/><path d="M6 5.2 8 7.2l2-2"/></svg><span class="lbl">Normal to</span></button>
+      <button id="btn-iso" class="btn-ghost" title="Isometric view (Ctrl+7)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 1.7 14 5v6l-6 3.3L2 11V5z"/><path d="M2 5l6 3.2L14 5M8 8.2V14.3"/></svg><span class="lbl">Iso</span></button>
+      <button id="btn-fitall" class="btn-ghost" title="Fit everything in view (F)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg><span class="lbl">Fit</span></button>
       <button id="btn-undo" class="btn-ghost" title="Undo (Ctrl+Z)" disabled>↶</button>
       <button id="btn-redo" class="btn-ghost" title="Redo (Ctrl+Y)" disabled>↷</button>
       <button id="btn-labels" class="btn-ghost" title="Show or hide button and menu labels — icons only">Aa</button>
@@ -1015,6 +1018,42 @@ const CSG = (function(){
     navCanvas.addEventListener('pointerup',upC);
     navCanvas.addEventListener('pointercancel',()=>{down=null;});
   })();
+  /* ---- named views ------------------------------------------------------
+     Normal-to looks square down whatever plane is in play: the open sketch,
+     else a selected sketch or datum plane, else Top. Inside a sketch it just
+     resets the tilt, since the camera is already orbiting that plane's basis. */
+  function normalToFrame(){
+    if(mode==='sketch'&&editing){
+      try{ return editing.frame||planeFrame(editing.plane); }catch(_){}
+    }
+    const f=features.find(x=>x.id===selId);
+    if(f){
+      try{
+        if(f.type==='sketch') return f.frame||planeFrame(f.plane);
+        if(f.type==='dplane') return planeFrame({kind:'dplane',refId:f.id});
+      }catch(_){}
+    }
+    const nm=['Top','Front','Right'].find(n=>datumShow[n])||'Top';
+    return frameClone(DATUM[nm]);
+  }
+  function viewNormalTo(){
+    if(mode==='sketch'&&controls.fb){                 // already in the plane's basis
+      controls.fTheta=0; controls.fPhi=0; controls.update();
+      setHint('Normal to the sketch plane'); return;
+    }
+    const fr=normalToFrame(); if(!fr)return;
+    const w=fr.n.clone().normalize();
+    flyOrbit(Math.atan2(w.x,w.z), Math.acos(Math.max(-1,Math.min(1,w.y))));
+    setHint('Normal to');
+  }
+  function viewIso(){
+    if(mode==='sketch'&&controls.fb){                 // tilt off the plane, don't leave the sketch
+      controls.fTheta=0.7; controls.fPhi=0.95; controls.update();
+      setHint('Isometric'); return;
+    }
+    flyOrbit(0.82,1.0);
+    setHint('Isometric');
+  }
   function flyOrbit(theta,phi){
     controls.unlock();
     const s=controls.sph,t0=s.theta,p0=s.phi;
@@ -1027,6 +1066,9 @@ const CSG = (function(){
       s.theta=t0+dT*e;s.phi=p0+(pT-p0)*e;controls.update();
       if(t<1)requestAnimationFrame(step);
     })();
+    // background tabs starve rAF, so land the view regardless
+    setTimeout(()=>{ if(id===cubeAnimId&&mode!=='sketch'){
+      s.theta=t0+dT; s.phi=pT; controls.update(); } },420);
   }
 
   // ---- closed-loop flash: a face-coloured pulse when a sketch loop closes
@@ -3617,6 +3659,7 @@ const CSG = (function(){
     mirror:_sw(`<path d="M12 3v18" stroke="${_G}" stroke-dasharray="4 3"/><path d="M8.5 8 3.5 12l5 4z" fill="${_B}" stroke="${_B}"/><path d="M15.5 8l5 4-5 4z" stroke="${_B}"/>`),
     lpattern:_sw(`<rect x="3" y="9.5" width="5" height="5" fill="${_B}"/><rect x="9.7" y="9.5" width="5" height="5" stroke="${_B}"/><rect x="16.4" y="9.5" width="5" height="5" stroke="${_B}" opacity=".5"/><path d="M4 19h14M15.5 16.7 18 19l-2.5 2.3" stroke="${_Y}"/>`),
     cpattern:_sw(`<circle cx="12" cy="13" r="7.5" stroke="${_B}" stroke-dasharray="3 2.4" opacity=".55"/><rect x="9.7" y="3" width="4.6" height="4.6" fill="${_B}"/><rect x="3.4" y="14" width="4.6" height="4.6" stroke="${_B}"/><rect x="16" y="14" width="4.6" height="4.6" stroke="${_B}"/><circle cx="12" cy="13" r="1.4" fill="${_Y}"/>`),
+    normal:_sw(`<path d="M3 17 12 20.5 21 17 12 13.5z" stroke="${_B}"/><path d="M12 3v7" stroke="${_Y}"/><path d="M9.4 7.6 12 10.2 14.6 7.6" stroke="${_Y}"/>`),
     dplane:_sw(`<path d="M3 19.5l5-8.5h13l-5 8.5z" stroke="${_B}"/><path d="M6.5 9l2.6-4.5h11l-2 3.4" stroke="${_B}" opacity=".45"/><path d="M12 15.5v-6M9.8 11.7 12 9.5l2.2 2.2" stroke="${_Y}"/>`),
     daxis:_sw(`<path d="M6 20 18 4" stroke="${_Y}" stroke-width="1.9" stroke-dasharray="5.5 2.2 1.4 2.2"/><circle cx="6" cy="20" r="1.5" fill="${_B}"/><circle cx="18" cy="4" r="1.5" fill="${_B}"/>`),
     edit:_sw(`<path d="M4 20l1.2-4.2L16.5 4.5l3 3L8.2 18.8z" stroke="${_B}"/><path d="M14.5 6.5l3 3" stroke="${_B}"/>`),
@@ -4322,6 +4365,10 @@ const CSG = (function(){
     const hasSketch=!!lastSketchId(), hasSolid=resultShapes.length>0;
     const sf=features.find(f=>f.id===selId);
     const items=[];
+    items.push({sect:'View'});
+    items.push({ic:'normal',label:'Normal to',fn:viewNormalTo});
+    items.push({ic:'iso',label:'Isometric',fn:viewIso});
+    items.push({ic:'fit',label:'Fit all',fn:fitAll});
     if(sf&&sf.type==='sketch'){
       items.push({sect:sf.name});
       items.push({ic:'edit',label:'Edit sketch',fn:()=>editSketch(sf)});
@@ -4365,6 +4412,10 @@ const CSG = (function(){
       {ic:'vert',label:'Vertical',fn:setTool('vert')},
       {ic:'paral',label:'Parallel',fn:setTool('paral')},
       {ic:'equal',label:'Equal length',fn:setTool('equal')},
+      {sect:'View'},
+      {ic:'normal',label:'Normal to',fn:viewNormalTo},
+      {ic:'iso',label:'Isometric',fn:viewIso},
+      {ic:'fit',label:'Fit all',fn:fitAll},
       {sect:'Sketch'},
       {ic:'finish',label:'Finish sketch',fn:finishSketch},
       {ic:'extrude',label:'Finish + extrude',fn:()=>{finishSketch();addFeature('extrude');}},
@@ -4644,6 +4695,9 @@ const CSG = (function(){
     try{localStorage.setItem('fcad-icons',v?'1':'0');}catch(_){}
   }
   $('btn-labels').addEventListener('click',()=>setIconsOnly(!document.body.classList.contains('icons-only')));
+  $('btn-normal').addEventListener('click',viewNormalTo);
+  $('btn-iso').addEventListener('click',viewIso);
+  $('btn-fitall').addEventListener('click',fitAll);
   $('tree-collapse').addEventListener('click',()=>{
     const shutAll=anyExpanded();
     collapsed.clear();
@@ -4877,6 +4931,8 @@ const CSG = (function(){
       const k=e.key.toLowerCase();
       if(k==='z'&&!e.shiftKey){e.preventDefault();undo();return;}
       if(k==='y'||(k==='z'&&e.shiftKey)){e.preventDefault();redo();return;}
+      if(e.key==='7'){e.preventDefault();viewIso();return;}         // as in SolidWorks
+      if(e.key==='8'){e.preventDefault();viewNormalTo();return;}
     }
     if(mode==='sketch'){
       if(e.key==='Enter'){e.preventDefault();if(tool==='line')commitDraftLine();else finishSketch();}
