@@ -25,10 +25,31 @@
   }
   window.addEventListener('error',function(e){
     var m=(e&&e.message)||String(e);
+    if(m.indexOf('freyacad-mobile-gate')>=0) return;  // deliberate bail-out, not an error
     if(e&&e.filename) m+='   ('+e.filename+(e.lineno?(':'+e.lineno):'')+')';
     q.push(m); render();
   });
   document.addEventListener('DOMContentLoaded',render);
+})();
+</script>
+
+<script>
+/* Mobile gate. freyacad steers with a mouse, a keyboard and a big screen, so a
+ * phone or tablet gets a friendly front door instead of an app it cannot
+ * drive — and is spared the ~11 MB kernel download. The flag is honoured by
+ * the kernel loader and by a bail-out at the top of the app script; the
+ * html class shows #gate and hides #app (see the gate styles). iPadOS calls
+ * itself a Mac, hence the maxTouchPoints test. */
+(function(){
+  var ua = navigator.userAgent || '';
+  var mobile = !!(navigator.userAgentData && navigator.userAgentData.mobile)
+    || /Android|iPhone|iPod|Windows Phone|BlackBerry|Mobi/i.test(ua)
+    || /iPad/.test(ua)
+    || (/Macintosh|Mac OS/.test(ua) && navigator.maxTouchPoints > 1);
+  if(mobile){
+    window.__MOBILE_GATE = true;
+    document.documentElement.className += ' mobile-gate';
+  }
 })();
 </script>
 
@@ -70,7 +91,7 @@ if(!window.THREE){
     window.OCCT = oc;
     window.dispatchEvent(new Event('kernel-ready'));
   }
-  go().catch(err=>{
+  if(!window.__MOBILE_GATE) go().catch(err=>{
     window.dispatchEvent(new ErrorEvent('error', { message:
       'Could not start the CAD kernel (Open CASCADE). Check your network — the '
       +'kernel loads from a CDN on first visit. ('+(err&&err.message||err)+')' }));
@@ -260,6 +281,29 @@ if(!window.THREE){
     .tree-col{position:absolute;left:0;top:50px;bottom:29px;width:240px;transform:translateX(-100%);transition:transform .2s}
     .tree-col.show{transform:none}
   }
+
+  /* ---- mobile gate: the bench does not fold down to phone size ---- */
+  #gate{display:none}
+  html.mobile-gate #app{display:none}
+  html.mobile-gate body{overflow:auto}
+  html.mobile-gate #gate{display:flex;position:fixed;inset:0;z-index:9990;background:var(--bg);
+    flex-direction:column;align-items:center;justify-content:center;gap:16px;
+    text-align:center;padding:34px 26px;overflow:auto}
+  #gate .g-cube{width:78px;height:78px;flex:0 0 auto;
+    filter:drop-shadow(0 0 12px rgba(66,133,244,.45));animation:g-float 5.5s ease-in-out infinite}
+  #gate .g-cube path{fill:none;stroke:var(--g-blue);stroke-width:2.2;stroke-linejoin:round;stroke-linecap:round}
+  #gate .g-cube .hid{stroke:var(--muted-2);stroke-width:1.4;stroke-dasharray:3 5}
+  @keyframes g-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+  #gate .g-eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--g-yellow);text-shadow:0 0 6px rgba(251,188,5,.4)}
+  #gate h1{font-family:var(--serif);font-weight:600;font-size:clamp(26px,7.5vw,38px);
+    line-height:1.15;letter-spacing:-.015em;max-width:16ch}
+  #gate p{color:var(--muted);font-size:14.5px;line-height:1.65;max-width:36ch;text-wrap:pretty}
+  #gate p b{color:var(--text)}
+  #gate a.g-home{font-size:13.5px;color:#fff;text-decoration:none;margin-top:6px;
+    background:rgba(66,133,244,.12);border:1px solid var(--g-blue);border-radius:var(--radius);
+    padding:10px 16px;box-shadow:0 0 10px rgba(66,133,244,.3)}
+  #gate .g-small{font-family:var(--mono);font-size:10.5px;color:var(--muted-2);max-width:40ch;line-height:1.6}
 </style>
 <!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "bf566b1bebe84eaa8c4f3d6a83251b4a"}'></script><!-- End Cloudflare Web Analytics -->
 <!-- link preview -->
@@ -282,6 +326,21 @@ if(!window.THREE){
 <meta name="description" content="Sketch, extrude and boolean geometry in the browser, powered by Manifold and three.js. No install, no account.">
 </head>
 <body>
+<!-- Shown instead of the app on phones and tablets; see the gate script in <head>. -->
+<div id="gate" role="alert">
+  <svg class="g-cube" viewBox="0 0 100 100" aria-hidden="true">
+    <path class="hid" d="M50 12 50 50 M50 50 83 66 M50 50 17 66"/>
+    <path d="M50 12 83 30 83 66 50 84 17 66 17 30 Z M17 30 50 46 83 30 M50 46 50 84"/>
+  </svg>
+  <div class="g-eyebrow">freyacad &middot; wrong-sized workshop</div>
+  <h1>This bench doesn&rsquo;t fold down to phone size.</h1>
+  <p>freyacad is a full parametric CAD bench &mdash; a real solid-modelling kernel, sketches,
+    fillets, booleans &mdash; and it steers with a mouse, a keyboard and a monitor&rsquo;s worth
+    of elbow room. On a touchscreen it would be all thumbs. <b>Literally.</b></p>
+  <p>Open it on a <b>PC or a Mac</b> and the whole workshop will be set up and waiting for you.</p>
+  <a class="g-home" href="/">&larr; The rest of freya.co.nz works fine on your phone</a>
+  <div class="g-small">also: you were just spared an 11&nbsp;MB CAD-kernel download. you&rsquo;re welcome.</div>
+</div>
 <div id="app">
   <header class="toolbar">
     <a class="brand" href="/" title="freya.co.nz — home"><span class="mark">freya<svg class="asterism" viewBox="0 0 100 36" aria-hidden="true" focusable="false">
@@ -388,6 +447,10 @@ if(!window.THREE){
 
 <script>
 "use strict";
+// On a phone the gate in <head> owns the page — skip the whole app: no CSG
+// engine, no renderer, no event wiring. The throw is filtered out by name in
+// the error-overlay script, so it stops execution and nothing else.
+if(window.__MOBILE_GATE) throw new Error('freyacad-mobile-gate: skipping app on a mobile device');
 /* ============================================================ CSG ENGINE */
 const CSG = (function(){
   const EPS = 1e-5;
