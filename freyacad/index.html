@@ -462,7 +462,7 @@ if(!window.THREE){
   <main class="viewport" id="viewport">
     <div class="dock" id="dock" style="display:none">
       <button data-tool="line" class="active">Line</button>
-      <button data-tool="move" title="Drag a point; release while within 1mm of another to join them">✥ Move</button>
+      <button data-tool="select" title="Pointer — rotate the view, drag points and dimensions, click a line and press Delete">↖ Pointer</button>
       <button data-tool="rect">Rect</button>
       <button data-tool="circle">Circle</button>
       <button data-tool="polygon">Polygon</button>
@@ -2451,9 +2451,47 @@ const CSG = (function(){
   let hoverPt=null;                          // sketch point under the cursor (glows)
   let dimPick=null;                          // first half of a two-click dimension
   let sketchCursor=null;                     // last cursor position in sketch UV
+  let sketchSel=null;                        // {entIdx,seg?} picked with the Pointer
+
+  /* The Pointer is the only tool that manipulates rather than draws, so it —
+     and only it — orbits the view. Every drawing tool keeps the camera still,
+     otherwise a stray drag while sketching spins the model. */
+  function syncRotateGate(){
+    controls.enableRotate = (mode!=='sketch') ? true : (tool==='select');
+  }
+  function clearSketchSel(){ if(sketchSel){ sketchSel=null; drawSketchSel(); } }
+  const selGroupSk=new THREE.Group(); scene.add(selGroupSk);
+  function drawSketchSel(){
+    while(selGroupSk.children.length){const c=selGroupSk.children.pop();
+      if(c.geometry)c.geometry.dispose(); if(c.material)c.material.dispose();}
+    if(!sketchSel||mode!=='sketch'||!editing||!editing.frame)return;
+    const e=editing.entities[sketchSel.entIdx]; if(!e)return;
+    let pts=null;
+    if(e.type==='poly'&&sketchSel.seg!=null){
+      const n=e.pts.length, a=e.pts[sketchSel.seg], b=e.pts[(sketchSel.seg+1)%n];
+      if(a&&b)pts=[a,b];
+    } else {
+      const path=entityDisplayPath(editing,e);
+      if(path){ pts=path.pts.slice(); if(path.closed)pts.push(path.pts[0]); }
+    }
+    if(!pts)return;
+    const w=pts.map(p=>worldFromSketch(editing.frame,p.x,p.y));
+    const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(w),
+      new THREE.LineBasicMaterial({color:0x35d4e6,depthTest:false,transparent:true,opacity:1}));
+    ln.renderOrder=10; selGroupSk.add(ln);
+  }
+  function deleteSketchSel(){
+    if(!sketchSel||!editing)return false;
+    const e=editing.entities[sketchSel.entIdx]; if(!e){sketchSel=null;return false;}
+    pushUndo('delete sketch geometry');
+    if(e.type==='poly'&&sketchSel.seg!=null) removePolySegment(editing,sketchSel.entIdx,sketchSel.seg);
+    else { editing.entities.splice(sketchSel.entIdx,1); dropDimsFor(editing,sketchSel.entIdx); }
+    sketchSel=null; drawSketchSel(); rebuild();
+    return true;
+  }
   // Tools where clicking an existing point means something — the glow is the
   // affordance that says "this endpoint is grabbable".
-  const POINT_TOOLS=['dim','move','erase'];
+  const POINT_TOOLS=['dim','select','erase'];
   function nearestSketchPoint(p){
     if(!editing)return null;
     const tol=Math.max(0.55,controls.sph.radius*0.035);
@@ -2617,7 +2655,7 @@ const CSG = (function(){
   }
   function redrawHandles(){
     while(handleGroup.children.length){const c=handleGroup.children.pop();if(c.geometry)c.geometry.dispose();}
-    if(mode!=='sketch'||!editing||tool!=='move')return;
+    if(mode!=='sketch'||!editing||tool!=='select')return;
     const fr=editing.frame;
     for(const h of sketchHandles()){
       const dot=new THREE.Mesh(new THREE.SphereGeometry(h===dragVtx?0.16:0.11,12,10),
@@ -2656,7 +2694,8 @@ const CSG = (function(){
     const finish=()=>{
       if(finished||id!==camAnimId)return; finished=true;
       controls.sph.radius=radius;
-      controls.orbitInFrame(frame);        // square-on, but free to tilt away
+      controls.orbitInFrame(frame);        // square-on; the Pointer tool unlocks tilting
+      syncRotateGate();
       flashOrigin();
     };
     function step(ts){
@@ -2739,6 +2778,13 @@ const CSG = (function(){
   function clearDraftVisuals(){while(draftGroup.children.length){const c=draftGroup.children.pop();if(c.geometry)c.geometry.dispose();}}
 
   function sketchClick(p){
+    if(tool==='select'){                     // pick a line to act on; empty space clears
+      const hit=dimHit(p);
+      sketchSel=(hit&&hit.entIdx!=null)?{entIdx:hit.entIdx,seg:hit.kind==='seg'?hit.seg:null}:null;
+      drawSketchSel();
+      setHint(sketchSel?'Selected — press Delete to remove it':'Nothing selected');
+      return;
+    }
     // one snapshot per committed shape; the in-progress polyline is covered by
     // Backspace/Escape, so only the commit is worth an undo step
     if(tool==='rect'||tool==='circle'||tool==='polygon'){ if(draftStage===1)pushUndo('draw '+tool); }
@@ -3216,6 +3262,7 @@ const CSG = (function(){
         ev.stopPropagation(); ev.preventDefault();
         if(tool==='erase'){ const i=editing.dims.indexOf(d);
           if(i>=0){ pushUndo('erase dimension'); editing.dims.splice(i,1); rebuild(); } return; }
+        if(tool!=='select'){ openDimInput(d); return; }   // repositioning is a Pointer job
         const g0=dimResolve(editing,d); if(!g0)return;
         let moved=false, undone=false;
         try{ el.setPointerCapture(ev.pointerId); }catch(_){}
@@ -3784,9 +3831,11 @@ const CSG = (function(){
     const nc=$('navcube'); if(nc)nc.style.display=(m==='sketch')?'none':'';
     if(m!=='sketch'){ closeDimInput(); clearDimLabels(); dragVtx=null; dragSnapPt=null; redrawHandles();
       hoverSnap=null; hoverGuides=[]; hoverPt=null; dimPick=null; sketchCursor=null;
+      sketchSel=null; drawSketchSel();
       drawSnapMark(); const tc=$('tool-cursor'); if(tc)tc.style.display='none';
       const dp=$('dim-preview'); if(dp)dp.style.display='none';
       const ac=$('sk-anchor'); if(ac)ac.style.display='none'; }
+    syncRotateGate();
     refreshStatus();updateHint();updateDatumVis();updatePlaneTraces();
   }
   function refreshStatus(){ /* status bar removed */ }
@@ -3813,7 +3862,7 @@ const CSG = (function(){
     const h=$('hint');
     if(mode==='sketch'){h.classList.add('show');
       if(tool==='line')h.innerHTML='<span class="pip"></span> Click to place points · click the white point or <kbd>Enter</kbd> to close a loop';
-      else if(tool==='move')h.innerHTML='<span class="pip"></span> Move: drag a point · release within 1mm of another point to join them';
+      else if(tool==='select')h.innerHTML='<span class="pip"></span> Pointer: drag to rotate · drag a point (release within 1mm of another to join) · drag a dimension to reposition · click a line then <kbd>Del</kbd>';
       else if(tool==='dim')h.innerHTML='<span class="pip"></span> Dim: click a circle, polygon, rectangle edge, or line — then type a value to drive it';
       else if(tool==='erase')h.innerHTML='<span class="pip"></span> Erase: click a shape to delete it';
       else if(tool==='horiz')h.innerHTML='<span class="pip"></span> Horizontal: click a line segment to lay it flat';
@@ -3833,7 +3882,7 @@ const CSG = (function(){
   canvas.addEventListener('pointerdown',e=>{
       downX=e.clientX; downY=e.clientY; downBtn=e.button;
       if(docMode==='asm'){ asmPointerDown(e); return; }
-      if(mode==='sketch'&&editing&&tool==='move'&&e.button===0){
+      if(mode==='sketch'&&editing&&tool==='select'&&e.button===0){
         const p=pointerToSketch(e);
         if(p){ const tol=Math.max(0.6,controls.sph.radius*0.04); const h=nearestHandle(p,tol);
           if(h){ pushUndo('move point'); dragVtx=h; dragSnapPt=null; redrawHandles(); } }
@@ -4103,8 +4152,8 @@ const CSG = (function(){
     const setTool=t=>()=>{tool=t;draftStage=0;draftA=null;paralRef=null;equalRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();redrawHandles();dockSel();};
     buildCtxMenu(x,y,[
       {sect:'Sketch tools'},
+      {ic:'move',label:'Pointer — select & rotate',fn:setTool('select')},
       {ic:'line',label:'Line',fn:setTool('line')},
-      {ic:'move',label:'Move point',fn:setTool('move')},
       {ic:'rect',label:'Rectangle',fn:setTool('rect')},
       {ic:'circle',label:'Circle',fn:setTool('circle')},
       {ic:'polygon',label:'Polygon',fn:setTool('polygon')},
@@ -4474,6 +4523,7 @@ const CSG = (function(){
   $('dock').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
     tool=b.dataset.tool;draftStage=0;draftA=null;paralRef=null;equalRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();
     $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));
+    syncRotateGate(); if(tool!=='select')clearSketchSel();
     redrawDraft(null);redrawHandles();updateHint();
   }));
   $('btn-finish').addEventListener('click',finishSketch);
@@ -4620,7 +4670,10 @@ const CSG = (function(){
       else if(e.key==='Escape'){e.preventDefault();
         if(dimPick){dimPick=null;drawSnapMark();setHint('Dimension cancelled');}
         else if(draftPts.length){draftPts.pop();redrawDraft(null);}else cancelSketch();}
-      else if(e.key==='Backspace'){e.preventDefault();if(draftPts.length)draftPts.pop();redrawDraft(null);}
+      else if(e.key==='Delete'){e.preventDefault();
+        if(!deleteSketchSel())setHint('Nothing selected — use the Pointer to click a line first');}
+      else if(e.key==='Backspace'){e.preventDefault();
+        if(draftPts.length){draftPts.pop();redrawDraft(null);} else deleteSketchSel();}
       else if(e.key==='1'){tool='line';dockSel();}else if(e.key==='2'){tool='rect';dockSel();}
       else if(e.key==='3'){tool='circle';dockSel();}else if(e.key==='4'){tool='polygon';dockSel();}
       else if(e.key.toLowerCase()==='d'){e.preventDefault();tool='dim';dockSel();setHint('Dimension: click a line, circle or rectangle edge, then type a value');}
@@ -4633,7 +4686,8 @@ const CSG = (function(){
       else if(e.key.toLowerCase()==='f')fitAll();
     }
   });
-  function dockSel(){$('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.tool===tool));redrawDraft(null);updateHint();}
+  function dockSel(){$('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.tool===tool));
+    syncRotateGate(); if(tool!=='select')clearSketchSel(); redrawDraft(null);updateHint();}
 
   function resize(){const w=viewport.clientWidth,h=viewport.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();
     if(mode==='sketch'&&typeof flashOrigin==='function')flashOrigin();}
