@@ -256,8 +256,8 @@ if(!window.THREE){
   body.icons-only .menu-col{min-width:0}
   body.icons-only .menu .lbl{display:none}
   body.icons-only .menu button{justify-content:center;padding:8px}
-  body.icons-only .feat .fname{display:none}
-  body.icons-only .feat{justify-content:center}
+  /* icons-only collapses toolbar/menu labels, but the feature tree keeps its
+     names — a tree of identical pictograms is unreadable */
   .menu.open{display:block}
   .menu-sect{font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:var(--g-blue);padding:7px 9px 4px;text-transform:uppercase;text-shadow:0 0 4px rgba(66,133,244,0.4)}
   .menu button{display:flex;width:100%;justify-content:flex-start;background:transparent;border:0;padding:7px 9px;font-size:12.5px;border-radius:6px;box-shadow:none;gap:9px}
@@ -306,7 +306,8 @@ if(!window.THREE){
   #gate .g-small{font-family:var(--mono);font-size:10.5px;color:var(--muted-2);max-width:40ch;line-height:1.6}
 
   /* boot sequence — the kernel download as theatre */
-  #boot{position:fixed;left:246px;bottom:44px;z-index:24;pointer-events:none;display:none;
+  /* top-left of the drawing area: clear of the tree panel and the help card */
+  #boot{position:fixed;left:246px;top:52px;z-index:26;pointer-events:none;display:none;
     font-family:var(--mono);font-size:11px;line-height:1.75;color:var(--muted);
     text-shadow:0 0 6px rgba(66,133,244,.25);transition:opacity .8s}
   #boot .ok{color:var(--g-green);text-shadow:0 0 8px rgba(52,168,83,.6)}
@@ -327,6 +328,10 @@ if(!window.THREE){
     pointer-events:none}
   #sk-anchor.ok{color:var(--g-green);border-color:rgba(52,168,83,.5);text-shadow:0 0 6px rgba(52,168,83,.5)}
   #sk-anchor.no{color:#8ab4f8;border-color:rgba(66,133,244,.45)}
+
+  /* inline feature rename */
+  .fname-edit{flex:1;min-width:0;font:inherit;font-size:11.5px;color:var(--text);
+    background:#05070a;border:1px solid var(--g-blue);border-radius:4px;padding:1px 4px;outline:none}
 
   html.mobile-gate #navcube,html.mobile-gate #boot,html.mobile-gate #sk-anchor{display:none!important}
 
@@ -421,6 +426,8 @@ if(!window.THREE){
     <div class="tb-spacer"></div>
     <div class="tb-group">
       <button id="btn-units" class="btn-ghost">Units: mm</button>
+      <button id="btn-undo" class="btn-ghost" title="Undo (Ctrl+Z)" disabled>↶</button>
+      <button id="btn-redo" class="btn-ghost" title="Redo (Ctrl+Y)" disabled>↷</button>
       <button id="btn-labels" class="btn-ghost" title="Show or hide button and menu labels — icons only">Aa</button>
       <button id="btn-help" class="btn-ghost" title="Live help — tips that follow what you're doing">?</button>
       <button id="btn-demo-tgl" class="btn-ghost" title="Show or hide the pillow-block demo part (also controls whether it loads on startup)">Demo</button>
@@ -2555,6 +2562,10 @@ const CSG = (function(){
   function clearDraftVisuals(){while(draftGroup.children.length){const c=draftGroup.children.pop();if(c.geometry)c.geometry.dispose();}}
 
   function sketchClick(p){
+    // one snapshot per committed shape; the in-progress polyline is covered by
+    // Backspace/Escape, so only the commit is worth an undo step
+    if(tool==='rect'||tool==='circle'||tool==='polygon'){ if(draftStage===1)pushUndo('draw '+tool); }
+    else if(tool==='erase'||tool==='horiz'||tool==='vert'||tool==='paral'||tool==='equal'){ pushUndo(tool); }
     if(tool==='line'){
       if(draftPts.length>=3){const f=draftPts[0];if(Math.hypot(p.x-f.x,p.y-f.y)<=Math.max(snapSize,0.6)){commitDraftLine();return;}}
       const last=draftPts[draftPts.length-1];
@@ -2595,7 +2606,7 @@ const CSG = (function(){
     }
   }
   function commitDraftLine(){
-    if(tool==='line'&&draftPts.length>=3){const ent={type:'poly',pts:draftPts.slice(),closed:true};editing.entities.push(ent);flashLoop(editing,ent);}
+    if(tool==='line'&&draftPts.length>=3){pushUndo('draw polyline');const ent={type:'poly',pts:draftPts.slice(),closed:true};editing.entities.push(ent);flashLoop(editing,ent);}
     draftPts=[];redrawDraft(null);rebuild();
   }
 
@@ -2647,17 +2658,86 @@ const CSG = (function(){
     return Math.hypot(p.x-(a.x+t*dx), p.y-(a.y+t*dy));
   }
   // Resolve a dim spec -> current {value, anchor:{x,y}} from live entity data.
+  /* A dimension resolves to the two points it measures plus the side to throw
+     the dimension line out to. Offsets are in millimetres, like a real drawing,
+     so they don't swim about as you zoom. */
+  const DIM_OFF=3.2, DIM_GAP=0.6, DIM_ARROW=1.1;
   function dimResolve(f,d){
     const e=f.entities[d.entIdx]; if(!e) return null;
-    if(d.kind==='dia'   && e.type==='circle')  return {value:2*e.r, anchor:{x:e.c.x,y:e.c.y}, suffix:'⌀'};
-    if(d.kind==='pdia'  && e.type==='polygon') return {value:2*e.r, anchor:{x:e.c.x,y:e.c.y}, suffix:'⌀'};
-    if(d.kind==='width' && e.type==='rect')    return {value:Math.abs(e.b.x-e.a.x), anchor:{x:(e.a.x+e.b.x)/2,y:Math.max(e.a.y,e.b.y)}, suffix:''};
-    if(d.kind==='height'&& e.type==='rect')    return {value:Math.abs(e.b.y-e.a.y), anchor:{x:Math.max(e.a.x,e.b.x),y:(e.a.y+e.b.y)/2}, suffix:''};
-    if(d.kind==='seg'   && e.type==='poly'){
-      const p=e.pts, a=p[d.seg], b=p[(d.seg+1)%p.length]; if(!a||!b) return null;
-      return {value:Math.hypot(b.x-a.x,b.y-a.y), anchor:{x:(a.x+b.x)/2,y:(a.y+b.y)/2}, suffix:''};
+    const mk=(a,b,nx,ny,suffix,type)=>{
+      const value=(type==='dia')?2*e.r:Math.hypot(b.x-a.x,b.y-a.y);
+      const mid={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+      const off=(type==='dia')?0:DIM_OFF;
+      return {value:value,suffix:suffix||'',a:a,b:b,n:{x:nx,y:ny},type:type||'linear',
+              anchor:{x:mid.x+nx*(off+0.9), y:mid.y+ny*(off+0.9)}};
+    };
+    if(d.kind==='dia'&&e.type==='circle'||d.kind==='pdia'&&e.type==='polygon'){
+      const c=Math.SQRT1_2;                       // rim-to-rim across 45°
+      return mk({x:e.c.x-e.r*c,y:e.c.y-e.r*c},{x:e.c.x+e.r*c,y:e.c.y+e.r*c},c,c,'⌀','dia');
+    }
+    if(d.kind==='width'&&e.type==='rect'){
+      const x0=Math.min(e.a.x,e.b.x),x1=Math.max(e.a.x,e.b.x),y1=Math.max(e.a.y,e.b.y);
+      return mk({x:x0,y:y1},{x:x1,y:y1},0,1);
+    }
+    if(d.kind==='height'&&e.type==='rect'){
+      const y0=Math.min(e.a.y,e.b.y),y1=Math.max(e.a.y,e.b.y),x1=Math.max(e.a.x,e.b.x);
+      return mk({x:x1,y:y0},{x:x1,y:y1},1,0);
+    }
+    if(d.kind==='seg'&&e.type==='poly'){
+      const p=e.pts,a=p[d.seg],b=p[(d.seg+1)%p.length]; if(!a||!b) return null;
+      const dx=b.x-a.x,dy=b.y-a.y,L=Math.hypot(dx,dy)||1;
+      let nx=-dy/L, ny=dx/L;                       // throw it away from the shape
+      let cx=0,cy=0; for(const q of p){cx+=q.x;cy+=q.y;} cx/=p.length; cy/=p.length;
+      const mx=(a.x+b.x)/2,my=(a.y+b.y)/2;
+      if((mx-cx)*nx+(my-cy)*ny<0){nx=-nx;ny=-ny;}
+      return mk(a,b,nx,ny);
     }
     return null;
+  }
+
+  /* Draw the dimensions as a drawing would: witness lines off the geometry, a
+     dimension line between them, arrowheads turned inward. Text stays HTML —
+     crisp, and already clickable to edit. */
+  const dimGroup=new THREE.Group(); scene.add(dimGroup);
+  function clearDimGeometry(){
+    while(dimGroup.children.length){const c=dimGroup.children.pop();
+      if(c.geometry)c.geometry.dispose(); if(c.material)c.material.dispose();}
+  }
+  function drawDimGeometry(){
+    clearDimGeometry();
+    if(mode!=='sketch'||!editing||!editing.dims||!editing.dims.length)return;
+    const fr=(sketchData[editing.id]&&sketchData[editing.id].frame)||editing.frame; if(!fr)return;
+    const segs=[];                                  // pairs of sketch-space points
+    const rot=(v,a)=>({x:v.x*Math.cos(a)-v.y*Math.sin(a),y:v.x*Math.sin(a)+v.y*Math.cos(a)});
+    const arrow=(P,u)=>{                            // u points along the dim line, inward
+      const back={x:-u.x*DIM_ARROW,y:-u.y*DIM_ARROW};
+      for(const s of [0.3,-0.3]){const w=rot(back,s);
+        segs.push([P,{x:P.x+w.x,y:P.y+w.y}]);}
+    };
+    for(const d of editing.dims){
+      const g=dimResolve(editing,d); if(!g)continue;
+      if(g.type==='dia'){
+        segs.push([g.a,g.b]);                       // straight through the middle
+        const u={x:(g.b.x-g.a.x),y:(g.b.y-g.a.y)},L=Math.hypot(u.x,u.y)||1;
+        u.x/=L;u.y/=L;
+        arrow(g.a,{x:u.x,y:u.y}); arrow(g.b,{x:-u.x,y:-u.y});
+        continue;
+      }
+      const n=g.n, A=g.a, B=g.b;
+      const A2={x:A.x+n.x*DIM_OFF,y:A.y+n.y*DIM_OFF}, B2={x:B.x+n.x*DIM_OFF,y:B.y+n.y*DIM_OFF};
+      // witness lines, held off the geometry by a small gap
+      segs.push([{x:A.x+n.x*DIM_GAP,y:A.y+n.y*DIM_GAP},{x:A2.x+n.x*0.7,y:A2.y+n.y*0.7}]);
+      segs.push([{x:B.x+n.x*DIM_GAP,y:B.y+n.y*DIM_GAP},{x:B2.x+n.x*0.7,y:B2.y+n.y*0.7}]);
+      segs.push([A2,B2]);
+      const u={x:B2.x-A2.x,y:B2.y-A2.y},L=Math.hypot(u.x,u.y)||1; u.x/=L;u.y/=L;
+      arrow(A2,{x:u.x,y:u.y}); arrow(B2,{x:-u.x,y:-u.y});
+    }
+    if(!segs.length)return;
+    const pts=[];
+    for(const s of segs){pts.push(worldFromSketch(fr,s[0].x,s[0].y),worldFromSketch(fr,s[1].x,s[1].y));}
+    const ls=new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineBasicMaterial({color:0xb8c4d4,transparent:true,opacity:0.95,depthTest:false}));
+    ls.renderOrder=7; dimGroup.add(ls);
   }
   // Find the dimensionable thing nearest a sketch-space click.
   function dimHit(p){
@@ -2720,12 +2800,12 @@ const CSG = (function(){
     let done=false;
     const apply=()=>{ if(done)return; done=true; let v=parseFloat(inp.value);
       closeDimInput();
-      if(!isNaN(v)&&v>0){ ensureDimStored(d); dimApply(editing,d,fromDisp(v)); rebuild(); } };
+      if(!isNaN(v)&&v>0){ pushUndo('dimension'); ensureDimStored(d); dimApply(editing,d,fromDisp(v)); rebuild(); } };
     inp.addEventListener('keydown',ev=>{ if(ev.key==='Enter'){ev.preventDefault();apply();}
       else if(ev.key==='Escape'){ev.preventDefault();done=true;closeDimInput();} });
     inp.addEventListener('blur',apply);
   }
-  function clearDimLabels(){ dimLabelEls.forEach(o=>o.el.remove()); dimLabelEls=[]; }
+  function clearDimLabels(){ dimLabelEls.forEach(o=>o.el.remove()); dimLabelEls=[]; clearDimGeometry(); }
   function rebuildDimLabels(){
     clearDimLabels();
     if(mode!=='sketch'||!editing||!editing.dims) return;
@@ -2734,6 +2814,7 @@ const CSG = (function(){
       el.addEventListener('click',ev=>{ ev.stopPropagation(); openDimInput(d); });
       viewport.appendChild(el); dimLabelEls.push({el,d});
     });
+    drawDimGeometry();
     updateDimLabels();
   }
   function updateDimLabels(){
@@ -2746,6 +2827,98 @@ const CSG = (function(){
       o.el.style.left=sp.x+'px'; o.el.style.top=sp.y+'px';
       o.el.textContent = (cur.suffix||'') + (+toDisp(cur.value).toFixed(3)) + ' ' + lenLabel();
     }
+  }
+
+  /* ============================ UNDO / REDO ============================
+     FreeCAD-style document transactions, done the cheap way: the feature list
+     is already plain JSON (that's how the demo ships), so a snapshot is a
+     structural clone taken *before* each user action. The only non-JSON bits
+     are the cached THREE.Vector3 plane frames, rehydrated on the way back. */
+  const UNDO_MAX=60;
+  let undoStack=[], redoStack=[], undoBusy=false;
+  function reviveFrames(list){
+    const v3=o=>(o&&typeof o==='object'&&!o.isVector3)?new THREE.Vector3(o.x||0,o.y||0,o.z||0):o;
+    for(const f of list) for(const h of [f,f.plane])
+      if(h&&h.frame) ['o','u','v','n'].forEach(k=>{ if(h.frame[k]) h.frame[k]=v3(h.frame[k]); });
+    return list;
+  }
+  function snapState(){
+    return {features:reviveFrames(JSON.parse(JSON.stringify(features))),
+            rollbackIndex:rollbackIndex, selId:selId};
+  }
+  function pushUndo(label){
+    if(undoBusy)return;
+    undoStack.push(Object.assign(snapState(),{label:label||''}));
+    if(undoStack.length>UNDO_MAX)undoStack.shift();
+    redoStack.length=0; refreshUndoUI();
+  }
+  function applyState(s){
+    undoBusy=true;
+    // undoing inside a sketch should not throw you out of it, so remember which
+    // sketch was open and step back into it if the restored state still has one
+    const wasEditing=(mode==='sketch'&&editing)?editing.id:null;
+    const keepTool=tool;
+    if(mode==='sketch'){ editing=null; controls.unlock(); clearDraft(); setMode('model'); }
+    closeProps();
+    features=reviveFrames(s.features);
+    rollbackIndex=Math.min(s.rollbackIndex,features.length);
+    selId=s.selId;
+    selectedEdges=[]; hoveredEdge=null;
+    rebuild(); refreshTree(); redrawEdgeSel();
+    if(wasEditing!=null){
+      const f=features.find(x=>x.id===wasEditing&&x.type==='sketch');
+      if(f){
+        editing=f; selId=f.id; tool=keepTool;
+        draftPts=[]; draftStage=0; draftA=null;
+        setMode('sketch');
+        try{ controls.lockToFrame(f.frame||planeFrame(f.plane)); controls.sph.radius=18; controls.update(); }catch(_){}
+        rebuild(); dockSel();
+      }
+    }
+    undoBusy=false; refreshUndoUI();
+  }
+  function undo(){
+    if(!undoStack.length){setHint('Nothing to undo');return;}
+    const cur=snapState(); const s=undoStack.pop();
+    redoStack.push(cur); applyState(s);
+    setHint('Undo'+(s.label?' — '+s.label:''));
+  }
+  function redo(){
+    if(!redoStack.length){setHint('Nothing to redo');return;}
+    const cur=snapState(); const s=redoStack.pop();
+    undoStack.push(Object.assign(cur,{label:'redo'})); applyState(s);
+    setHint('Redo');
+  }
+  function refreshUndoUI(){
+    const u=$('btn-undo'), r=$('btn-redo');
+    if(u)u.disabled=!undoStack.length;
+    if(r)r.disabled=!redoStack.length;
+  }
+
+  /* ---- rename a feature in place (tree context menu, or F2) ---- */
+  function startRename(f){
+    refreshTree();
+    const rows=[...tree.querySelectorAll('.feat')];
+    const idx=features.findIndex(x=>x.id===f.id); if(idx<0)return;
+    const row=rows[idx]; if(!row)return;
+    const span=row.querySelector('.fname'); if(!span)return;
+    const inp=document.createElement('input');
+    inp.className='fname-edit'; inp.value=f.name||'';
+    span.replaceWith(inp); inp.focus(); inp.select();
+    let done=false;
+    const commit=ok=>{
+      if(done)return; done=true;
+      const v=inp.value.trim();
+      if(ok&&v&&v!==f.name){ pushUndo('rename'); f.name=v; }
+      refreshTree();
+      if(propsFeat&&propsFeat.id===f.id&&propsEl){
+        const h=propsEl.querySelector('h3'); if(h)h.textContent=f.name;
+      }
+    };
+    inp.addEventListener('keydown',ev=>{ ev.stopPropagation();
+      if(ev.key==='Enter'){ev.preventDefault();commit(true);}
+      else if(ev.key==='Escape'){ev.preventDefault();commit(false);} });
+    inp.addEventListener('blur',()=>commit(true));
   }
 
   /* ============================ FEATURE CREATION ============================ */
@@ -2798,11 +2971,13 @@ const CSG = (function(){
     if(type==='fillet'||type==='chamfer'){ selectedEdges=[]; redrawEdgeSel(); }
     insertFeature(f); selectFeature(f.id); openProps(f);
   }
-  function insertFeature(f){ 
+  function insertFeature(f){
+    pushUndo('add '+(f.name||f.type));
     features.splice(rollbackIndex,0,f); rollbackIndex++;
   }
   function deleteFeature(id){
     const f=features.find(x=>x.id===id);if(!f)return;
+    pushUndo('delete '+(f.name||f.type));
     const dep=features.filter(x=>x.sketchId===id);
     features=features.filter(x=>x!==f&&!dep.includes(x));
     rollbackIndex=Math.min(rollbackIndex,features.length);
@@ -3230,7 +3405,7 @@ const CSG = (function(){
       if(mode==='sketch'&&editing&&tool==='move'&&e.button===0){
         const p=pointerToSketch(e);
         if(p){ const tol=Math.max(0.6,controls.sph.radius*0.04); const h=nearestHandle(p,tol);
-          if(h){ dragVtx=h; dragSnapPt=null; redrawHandles(); } }
+          if(h){ pushUndo('move point'); dragVtx=h; dragSnapPt=null; redrawHandles(); } }
       }
   });
   canvas.addEventListener('pointermove',e=>{
@@ -3530,7 +3705,8 @@ const CSG = (function(){
       items.push({ic:'edit',label:'Edit feature',fn:()=>openProps(f)});
     }
     items.push({sect:'Feature'});
-    items.push({ic:'suppress',label:f.suppressed?'Unsuppress':'Suppress',fn:()=>{f.suppressed=!f.suppressed;rebuild();}});
+    items.push({ic:'edit',label:'Rename…  (F2)',fn:()=>startRename(f)});
+    items.push({ic:'suppress',label:f.suppressed?'Unsuppress':'Suppress',fn:()=>{pushUndo(f.suppressed?'unsuppress':'suppress');f.suppressed=!f.suppressed;rebuild();}});
     items.push({ic:'del',label:'Delete',fn:()=>deleteFeature(f.id)});
     buildCtxMenu(x,y,items);
   }
@@ -3783,6 +3959,8 @@ const CSG = (function(){
     try{localStorage.setItem('fcad-icons',v?'1':'0');}catch(_){}
   }
   $('btn-labels').addEventListener('click',()=>setIconsOnly(!document.body.classList.contains('icons-only')));
+  $('btn-undo').addEventListener('click',undo);
+  $('btn-redo').addEventListener('click',redo);
   try{ if(localStorage.getItem('fcad-icons')==='1') setIconsOnly(true); }catch(_){}
 
   /* ---- live help ---- */
@@ -3997,17 +4175,25 @@ const CSG = (function(){
 
   window.addEventListener('keydown',e=>{
     if(/INPUT|TEXTAREA/.test(e.target.tagName))return;
+    // undo/redo first — they work in every mode
+    if((e.ctrlKey||e.metaKey)&&!e.altKey){
+      const k=e.key.toLowerCase();
+      if(k==='z'&&!e.shiftKey){e.preventDefault();undo();return;}
+      if(k==='y'||(k==='z'&&e.shiftKey)){e.preventDefault();redo();return;}
+    }
     if(mode==='sketch'){
       if(e.key==='Enter'){e.preventDefault();if(tool==='line')commitDraftLine();else finishSketch();}
       else if(e.key==='Escape'){e.preventDefault();if(draftPts.length){draftPts.pop();redrawDraft(null);}else cancelSketch();}
       else if(e.key==='Backspace'){e.preventDefault();if(draftPts.length)draftPts.pop();redrawDraft(null);}
       else if(e.key==='1'){tool='line';dockSel();}else if(e.key==='2'){tool='rect';dockSel();}
       else if(e.key==='3'){tool='circle';dockSel();}else if(e.key==='4'){tool='polygon';dockSel();}
+      else if(e.key.toLowerCase()==='d'){e.preventDefault();tool='dim';dockSel();setHint('Dimension: click a line, circle or rectangle edge, then type a value');}
     } else if(docMode==='asm'){
       if((e.key==='Delete'||e.key==='Backspace')&&asmSel){const c2=asm.components.find(x=>x.id===asmSel);if(c2)removeComponent(c2);}
       else if(e.key.toLowerCase()==='f')fitAll();
     } else {
       if((e.key==='Delete'||e.key==='Backspace')&&selId){deleteFeature(selId);}
+      else if(e.key==='F2'&&selId){const f=features.find(x=>x.id===selId); if(f){e.preventDefault();startRename(f);}}
       else if(e.key.toLowerCase()==='f')fitAll();
     }
   });
@@ -4055,8 +4241,13 @@ const CSG = (function(){
   /* boot theatre: the kernel download as a terminal cascade */
   (function bootFX(){
     const el=$('boot');
-    if(!el||window.__MOBILE_GATE||window.OCCT){if(el)el.remove();return;}
+    if(!el||window.__MOBILE_GATE){if(el)el.remove();return;}
     el.style.display='block';el.style.opacity='1';
+    // Runs on cached loads too: the cascade always plays out in full and holds
+    // for MIN_MS before fading, so an instant kernel still gets the theatre.
+    const T0=performance.now(), MIN_MS=4000;
+    let kernelReady=!!window.OCCT;
+    window.addEventListener('kernel-ready',()=>{kernelReady=true;},{once:true});
     const LINES=[
       ['FREYACAD SHELL','v2026.08'],
       ['THREE.JS RENDERER','ONLINE'],
@@ -4073,15 +4264,15 @@ const CSG = (function(){
     const tick=setInterval(()=>{
       if(i<LINES.length){const [nm,st]=LINES[i++];
         el.appendChild(row(nm,st,(st==='ONLINE'||st==='ALIGNED'||st.charCodeAt(0)===118)?'ok':'run'));}
+      else if(kernelReady) finish();     // let every line land before wrapping up
     },260);
     function finish(){
       if(done)return;done=true;clearInterval(tick);
-      while(i<LINES.length){const [nm]=LINES[i++];el.appendChild(row(nm,'ONLINE','ok'));}
       el.querySelectorAll('.run').forEach(s=>{s.textContent='ONLINE';s.className='ok';});
       el.appendChild(row('ALL SYSTEMS','NOMINAL','ok'));
-      setTimeout(()=>{el.style.opacity='0';setTimeout(()=>el.remove(),900);},1500);
+      const hold=Math.max(0,MIN_MS-(performance.now()-T0));
+      setTimeout(()=>{el.style.opacity='0';setTimeout(()=>el.remove(),900);},hold);
     }
-    window.addEventListener('kernel-ready',finish,{once:true});
     window.addEventListener('error',()=>{done=true;clearInterval(tick);el.remove();},{once:true});
   })();
 })();
