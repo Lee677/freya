@@ -335,12 +335,17 @@ if(!window.THREE){
   #navcube:hover{opacity:1}
 
   /* sketch anchor chip — SW-style defined/under-defined status */
-  #sk-anchor{position:fixed;top:48px;left:50%;transform:translateX(-50%);z-index:24;display:none;
+  /* top-left of the drawing area: the dock is centred, so centring these put
+     them straight underneath it */
+  #sk-anchor{position:fixed;top:117px;left:238px;z-index:24;display:none;
     font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
     padding:4px 12px;border-radius:20px;border:1px solid var(--line);background:var(--panel);
     pointer-events:none}
   #sk-anchor.ok{color:var(--g-green);border-color:rgba(52,168,83,.5);text-shadow:0 0 6px rgba(52,168,83,.5)}
   #sk-anchor.no{color:#8ab4f8;border-color:rgba(66,133,244,.45)}
+  #sk-plane{position:fixed;top:143px;left:238px;z-index:24;display:none;pointer-events:none;
+    font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--muted);text-shadow:0 0 6px rgba(0,0,0,.8)}
 
   /* a sketch nested under the feature that consumed it */
   .feat.child{padding-left:26px;position:relative;opacity:.82}
@@ -401,6 +406,7 @@ if(!window.THREE){
 <div id="boot" aria-hidden="true"></div>
 <canvas id="navcube" width="208" height="208" title="Drag to orbit · click a face for that view"></canvas>
 <div id="sk-anchor" aria-hidden="true"></div>
+<div id="sk-plane" aria-hidden="true"></div>
 <div id="dim-preview" class="dim-label" style="display:none;pointer-events:none"></div>
 <div id="app">
   <header class="toolbar">
@@ -810,7 +816,9 @@ const CSG = (function(){
     g.fillStyle='#'+color.toString(16).padStart(6,'0');g.fillText(text.toUpperCase()+' PLANE',96,26);
     const t=new THREE.CanvasTexture(c);t.minFilter=THREE.LinearFilter;
     const s=new THREE.Sprite(new THREE.SpriteMaterial({map:t,transparent:true,depthTest:false,opacity:0.8}));
-    s.scale.set(3.1,0.78,1); s.renderOrder=4; return s;
+    s.scale.set(3.1,0.78,1); s.renderOrder=4;
+    s.userData.bs=[3.1,0.78];        // rescaled each frame to hold its screen size
+    return s;
   }
   function updatePlaneTraces(){
     while(traceGroup.children.length){
@@ -822,7 +830,9 @@ const CSG = (function(){
     traceSnapUV=[];
     if(mode!=='sketch'||!editing)return;
     let fr; try{ fr=editing.frame||planeFrame(editing.plane); }catch(_){ return; }
-    const n=fr.n.clone().normalize(), d1=n.dot(fr.o), h=GRID/2;
+    // in a sketch the datum planes read as unbounded, so the traces run well
+    // past anything you'd model rather than stopping at the grid square
+    const n=fr.n.clone().normalize(), d1=n.dot(fr.o), h=600;
     for(const name of ['Top','Front','Right']){
       const nP=DATUM[name].n, dot=n.dot(nP);
       if(Math.abs(dot)>0.9999)continue;              // the sketch's own plane, or parallel to it
@@ -847,12 +857,36 @@ const CSG = (function(){
       const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints([A,B]),
         new THREE.LineDashedMaterial({color:col,transparent:true,opacity:0.55,dashSize:0.45,gapSize:0.3,depthTest:false}));
       ln.computeLineDistances(); ln.renderOrder=3; traceGroup.add(ln);
+      // the line is effectively endless now, so anchor the label near the
+      // sketch origin instead of at a vanished endpoint
+      const tNear=-(u0*du+v0*dv), tLab=Math.max(t0,Math.min(t1,tNear+7));
       const lb=traceLabel(name,col);
-      lb.position.copy(B).lerp(A,0.09).addScaledVector(n.clone().cross(dir).normalize(),0.55);
+      lb.position.copy(worldFromSketch(fr,u0+tLab*du,v0+tLab*dv))
+        .addScaledVector(n,0.004)
+        .addScaledVector(n.clone().cross(dir).normalize(),0.55);
       traceGroup.add(lb);
     }
     traceGroup.visible=true;
+    tickLabelScale();
     drawOrigin(fr,n);
+    const pl=$('sk-plane');
+    if(pl){ pl.textContent=planeLabelOf(editing); pl.style.display=pl.textContent?'block':'none'; }
+  }
+  function planeLabelOf(f){
+    if(!f||!f.plane)return '';
+    if(f.plane.kind==='datum')return f.plane.name+' plane';
+    if(f.plane.kind==='dplane'){
+      const pf=features.find(x=>x.id===f.plane.refId);
+      return pf?pf.name:'offset plane';
+    }
+    return 'on a face';
+  }
+  /* Sprites shrink with distance; these are annotations, so hold their size on
+     screen by scaling them with the orbit radius instead. */
+  function tickLabelScale(){
+    const k=Math.max(0.3,controls.sph.radius/18);
+    for(const o of traceGroup.children)
+      if(o.isSprite&&o.userData.bs)o.scale.set(o.userData.bs[0]*k,o.userData.bs[1]*k,1);
   }
 
   /* The sketch origin: two short red darts at (0,0). They're an orientation
@@ -865,7 +899,7 @@ const CSG = (function(){
     while(originGroup.children.length){const c=originGroup.children.pop();
       if(c.geometry)c.geometry.dispose(); if(c.material)c.material.dispose();}
     originMats=[];
-    const OL=1.7;                                    // short: the arrows are a hint
+    const OL=1.25;                                   // short: the arrows are a hint
     const lineMat=new THREE.LineBasicMaterial({color:0xEA4335,transparent:true,opacity:0.95,depthTest:false});
     const headMat=new THREE.MeshBasicMaterial({color:0xEA4335,transparent:true,opacity:0.95,
       depthTest:false,side:THREE.DoubleSide});
@@ -2436,7 +2470,15 @@ const CSG = (function(){
     editing.entities.forEach(e=>{
       if(e.type==='poly'){ e.pts.forEach(pt=>hs.push({pt,kind:'v'})); }
       else if(e.type==='rect'){ hs.push({pt:e.a,kind:'v'}); hs.push({pt:e.b,kind:'v'}); }
-      else if(e.type==='circle'||e.type==='polygon'){ hs.push({pt:e.c,kind:'c'}); }
+      else if(e.type==='circle'){ hs.push({pt:e.c,kind:'c'}); }
+      else if(e.type==='polygon'){
+        hs.push({pt:e.c,kind:'c'});
+        // a live handle per corner: dragging one spins and resizes the polygon
+        for(let i=0;i<e.sides;i++){
+          const a=e.rot+i/e.sides*Math.PI*2;
+          hs.push({pt:{x:e.c.x+e.r*Math.cos(a),y:e.c.y+e.r*Math.sin(a)},kind:'pg',ent:e,corner:i});
+        }
+      }
     });
     return hs;
   }
@@ -2459,6 +2501,7 @@ const CSG = (function(){
   let dimPick=null;                          // first half of a two-click dimension
   let sketchCursor=null;                     // last cursor position in sketch UV
   let sketchSel=null;                        // {entIdx,seg?} picked with the Pointer
+  let pendingDim=null;                       // dimension awaiting its value, drawn greyed
 
   /* The Pointer is the only tool that manipulates rather than draws, so it —
      and only it — orbits the view. Every drawing tool keeps the camera still,
@@ -2516,7 +2559,7 @@ const CSG = (function(){
     if(mode!=='sketch'||!editing||!editing.frame)return;
     if(hoverPt){                                   // grabbable endpoint: a dot and a hint of a halo
       const s=Math.max(0.5,controls.sph.radius/22);
-      for(const [rad,op] of [[0.085*s,0.95],[0.15*s,0.18]]){
+      for(const [rad,op] of [[0.05*s,0.95],[0.09*s,0.16]]){
         const h=new THREE.Mesh(new THREE.SphereGeometry(rad,12,10),
           new THREE.MeshBasicMaterial({color:0x35d4e6,depthTest:false,transparent:true,opacity:op,
             blending:op<0.5?THREE.AdditiveBlending:THREE.NormalBlending}));
@@ -2538,6 +2581,9 @@ const CSG = (function(){
             depthTest:false,transparent:true,opacity:0.95}));
         ln.computeLineDistances(); ln.renderOrder=9; snapMarkGroup.add(ln);
       };
+      // draw the half-made dimension the way it will actually look, greyed
+      const ghost=(g)=>{ const s=[],t=[]; buildDimGeom(g,s,t);
+        emitDimGeom(snapMarkGroup,editing.frame,s,t,0x8f98a6,0.7); };
       if(dimPick.kind==='ent'){
         /* A line on its own is already dimensionable — show its length live and
            let the cursor choose which side the dimension sits on. Clicking a
@@ -2547,9 +2593,8 @@ const CSG = (function(){
           if(g.type!=='angle'&&g.n){
             const mid={x:(g.a.x+g.b.x)/2,y:(g.a.y+g.b.y)/2};
             dimPick.off=(sketchCursor.x-mid.x)*g.n.x+(sketchCursor.y-mid.y)*g.n.y;
-            const o=dimPick.off;
-            dash({x:g.a.x+g.n.x*o,y:g.a.y+g.n.y*o},{x:g.b.x+g.n.x*o,y:g.b.y+g.n.y*o});
-          }
+            ghost(dimResolve(editing,Object.assign({},dimPick.hit,{off:dimPick.off})));
+          } else ghost(g);
           const sp=screenOf(sketchCursor);
           prev.style.display=sp.behind?'none':'block';
           prev.style.left=sp.x+'px'; prev.style.top=(sp.y-18)+'px';
@@ -2557,14 +2602,17 @@ const CSG = (function(){
                                     :(g.suffix||'')+(+toDisp(g.value).toFixed(2))+' '+lenLabel();
         }
       } else if(A){
-        dash(A,sketchCursor);
-        const dot=new THREE.Mesh(new THREE.SphereGeometry(0.13,12,10),
+        // point picked: preview the point-to-cursor dimension in full
+        const dx=sketchCursor.x-A.x, dy=sketchCursor.y-A.y, L=Math.hypot(dx,dy)||1;
+        ghost({type:'linear',a:{x:A.x,y:A.y},b:{x:sketchCursor.x,y:sketchCursor.y},
+               n:{x:-dy/L,y:dx/L},off:DIM_OFF,value:L,suffix:''});
+        const dot=new THREE.Mesh(new THREE.SphereGeometry(0.07,10,8),
           new THREE.MeshBasicMaterial({color:0xFBBC05,depthTest:false}));
         dot.position.copy(worldFromSketch(editing.frame,A.x,A.y));
         dot.renderOrder=9; snapMarkGroup.add(dot);
         if(prev){
-          const L=Math.hypot(sketchCursor.x-A.x,sketchCursor.y-A.y);
-          const sp=screenOf({x:(A.x+sketchCursor.x)/2,y:(A.y+sketchCursor.y)/2});
+          const sp=screenOf({x:(A.x+sketchCursor.x)/2+(-dy/L)*(DIM_OFF+0.9),
+                             y:(A.y+sketchCursor.y)/2+(dx/L)*(DIM_OFF+0.9)});
           prev.style.display=sp.behind?'none':'block';
           prev.style.left=sp.x+'px'; prev.style.top=sp.y+'px';
           prev.textContent=(+toDisp(L).toFixed(2))+' '+lenLabel();
@@ -2665,7 +2713,7 @@ const CSG = (function(){
     if(mode!=='sketch'||!editing||tool!=='select')return;
     const fr=editing.frame;
     for(const h of sketchHandles()){
-      const dot=new THREE.Mesh(new THREE.SphereGeometry(h===dragVtx?0.16:0.11,12,10),
+      const dot=new THREE.Mesh(new THREE.SphereGeometry(h===dragVtx?0.09:0.06,10,8),
         new THREE.MeshBasicMaterial({color:h.kind==='c'?0x9aa0a6:0x4285F4,depthTest:false}));
       dot.position.copy(worldFromSketch(fr,h.pt.x,h.pt.y));dot.renderOrder=7;handleGroup.add(dot);
     }
@@ -3082,11 +3130,9 @@ const CSG = (function(){
     while(dimGroup.children.length){const c=dimGroup.children.pop();
       if(c.geometry)c.geometry.dispose(); if(c.material)c.material.dispose();}
   }
-  function drawDimGeometry(){
-    clearDimGeometry();
-    if(mode!=='sketch'||!editing||!editing.dims||!editing.dims.length)return;
-    const fr=(sketchData[editing.id]&&sketchData[editing.id].frame)||editing.frame; if(!fr)return;
-    const segs=[], tris=[];                         // sketch-space point pairs / triangles
+  /* One builder for the real dimensions and the half-made one being placed, so
+     a preview carries the same witness lines and arrowheads — just greyed. */
+  function buildDimGeom(g,segs,tris){
     // Solid arrowhead: tip on the witness line, barbs trailing back *along* the
     // dimension line. Pointing them outward is what turned every end into an
     // asterisk where the head crossed its own witness line.
@@ -3095,14 +3141,13 @@ const CSG = (function(){
       const px=-u.y*DIM_BARB, py=u.x*DIM_BARB;
       tris.push([P,{x:base.x+px,y:base.y+py},{x:base.x-px,y:base.y-py}]);
     };
-    for(const d of editing.dims){
-      const g=dimResolve(editing,d); if(!g)continue;
+    {
       if(g.type==='dia'){
         segs.push([g.a,g.b]);                       // straight through the middle
         const u={x:(g.b.x-g.a.x),y:(g.b.y-g.a.y)},L=Math.hypot(u.x,u.y)||1;
         u.x/=L;u.y/=L;
         arrow(g.a,{x:u.x,y:u.y}); arrow(g.b,{x:-u.x,y:-u.y});
-        continue;
+        return;
       }
       if(g.type==='angle'){
         const R=(g.off!=null?g.off:DIM_OFF)+1.6, P=g.vertex;
@@ -3121,7 +3166,7 @@ const CSG = (function(){
         const tang=(t,s)=>({x:-Math.sin(t)*s,y:Math.cos(t)*s});
         arrow({x:P.x+Math.cos(a1)*R,y:P.y+Math.sin(a1)*R},tang(a1,sg));
         arrow({x:P.x+Math.cos(a1+da)*R,y:P.y+Math.sin(a1+da)*R},tang(a1+da,-sg));
-        continue;
+        return;
       }
       const n=g.n, A=g.a, B=g.b, OFFv=(g.off!=null?g.off:DIM_OFF), sgn=OFFv<0?-1:1;
       const A2={x:A.x+n.x*OFFv,y:A.y+n.y*OFFv}, B2={x:B.x+n.x*OFFv,y:B.y+n.y*OFFv};
@@ -3132,23 +3177,40 @@ const CSG = (function(){
       const u={x:B2.x-A2.x,y:B2.y-A2.y},L=Math.hypot(u.x,u.y)||1; u.x/=L;u.y/=L;
       arrow(A2,{x:u.x,y:u.y}); arrow(B2,{x:-u.x,y:-u.y});
     }
+  }
+  // paint a built set of segments/triangles into a group
+  function emitDimGeom(group,fr,segs,tris,color,opacity){
     if(segs.length){
       const pts=[];
       for(const s of segs){pts.push(worldFromSketch(fr,s[0].x,s[0].y),worldFromSketch(fr,s[1].x,s[1].y));}
       const ls=new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts),
-        new THREE.LineBasicMaterial({color:0xb8c4d4,transparent:true,opacity:0.95,depthTest:false}));
-      ls.renderOrder=7; dimGroup.add(ls);
+        new THREE.LineBasicMaterial({color:color,transparent:true,opacity:opacity,depthTest:false}));
+      ls.renderOrder=7; group.add(ls);
     }
     if(tris.length){
       const pos=[];
-      for(const t of tris) for(const q of t){
-        const w=worldFromSketch(fr,q.x,q.y); pos.push(w.x,w.y,w.z);
-      }
-      const g2=new THREE.BufferGeometry();
-      g2.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
-      const mh=new THREE.Mesh(g2,new THREE.MeshBasicMaterial({color:0xb8c4d4,
-        depthTest:false,side:THREE.DoubleSide}));
-      mh.renderOrder=8; dimGroup.add(mh);
+      for(const t of tris) for(const q of t){ const w=worldFromSketch(fr,q.x,q.y); pos.push(w.x,w.y,w.z); }
+      const gg=new THREE.BufferGeometry();
+      gg.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+      const mh=new THREE.Mesh(gg,new THREE.MeshBasicMaterial({color:color,transparent:true,
+        opacity:opacity,depthTest:false,side:THREE.DoubleSide}));
+      mh.renderOrder=8; group.add(mh);
+    }
+  }
+  function drawDimGeometry(){
+    clearDimGeometry();
+    if(mode!=='sketch'||!editing)return;
+    const fr=(sketchData[editing.id]&&sketchData[editing.id].frame)||editing.frame; if(!fr)return;
+    const segs=[], tris=[];
+    for(const d of (editing.dims||[])){
+      const g=dimResolve(editing,d); if(g)buildDimGeom(g,segs,tris);
+    }
+    emitDimGeom(dimGroup,fr,segs,tris,0xb8c4d4,0.95);
+    // the one being placed, before its value is typed
+    if(pendingDim){
+      const g=dimResolve(editing,pendingDim);
+      if(g){ const s2=[],t2=[]; buildDimGeom(g,s2,t2);
+        emitDimGeom(dimGroup,fr,s2,t2,0x8f98a6,0.75); }
     }
   }
   // Find the dimensionable thing nearest a sketch-space click.
@@ -3239,6 +3301,7 @@ const CSG = (function(){
   function openDimInput(d){
     closeDimInput();
     const cur=dimResolve(editing,d); if(!cur) return;
+    pendingDim=d; drawDimGeometry();          // show it as a real, greyed dimension
     const sp=screenOf(cur.anchor);
     const inp=document.createElement('input'); inp.type='number'; inp.className='dim-input';
     inp.value=cur.angular?+cur.value.toFixed(3):+toDisp(cur.value).toFixed(4);
@@ -3250,12 +3313,13 @@ const CSG = (function(){
     viewport.appendChild(inp); dimInputEl=inp; inp.focus(); inp.select();
     let done=false;
     const apply=()=>{ if(done)return; done=true; let v=parseFloat(inp.value);
-      closeDimInput();
+      closeDimInput(); pendingDim=null;
       if(!isNaN(v)&&v>0){ v=Math.round(v*1e4)/1e4;      // 4 dp is the cap
         pushUndo('dimension'); ensureDimStored(d);
         dimApply(editing,d,cur.angular?v:fromDisp(v)); rebuild(); } };
     inp.addEventListener('keydown',ev=>{ if(ev.key==='Enter'){ev.preventDefault();apply();}
-      else if(ev.key==='Escape'){ev.preventDefault();done=true;closeDimInput();} });
+      else if(ev.key==='Escape'){ev.preventDefault();done=true;closeDimInput();
+        pendingDim=null;drawDimGeometry();} });
     inp.addEventListener('blur',apply);
   }
   function clearDimLabels(){ dimLabelEls.forEach(o=>o.el.remove()); dimLabelEls=[]; clearDimGeometry(); }
@@ -3862,6 +3926,7 @@ const CSG = (function(){
       hoverSnap=null; hoverGuides=[]; hoverPt=null; dimPick=null; sketchCursor=null;
       sketchSel=null; drawSketchSel();
       drawSnapMark(); const tc=$('tool-cursor'); if(tc)tc.style.display='none';
+      const pl=$('sk-plane'); if(pl)pl.style.display='none';
       const dp=$('dim-preview'); if(dp)dp.style.display='none';
       const ac=$('sk-anchor'); if(ac)ac.style.display='none'; }
     syncRotateGate();
@@ -3914,7 +3979,9 @@ const CSG = (function(){
       if(mode==='sketch'&&editing&&tool==='select'&&e.button===0){
         const p=pointerToSketch(e);
         if(p){ const tol=Math.max(0.6,controls.sph.radius*0.04); const h=nearestHandle(p,tol);
-          if(h){ pushUndo('move point'); dragVtx=h; dragSnapPt=null; redrawHandles(); } }
+          if(h){ pushUndo('move point'); dragVtx=h; dragSnapPt=null;
+            controls._s=0;              // this gesture is a point drag, not an orbit
+            redrawHandles(); } }
       }
   });
   canvas.addEventListener('pointermove',e=>{
@@ -3927,6 +3994,19 @@ const CSG = (function(){
     }
     if(dragVtx){
       const p=pointerToSketch(e); if(!p)return;
+      if(dragVtx.kind==='pg'){
+        // corner handle: the vector from centre to cursor gives both the
+        // circumradius and the rotation, so one drag does size and spin
+        const ent=dragVtx.ent, dx=p.x-ent.c.x, dy=p.y-ent.c.y;
+        const r=Math.hypot(dx,dy);
+        if(r>1e-3){
+          ent.r=r;
+          ent.rot=Math.atan2(dy,dx)-dragVtx.corner/ent.sides*Math.PI*2;
+        }
+        dragVtx.pt.x=p.x; dragVtx.pt.y=p.y; dragSnapPt=null;
+        liveSketchRedraw();
+        return;
+      }
       const snap=nearestSnap(p,dragVtx.pt,SNAP_JOIN);
       if(snap){ dragVtx.pt.x=snap.x; dragVtx.pt.y=snap.y; dragSnapPt=snap; }
       else    { dragVtx.pt.x=p.x;   dragVtx.pt.y=p.y;   dragSnapPt=null; }
@@ -4724,6 +4804,7 @@ const CSG = (function(){
     if(mode==='sketch'&&typeof flashOrigin==='function')flashOrigin();}
   window.addEventListener('resize',resize);resize();
   (function loop(now){requestAnimationFrame(loop);updateDimLabels();candyTick(now||0);tickOrigin(now||0);
+    if(traceGroup.visible)tickLabelScale();
     if(cubeRenderer){cubeMesh.quaternion.copy(camera.quaternion).invert();cubeRenderer.render(cubeScene,cubeCam);}
     renderer.render(scene,camera);})();
 
@@ -4779,7 +4860,18 @@ const CSG = (function(){
     const LINES=[
       ['FREYACAD SHELL',stamp],
       ['THREE.JS RENDERER','ONLINE'],
-      ['DATUM PLANES ×3','ALIGNED'],
+      ['GPU RASTER CONTEXT',(()=>{           // real, read off the live GL context
+        try{
+          const c=document.createElement('canvas');
+          const gl=c.getContext('webgl2')||c.getContext('webgl');
+          if(!gl)return 'SOFTWARE';
+          const two=!!c.getContext('webgl2');
+          const dbg=gl.getExtension('WEBGL_debug_renderer_info');
+          let r=dbg?gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL):'';
+          r=String(r||'').replace(/^ANGLE\s*\(/,'').replace(/\)$/,'').split(',')[0].trim();
+          return (two?'WebGL2':'WebGL')+(r?' · '+r.slice(0,20):'');
+        }catch(_){ return 'WebGL'; }
+      })()],
       ['OPEN CASCADE KERNEL (11 MB)','FETCHING'],
       ['B-REP BOOLEAN ENGINE','STANDBY'],
       ['CURRENT LINES OF CODE','<span id="boot-loc">counting…</span>'],
