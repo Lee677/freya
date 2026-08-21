@@ -4697,16 +4697,28 @@ const CSG = (function(){
       ['DATUM PLANES ×3','ALIGNED'],
       ['OPEN CASCADE KERNEL (11 MB)','FETCHING'],
       ['B-REP BOOLEAN ENGINE','STANDBY'],
-      ['FILLET / CHAMFER SURFACES','STANDBY'],
+      ['CURRENT LINES OF CODE','<span id="boot-loc">counting…</span>'],
       ['STEP AP214 WRITER','STANDBY'],
     ];
     let i=0,done=false;
     const row=(name,state,cls)=>{const d=document.createElement('div');
       d.innerHTML='<span class="dim">&gt; </span>'+name+' <span class="dim">....</span> <span class="'+cls+'">'+state+'</span>';
       return d;};
+    // the app is one file, so its own line count is a fetch and a newline count
+    // away — self-updating, and it's served from cache
+    let locCount=null;
+    // the fetch usually beats the row it writes into, so hold the number and
+    // paint it whenever the row turns up
+    const paintLoc=()=>{ const s=document.getElementById('boot-loc');
+      if(s&&locCount!=null)s.textContent=locCount; };
+    fetch(location.href,{cache:'force-cache'}).then(r=>r.text())
+      .then(t=>{ locCount=t.split('\n').length.toLocaleString(); paintLoc(); })
+      .catch(()=>{ locCount='4,700+'; paintLoc(); });
     const tick=setInterval(()=>{
       if(i<LINES.length){const [nm,st]=LINES[i++];
-        el.appendChild(row(nm,st,(st==='ONLINE'||st==='ALIGNED'||st.charCodeAt(0)===118)?'ok':'run'));}
+        // the line-count row carries its own markup and must not be swept to ONLINE
+        el.appendChild(row(nm,st,(st.charAt(0)==='<'||st==='ONLINE'||st==='ALIGNED'||st.charCodeAt(0)===118)?'ok':'run'));
+        paintLoc();}
       else if(kernelReady) finish();     // let every line land before wrapping up
     },260);
     function finish(){
