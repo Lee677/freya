@@ -189,10 +189,17 @@ if(!window.THREE){
   /* editing a dimension should look like the dimension, not like a form field:
      same chip, just with a caret. type=number draws stepper arrows, hence the
      appearance resets. */
-  .dim-input{position:absolute;z-index:60;width:62px;transform:translate(-50%,-50%);padding:1px 6px;
-    font-family:var(--mono);font-size:11px;background:rgba(13,17,23,.95);color:#fff;
-    border:1px solid var(--g-yellow);border-radius:4px;text-align:center;outline:none;
+  /* Needs to outrank the generic input[type=number] panel styling below, which
+     otherwise forces width:100%, 7px padding and a blue focus glow — that's the
+     big rounded blue box. Width is set from the content in JS. */
+  input[type=number].dim-input,input[type=text].dim-input{
+    position:absolute;z-index:60;transform:translate(-50%,-50%);
+    width:auto;min-width:32px;padding:1px 5px;font-family:var(--mono);font-size:11px;line-height:1.35;
+    background:rgba(13,17,23,.97);color:#fff;border:1px solid var(--g-yellow);border-radius:4px;
+    text-align:center;outline:none;box-shadow:none;transition:none;
     -moz-appearance:textfield;appearance:textfield}
+  input[type=number].dim-input:focus,input[type=text].dim-input:focus{
+    border-color:var(--g-yellow);box-shadow:0 0 6px rgba(251,188,5,.35)}
   .dim-input::-webkit-outer-spin-button,.dim-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
   .dim-label{position:absolute;z-index:55;transform:translate(-50%,-50%);padding:1px 6px;font-family:var(--mono);font-size:11px;
     background:rgba(13,17,23,.82);color:var(--g-yellow);border:1px solid rgba(251,188,5,.45);border-radius:4px;cursor:pointer;pointer-events:auto;white-space:nowrap;user-select:none}
@@ -3111,12 +3118,16 @@ const CSG = (function(){
     const inp=document.createElement('input'); inp.type='number'; inp.className='dim-input';
     inp.value=cur.angular?+cur.value.toFixed(3):+toDisp(cur.value).toFixed(4);
     inp.step=cur.angular?1:0.1; inp.min=0.001;
+    // sit exactly as wide as the number, growing as it's typed (4 dp is the cap)
+    const fit=()=>{ inp.style.width=Math.max(32,inp.value.length*6.9+14)+'px'; };
+    inp.addEventListener('input',fit); fit();
     inp.style.left=sp.x+'px'; inp.style.top=sp.y+'px';
     viewport.appendChild(inp); dimInputEl=inp; inp.focus(); inp.select();
     let done=false;
     const apply=()=>{ if(done)return; done=true; let v=parseFloat(inp.value);
       closeDimInput();
-      if(!isNaN(v)&&v>0){ pushUndo('dimension'); ensureDimStored(d);
+      if(!isNaN(v)&&v>0){ v=Math.round(v*1e4)/1e4;      // 4 dp is the cap
+        pushUndo('dimension'); ensureDimStored(d);
         dimApply(editing,d,cur.angular?v:fromDisp(v)); rebuild(); } };
     inp.addEventListener('keydown',ev=>{ if(ev.key==='Enter'){ev.preventDefault();apply();}
       else if(ev.key==='Escape'){ev.preventDefault();done=true;closeDimInput();} });
