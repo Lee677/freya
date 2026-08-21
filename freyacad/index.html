@@ -645,14 +645,23 @@ const CSG = (function(){
     d.addEventListener('pointermove',e=>{
       if(!this._s)return; if(this._animLock){this._px=e.clientX;this._py=e.clientY;return;}
       const dx=e.clientX-this._px,dy=e.clientY-this._py; this._px=e.clientX;this._py=e.clientY;
-      if(this._s===1){ this.sph.theta-=dx*0.005; this.sph.phi=Math.max(0.05,Math.min(Math.PI-0.05,this.sph.phi-dy*0.005)); }
+      if(this._s===1){
+        if(this.fb){                                  // tilt away from the sketch plane
+          this.fTheta-=dx*0.007;
+          this.fPhi=Math.max(0,Math.min(Math.PI*0.47,this.fPhi+dy*0.007));
+        } else { this.sph.theta-=dx*0.005; this.sph.phi=Math.max(0.05,Math.min(Math.PI-0.05,this.sph.phi-dy*0.005)); }
+      }
       else this._pan(dx,dy);
       this.update();
     });
     const end=e=>{this._s=0;try{d.releasePointerCapture(e.pointerId);}catch(_){}};
     d.addEventListener('pointerup',end); d.addEventListener('pointercancel',end);
     d.addEventListener('contextmenu',e=>e.preventDefault());
-    d.addEventListener('wheel',e=>{e.preventDefault();this.sph.radius=Math.max(this.minR,Math.min(this.maxR,this.sph.radius*Math.pow(0.95,-Math.sign(e.deltaY))));this.update();},{passive:false});
+    d.addEventListener('wheel',e=>{e.preventDefault();
+      this.sph.radius=Math.max(this.minR,Math.min(this.maxR,this.sph.radius*Math.pow(0.95,-Math.sign(e.deltaY))));
+      this.update();
+      if(typeof flashOrigin==='function'&&this.fb)flashOrigin();   // rescaled: re-show the origin
+    },{passive:false});
   };
   Controls.prototype._pan=function(dx,dy){
     const cam=this.cam, dist=cam.position.distanceTo(this.target), h=this.dom.clientHeight||1;
@@ -660,7 +669,29 @@ const CSG = (function(){
     this.target.add(new THREE.Vector3().setFromMatrixColumn(cam.matrix,0).multiplyScalar(-dx*k));
     this.target.add(new THREE.Vector3().setFromMatrixColumn(cam.matrix,1).multiplyScalar(dy*k));
   };
+  /* Orbiting while a sketch is open. Spherical-about-world-Y is degenerate for
+     a Top plane (the camera sits on the pole), so the sketch orbits in its own
+     basis instead: phi tilts away from the plane normal, theta swings around
+     it. phi = 0 is square-on, which is where the fly-to leaves you. */
+  Controls.prototype.orbitInFrame=function(frame){
+    this.fb={u:frame.u.clone().normalize(),v:frame.v.clone().normalize(),n:frame.n.clone().normalize()};
+    this.fTheta=0; this.fPhi=0;
+    this.lockDir=null; this.lockUp=null; this.enableRotate=true;
+    this.target.copy(frame.o);
+    this.update();
+  };
   Controls.prototype.update=function(){
+    if(this.fb){
+      const b=this.fb, sp=Math.sin(this.fPhi), cp=Math.cos(this.fPhi);
+      const dir=b.n.clone().multiplyScalar(cp)
+        .addScaledVector(b.u,sp*Math.cos(this.fTheta))
+        .addScaledVector(b.v,sp*Math.sin(this.fTheta)).normalize();
+      this.cam.position.copy(this.target).addScaledVector(dir,this.sph.radius);
+      const up=b.v.clone().addScaledVector(dir,-b.v.dot(dir));
+      this.cam.up.copy(up.lengthSq()<1e-8?b.u:up.normalize());
+      this.cam.lookAt(this.target);
+      return;
+    }
     if(this.lockDir){
       this.cam.position.copy(this.target).addScaledVector(this.lockDir,this.sph.radius);
       this.cam.up.copy(this.lockUp); this.cam.lookAt(this.target);
@@ -674,8 +705,14 @@ const CSG = (function(){
     this.lockDir=frame.n.clone(); this.lockUp=frame.v.clone();
     this.target.copy(frame.o); this.enableRotate=false; this.update();
   };
-  Controls.prototype.unlock=function(){ this.lockDir=null;this.lockUp=null;this.enableRotate=true; this.update(); };
-  Controls.prototype.setIso=function(){ this.lockDir=null;this.up.set(0,1,0); this.sph.set(this.sph.radius,1.0,0.82); this.enableRotate=true; this.update(); };
+  Controls.prototype.unlock=function(){
+    if(this.fb){                                      // carry the current view back into world spherical
+      const off=this.cam.position.clone().sub(this.target);
+      this.sph.setFromVector3(off); this.sph.makeSafe(); this.up.set(0,1,0); this.fb=null;
+    }
+    this.lockDir=null;this.lockUp=null;this.enableRotate=true; this.update();
+  };
+  Controls.prototype.setIso=function(){ this.fb=null;this.lockDir=null;this.up.set(0,1,0); this.sph.set(this.sph.radius,1.0,0.82); this.enableRotate=true; this.update(); };
   const controls=new Controls(camera,canvas);
 
   /* ---- materials & rendering mode ---- */
@@ -807,19 +844,52 @@ const CSG = (function(){
       lb.position.copy(B).lerp(A,0.09).addScaledVector(n.clone().cross(dir).normalize(),0.55);
       traceGroup.add(lb);
     }
-    // SW-style sketch origin: two red arrows at the plane's (0,0)
-    const oM=new THREE.LineBasicMaterial({color:0xEA4335,transparent:true,opacity:0.95,depthTest:false});
-    const OL=3, hd=0.55;
-    const seg=(a,b)=>{const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints([a,b]),oM);ln.renderOrder=6;traceGroup.add(ln);};
-    const og=fr.o.clone().addScaledVector(n,0.006);
-    for(const ax of [fr.u,fr.v]){
-      const tip=og.clone().addScaledVector(ax,OL);
-      const side=(ax===fr.u?fr.v:fr.u);
-      seg(og,tip);
-      seg(tip,tip.clone().addScaledVector(ax,-hd).addScaledVector(side,hd*0.45));
-      seg(tip,tip.clone().addScaledVector(ax,-hd).addScaledVector(side,-hd*0.45));
-    }
     traceGroup.visible=true;
+    drawOrigin(fr,n);
+  }
+
+  /* The sketch origin: two short red darts at (0,0). They're an orientation
+     cue, not scenery, so they show on entry and whenever the view changes
+     scale, then fade out of the way. */
+  const originGroup=new THREE.Group(); scene.add(originGroup);
+  let originShownAt=-1e9, originMats=[];
+  const ORIGIN_HOLD=3500, ORIGIN_FADE=900;
+  function drawOrigin(fr,n){
+    while(originGroup.children.length){const c=originGroup.children.pop();
+      if(c.geometry)c.geometry.dispose(); if(c.material)c.material.dispose();}
+    originMats=[];
+    const OL=1.7;                                    // short: the arrows are a hint
+    const lineMat=new THREE.LineBasicMaterial({color:0xEA4335,transparent:true,opacity:0.95,depthTest:false});
+    const headMat=new THREE.MeshBasicMaterial({color:0xEA4335,transparent:true,opacity:0.95,
+      depthTest:false,side:THREE.DoubleSide});
+    originMats=[lineMat,headMat];
+    const o=fr.o.clone().addScaledVector(n,0.006);
+    const pos=[];
+    for(const ax of [fr.u,fr.v]){
+      const tip=o.clone().addScaledVector(ax,OL);
+      const side=(ax===fr.u?fr.v:fr.u);
+      const shaft=new THREE.Line(new THREE.BufferGeometry().setFromPoints(
+        [o,o.clone().addScaledVector(ax,OL-DIM_ARROW)]),lineMat);
+      shaft.renderOrder=6; originGroup.add(shaft);
+      // solid head, same dart as the dimensions wear
+      const base=tip.clone().addScaledVector(ax,-DIM_ARROW);
+      const p1=base.clone().addScaledVector(side,DIM_BARB);
+      const p2=base.clone().addScaledVector(side,-DIM_BARB);
+      pos.push(tip.x,tip.y,tip.z,p1.x,p1.y,p1.z,p2.x,p2.y,p2.z);
+    }
+    const hg=new THREE.BufferGeometry();
+    hg.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+    const heads=new THREE.Mesh(hg,headMat); heads.renderOrder=6; originGroup.add(heads);
+    flashOrigin();
+  }
+  function flashOrigin(){ originShownAt=performance.now(); originGroup.visible=true; }
+  function tickOrigin(now){
+    if(!originGroup.visible)return;
+    const age=now-originShownAt;
+    if(age<ORIGIN_HOLD){ for(const m of originMats)m.opacity=0.95; return; }
+    const k=1-(age-ORIGIN_HOLD)/ORIGIN_FADE;
+    if(k<=0){ originGroup.visible=false; return; }
+    for(const m of originMats)m.opacity=0.95*k;
   }
 
   /* ============ interface candy: view cube, loop flash, anchor status ============ */
@@ -2585,7 +2655,9 @@ const CSG = (function(){
     let finished=false;
     const finish=()=>{
       if(finished||id!==camAnimId)return; finished=true;
-      controls.lockToFrame(frame); controls.sph.radius=radius; controls.update();
+      controls.sph.radius=radius;
+      controls.orbitInFrame(frame);        // square-on, but free to tilt away
+      flashOrigin();
     };
     function step(ts){
       if(finished||id!==camAnimId||mode!=='sketch')return;
@@ -4510,6 +4582,7 @@ const CSG = (function(){
   /* orbit about the part, not wherever the target drifted to after panning —
      glide the aim to the part centre (~160ms) instead of snapping, then rotate */
   controls.onRotateStart=function(){
+    if(controls.fb)return;      // sketching: orbit the sketch, don't glide to the part
     const box=partBox(); if(!box)return;
     const c0=box.getCenter(new THREE.Vector3());
     if(c0.distanceTo(controls.target)<0.25)return;
@@ -4562,9 +4635,10 @@ const CSG = (function(){
   });
   function dockSel(){$('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.tool===tool));redrawDraft(null);updateHint();}
 
-  function resize(){const w=viewport.clientWidth,h=viewport.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();}
+  function resize(){const w=viewport.clientWidth,h=viewport.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();
+    if(mode==='sketch'&&typeof flashOrigin==='function')flashOrigin();}
   window.addEventListener('resize',resize);resize();
-  (function loop(now){requestAnimationFrame(loop);updateDimLabels();candyTick(now||0);
+  (function loop(now){requestAnimationFrame(loop);updateDimLabels();candyTick(now||0);tickOrigin(now||0);
     if(cubeRenderer){cubeMesh.quaternion.copy(camera.quaternion).invert();cubeRenderer.render(cubeScene,cubeCam);}
     renderer.render(scene,camera);})();
 

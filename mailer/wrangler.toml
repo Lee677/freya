@@ -9,7 +9,7 @@
 # account, and the actual recipient is a secret:
 #
 #   npx wrangler secret put CONTACT_TO     # the inbox that receives enquiries
-#   npx wrangler secret put CONTACT_FROM   # freya <hello@freya.co.nz>
+#   npx wrangler secret put CONTACT_FROM   # the verified sender address
 
 name = "freya-contact"
 main = "src/index.js"
