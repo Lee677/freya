@@ -314,8 +314,10 @@ if(!window.THREE){
   #boot .dim{color:var(--muted-2)}
 
   /* view cube */
-  #navcube{position:fixed;right:14px;bottom:40px;z-index:15;width:104px;height:104px;cursor:pointer;
-    opacity:.85;transition:opacity .15s}
+  /* left/top must be reset: the global `canvas{inset:0}` rule otherwise wins
+     over right/bottom and parks the cube in the top-left, behind the tree */
+  #navcube{position:fixed;left:auto;top:auto;right:14px;bottom:40px;z-index:22;
+    width:104px;height:104px;cursor:pointer;opacity:.85;transition:opacity .15s}
   #navcube:hover{opacity:1}
 
   /* sketch anchor chip — SW-style defined/under-defined status */
