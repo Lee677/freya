@@ -903,11 +903,20 @@ const CSG = (function(){
     }
   }
 
-  /* ---- SW-style anchor status: is the sketch tied back to the origin? ----
-     No constraint solver here, so "constrained" means what snapping makes
-     true: an entity is anchored if a point of it sits exactly on the origin,
-     or it shares a point with an anchored entity. Gold = tied, blue = floating
-     — same language as SolidWorks' black/blue. */
+  /* ---- SW-style defined status ----------------------------------------
+     Two halves, both required, exactly as SolidWorks treats them:
+
+       position — the entity is anchored: a point of it sits on the origin,
+                  or it shares a point with something already anchored.
+       size     — every size parameter the entity has carries a dimension
+                  (circle Ø, polygon Ø, rect width + height, one length per
+                  polyline segment).
+
+     Gold = fully defined, blue = under-defined. A floating-but-dimensioned
+     shape stays blue (its position is free) and an origin-snapped rectangle
+     with no dimensions is blue too — same as SolidWorks. No solver here, so
+     angles between polyline segments are not counted; a polyline reads as
+     defined once every segment has a length. */
   function entPoints(e){
     if(e.type==='poly')return e.pts;
     if(e.type==='rect')return [e.a,{x:e.a.x,y:e.b.y},e.b,{x:e.b.x,y:e.a.y}];
@@ -925,22 +934,52 @@ const CSG = (function(){
           for(const a of pts[i]){if(pts[j].some(b=>Math.hypot(a.x-b.x,a.y-b.y)<EPS)){anc[i]=true;changed=true;break;}}}}}
     return anc;
   }
+  // How many size dimensions the entity wants, and how many it has. Stale
+  // segment dims (left behind when a polyline shrank) don't count.
+  function entityDims(sk,i){
+    const e=sk.entities[i]; if(!e)return {need:0,have:0};
+    let need=0,lim=0;
+    if(e.type==='circle'||e.type==='polygon') need=1;
+    else if(e.type==='rect') need=2;
+    else if(e.type==='poly'){ lim=e.closed?e.pts.length:Math.max(0,e.pts.length-1); need=lim; }
+    const seen=new Set();
+    for(const d of (sk.dims||[])){
+      if(d.entIdx!==i)continue;
+      if(d.kind==='seg'&&!(d.seg>=0&&d.seg<lim))continue;
+      seen.add(d.kind+':'+(d.seg!=null?d.seg:''));
+    }
+    return {need:need,have:Math.min(seen.size,need)};
+  }
+  function defineState(sk){
+    const anc=anchoredSet(sk);
+    return sk.entities.map(function(e,i){
+      const dm=entityDims(sk,i);
+      return {anchored:anc[i],need:dm.need,have:dm.have,defined:anc[i]&&dm.have>=dm.need};
+    });
+  }
   function updateAnchorChip(sk){
     const el=$('sk-anchor');if(!el)return;
     if(mode!=='sketch'||!sk){el.style.display='none';return;}
     el.style.display='block';
-    const anc=anchoredSet(sk),total=anc.length,tied=anc.filter(Boolean).length;
-    if(!total){el.className='';el.textContent='sketch empty — start at the origin marker';}
-    else if(tied===total){el.className='ok';el.textContent='⚓ anchored to origin — fully tied ('+total+'/'+total+')';}
-    else{el.className='no';el.textContent='◌ floating — '+tied+'/'+total+' tied to origin';}
+    const st=defineState(sk),total=st.length,def=st.filter(s=>s.defined).length;
+    if(!total){el.className='';el.textContent='sketch empty — start at the origin marker';return;}
+    if(def===total){el.className='ok';el.textContent='⚓ fully defined ('+total+'/'+total+')';return;}
+    const needAnchor=st.filter(s=>!s.anchored).length;
+    const needDims=st.reduce((a,s)=>a+Math.max(0,s.need-s.have),0);
+    const bits=[];
+    if(needAnchor)bits.push(needAnchor+' to anchor');
+    if(needDims)bits.push(needDims+' dimension'+(needDims>1?'s':''));
+    el.className='no';
+    el.textContent='◌ under-defined — '+def+'/'+total+' defined'+(bits.length?' · '+bits.join(', '):'');
   }
   function drawEntityLoopsColored(target,sk,frame){
-    const anc=anchoredSet(sk);
+    const st=defineState(sk);
     sk.entities.forEach((e,i)=>{
       let loop;try{loop=entityLoops(Object.assign({},sk,{entities:[e]}))[0];}catch(_){return;}
       if(!loop||loop.length<2)return;
-      const mat=new THREE.LineBasicMaterial({color:anc[i]?0xFBBC05:0x4285F4,transparent:true,
-        opacity:anc[i]?1.0:0.95,depthTest:false});
+      const ok=st[i]&&st[i].defined;
+      const mat=new THREE.LineBasicMaterial({color:ok?0xFBBC05:0x4285F4,transparent:true,
+        opacity:ok?1.0:0.95,depthTest:false});
       const pts=loop.map(p=>worldFromSketch(frame,p.x,p.y));pts.push(pts[0]);
       const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),mat);
       ln.renderOrder=2;target.add(ln);
