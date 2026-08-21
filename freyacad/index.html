@@ -901,7 +901,9 @@ const CSG = (function(){
         else{ const t=Q[i]/P[i]; if(P[i]<0){ if(t>t0)t0=t; } else if(t<t1)t1=t; }
       }
       if(!ok||t0>=t1)continue;                       // it crosses outside the grid
-      traceSnapUV.push({u0,v0,du,dv,t0,t1});
+      // the name rides along: dimensions reference a trace by plane name, and
+      // t0/t1 are only the drawn clip — the line itself is infinite in sketch UV
+      traceSnapUV.push({u0,v0,du,dv,t0,t1,name});
       const A=worldFromSketch(fr,u0+t0*du,v0+t0*dv).addScaledVector(n,0.004);
       const B=worldFromSketch(fr,u0+t1*du,v0+t1*dv).addScaledVector(n,0.004);
       const col=TRACE_COL[name];
@@ -1216,7 +1218,12 @@ const CSG = (function(){
   function dimsOn(sk,i){
     let n=0;
     for(const d of (sk.dims||[])){
-      if(d.kind==='p2p'||d.kind==='angle'){ if(d.a.ent===i||d.b.ent===i)n++; continue; }
+      // a plane trace is ground — a dim against it costs the sketch entity's DOF
+      // and nothing else, so only the ref that *has* an entity is counted. (b.ent
+      // is undefined for a trace ref; the ==null guard is what keeps that honest.)
+      if(d.kind==='ptrace'){ if(d.ref&&d.ref.ent===i)n++; continue; }
+      if(d.kind==='p2p'||d.kind==='angle'){
+        if((d.a&&d.a.ent===i)||(d.b&&d.b.ent===i))n++; continue; }
       if(d.entIdx!==i)continue;
       if(d.kind==='seg'){
         const e=sk.entities[i];
@@ -2630,7 +2637,7 @@ const CSG = (function(){
   const DIM_COL=0xD6A2F5, DIM_COL_PEND=0x9B7BB8;
   let dragVtx=null, dragSnapPt=null;          // Move-tool: point being dragged + its snap target
   let lockFlash=null, lockFlashT=0;           // point you just tried to drag but can't
-  const SNAP_JOIN=1.0;                          // mm: release within this of another vertex to join
+  const SNAP_JOIN=1.0;                          // mm: floor for the drag-snap radius (grows with zoom)
   function sketchHandles(){
     const hs=[]; if(!editing) return hs;
     editing.entities.forEach((e,ei)=>{
@@ -2650,9 +2657,6 @@ const CSG = (function(){
   }
   function nearestHandle(p,maxd){
     let best=null,bd=maxd; for(const h of sketchHandles()){ const d=Math.hypot(h.pt.x-p.x,h.pt.y-p.y); if(d<bd){bd=d;best=h;} } return best;
-  }
-  function nearestSnap(p,exclude,maxd){
-    let best=null,bd=maxd; for(const h of sketchHandles()){ if(h.kind!=='v'||h.pt===exclude)continue; const d=Math.hypot(h.pt.x-p.x,h.pt.y-p.y); if(d<bd){bd=d;best=h.pt;} } return best;
   }
 
   /* ---- hover snap for the drawing tools --------------------------------
@@ -2754,8 +2758,9 @@ const CSG = (function(){
       const prev=$('dim-preview');
       let A=null;
       if(dimPick.kind==='point') A=resolvePt(editing,dimPick.ref);
-      else { const s=segPts(editing,{ent:dimPick.hit.entIdx,seg:dimPick.hit.seg});
+      else if(dimPick.kind==='ent'){ const s=segPts(editing,{ent:dimPick.hit.entIdx,seg:dimPick.hit.seg});
              if(s)A={x:(s.a.x+s.b.x)/2,y:(s.a.y+s.b.y)/2}; }
+      else if(prev)prev.style.display='none';   // trace armed: nothing to size yet
       const dash=(p1,p2)=>{
         const w=[worldFromSketch(editing.frame,p1.x,p1.y),worldFromSketch(editing.frame,p2.x,p2.y)];
         const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(w),
@@ -2802,9 +2807,11 @@ const CSG = (function(){
       }
     } else { const prev=$('dim-preview'); if(prev)prev.style.display='none'; }
     if(!hoverSnap)return;
-    const s=Math.max(0.6,controls.sph.radius/18);
+    /* Fixed radii, not zoom-scaled: scaled by the orbit radius the marker grew
+       into a blob that hid the very point it was marking. Sized against the
+       0.06 handles — big enough to read, small enough to aim through. */
     const point=hoverSnap.kind==='point';
-    const m=new THREE.Mesh(new THREE.SphereGeometry(point?0.24*s:0.13*s,14,10),
+    const m=new THREE.Mesh(new THREE.SphereGeometry(point?0.10:0.07,14,10),
       new THREE.MeshBasicMaterial({color:point?0x34d4a0:0xFBBC05,depthTest:false,transparent:true,opacity:point?0.75:0.9}));
     m.position.copy(worldFromSketch(editing.frame,hoverSnap.x,hoverSnap.y));
     m.renderOrder=8; snapMarkGroup.add(m);
@@ -2814,22 +2821,22 @@ const CSG = (function(){
       const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints([A,B]),
         new THREE.LineDashedMaterial({color:0x8ab4f8,transparent:true,opacity:0.8,dashSize:0.35,gapSize:0.25,depthTest:false}));
       ln.computeLineDistances();ln.renderOrder=7;snapMarkGroup.add(ln);
-      const dot=new THREE.Mesh(new THREE.SphereGeometry(0.1,10,8),
+      const dot=new THREE.Mesh(new THREE.SphereGeometry(0.06,10,8),
         new THREE.MeshBasicMaterial({color:0x8ab4f8,depthTest:false}));
       dot.position.copy(A);dot.renderOrder=7;snapMarkGroup.add(dot);
     }
   }
-  function applyDrawSnap(p){
-    hoverSnap=null;hoverGuides=[];
-    if(mode!=='sketch'||!editing||DRAW_TOOLS.indexOf(tool)<0)return p;
-    const R=controls.sph.radius;
-    const tolP=Math.max(0.5,R*0.035), tolL=Math.max(0.35,R*0.022);
-    // point candidates
-    const pts=[];
+  /* Everything worth snapping to, in sketch UV — shared by the drawing tools and
+     by dragging a point with the Pointer, because "what the cursor can catch"
+     should not depend on which of the two you happen to be doing. `pt` is the
+     live point object behind a candidate, so a drag can exclude itself. */
+  function snapCandidates(){
+    const pts=[], lines=[];
+    if(mode!=='sketch'||!editing)return {pts,lines};
     let fr=null; try{ fr=editing.frame||planeFrame(editing.plane); }catch(_){ }
     if(fr){
       const rel=fr.o.clone().negate();       // the world origin, if it lies on this plane
-      if(Math.abs(rel.dot(fr.n))<1e-6)pts.push({x:rel.dot(fr.u),y:rel.dot(fr.v)});
+      if(Math.abs(rel.dot(fr.n))<1e-6)pts.push({x:rel.dot(fr.u),y:rel.dot(fr.v),tag:'origin'});
     }
     for(let i=0;i<traceSnapUV.length;i++)for(let j=i+1;j<traceSnapUV.length;j++){
       const a=traceSnapUV[i],b=traceSnapUV[j];
@@ -2837,10 +2844,31 @@ const CSG = (function(){
       const dx=b.u0-a.u0,dy=b.v0-a.v0;
       const t=(dx*b.dv-dy*b.du)/den, s2=(dx*a.dv-dy*a.du)/den;
       if(t<a.t0||t>a.t1||s2<b.t0||s2>b.t1)continue;
-      pts.push({x:a.u0+t*a.du,y:a.v0+t*a.dv});   // where two datum planes cross this one
+      pts.push({x:a.u0+t*a.du,y:a.v0+t*a.dv,tag:'cross'});   // where two datum planes cross this one
     }
-    for(const h of sketchHandles())pts.push({x:h.pt.x,y:h.pt.y});
-    for(const dp of draftPts)pts.push({x:dp.x,y:dp.y});
+    for(const h of sketchHandles())pts.push({x:h.pt.x,y:h.pt.y,pt:h.pt,ei:h.ei,tag:'vertex'});
+    for(const dp of draftPts)pts.push({x:dp.x,y:dp.y,pt:dp,tag:'vertex'});
+    for(const L of traceSnapUV)lines.push(L);
+    return {pts,lines};
+  }
+  // slide a point onto the nearest trace within tol, or null
+  function nearestTraceSlide(p,lines,tol){
+    let bl=null,bld=tol;
+    for(const L of lines){
+      let t=(p.x-L.u0)*L.du+(p.y-L.v0)*L.dv;   // (du,dv) is unit length
+      t=Math.max(L.t0,Math.min(L.t1,t));
+      const qx=L.u0+t*L.du,qy=L.v0+t*L.dv;
+      const d=Math.hypot(qx-p.x,qy-p.y);
+      if(d<bld){bld=d;bl={x:qx,y:qy,tag:'trace'};}
+    }
+    return bl;
+  }
+  function applyDrawSnap(p){
+    hoverSnap=null;hoverGuides=[];
+    if(mode!=='sketch'||!editing||DRAW_TOOLS.indexOf(tool)<0)return p;
+    const R=controls.sph.radius;
+    const tolP=Math.max(0.5,R*0.035), tolL=Math.max(0.35,R*0.022);
+    const pts=snapCandidates().pts;
     let best=null,bd=tolP;
     for(const c of pts){const d=Math.hypot(c.x-p.x,c.y-p.y);if(d<bd){bd=d;best=c;}}
     if(best){hoverSnap={x:best.x,y:best.y,kind:'point'};return{x:best.x,y:best.y};}
@@ -2860,16 +2888,28 @@ const CSG = (function(){
       return q;
     }
     // line candidates: the plane traces
-    let bl=null,bld=tolL;
-    for(const L of traceSnapUV){
-      let t=(p.x-L.u0)*L.du+(p.y-L.v0)*L.dv;   // (du,dv) is unit length
-      t=Math.max(L.t0,Math.min(L.t1,t));
-      const qx=L.u0+t*L.du,qy=L.v0+t*L.dv;
-      const d=Math.hypot(qx-p.x,qy-p.y);
-      if(d<bld){bld=d;bl={x:qx,y:qy};}
-    }
-    if(bl){hoverSnap={x:bl.x,y:bl.y,kind:'line'};return bl;}
+    const bl=nearestTraceSlide(p,traceSnapUV,tolL);
+    if(bl){hoverSnap={x:bl.x,y:bl.y,kind:'line'};return {x:bl.x,y:bl.y};}
     return p;
+  }
+  /* The same net, cast while dragging a point with the Pointer. It used to see
+     other vertices and nothing else, so a dragged endpoint could never reach the
+     origin or a trace — the two things that actually remove degrees of freedom.
+     Landing on the origin pins the point, so a drag can now *define* geometry. */
+  function dragSnap(p,h){
+    const R=controls.sph.radius;
+    const tolP=Math.max(SNAP_JOIN,R*0.035), tolL=Math.max(0.35,R*0.022);
+    const cand=snapCandidates();
+    let best=null,bd=tolP;
+    for(const c of cand.pts){
+      if(c.pt===h.pt)continue;                 // a point never snaps to itself
+      // a centre must not catch its own shape's corners, which orbit it at r
+      if(h.kind==='c'&&c.ei===h.ei)continue;
+      const d=Math.hypot(c.x-p.x,c.y-p.y);
+      if(d<bd){bd=d;best=c;}
+    }
+    if(best)return {x:best.x,y:best.y,tag:best.tag};
+    return nearestTraceSlide(p,cand.lines,tolL);
   }
 
   /* ---- the cursor badge: a small glyph of the active tool, up-right of the pointer ---- */
@@ -3003,7 +3043,9 @@ const CSG = (function(){
     const fr=editing.frame;
     const lineMat=new THREE.LineBasicMaterial({color:0x4285F4,depthTest:false});
     const dashMat=new THREE.LineDashedMaterial({color:0x4285F4,transparent:true,opacity:0.6,dashSize:0.3,gapSize:0.2,depthTest:false});
-    const vmesh=(p,c)=>{const m=new THREE.Mesh(new THREE.SphereGeometry(0.12,12,10),new THREE.MeshBasicMaterial({color:c,depthTest:false}));m.position.copy(worldFromSketch(fr,p.x,p.y));m.renderOrder=6;draftGroup.add(m);};
+    // 0.06 to match the Pointer's handles — a draft point that reads bigger than
+    // the handle it becomes made the same vertex look like two different things
+    const vmesh=(p,c)=>{const m=new THREE.Mesh(new THREE.SphereGeometry(0.06,12,10),new THREE.MeshBasicMaterial({color:c,depthTest:false}));m.position.copy(worldFromSketch(fr,p.x,p.y));m.renderOrder=6;draftGroup.add(m);};
     if(tool==='line'){
       if(draftPts.length){
         const pts=draftPts.map(p=>worldFromSketch(fr,p.x,p.y));
@@ -3048,28 +3090,39 @@ const CSG = (function(){
     } else if(tool==='polygon'){
       if(draftStage===0){draftA=p;draftStage=1;} else {const r=Math.hypot(p.x-draftA.x,p.y-draftA.y),rot=Math.atan2(p.y-draftA.y,p.x-draftA.x);if(r>1e-3){const ent={type:'polygon',c:{x:draftA.x,y:draftA.y},r,sides:polygonSides,rot};editing.entities.push(ent);flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
     } else if(tool==='dim'){
-      /* Two clicks, SolidWorks-style. First click arms a point or a line and
-         previews; second click decides what the dimension is:
-           point + point → distance      line + line → angle
+      /* Two clicks, SolidWorks-style. First click arms a point, a line or a
+         plane trace and previews; second click decides what the dimension is:
+           point + point → distance      line + line  → angle
+           line  + trace → angle         point + trace → perpendicular distance
            line  + away  → that line's own length / diameter                */
       const pr=nearestPointRef(p);
       const eh=pr?null:dimHit(p);
+      const tr=(eh&&eh.kind==='trace')?eh.name:null;
       if(!dimPick){
         if(pr){ dimPick={kind:'point',ref:pr};
-          setHint('Now click the second point — or the origin'); }
+          setHint('Now click the second point, the origin, or a plane trace'); }
+        else if(tr){ dimPick={kind:'trace',name:tr};
+          setHint('Now click a line for its angle to the '+tr+' plane, or a point for its distance'); }
         else if(eh){ dimPick={kind:'ent',hit:eh};
-          setHint(eh.kind==='seg'?'Click another line for the angle, or click clear space to dimension this one'
+          setHint(eh.kind==='seg'?'Click another line or a plane trace for the angle, or click clear space to dimension this one'
                                  :'Click clear space to place the dimension'); }
-        else setHint('Click a point, a line, a circle or a rectangle edge');
+        else setHint('Click a point, a line, a circle, a rectangle edge or a plane trace');
         drawSnapMark(); return;
       }
       const first=dimPick; dimPick=null;
       if(first.kind==='point'){
-        if(pr&&!sameRef(first.ref,pr)) openDimInput({kind:'p2p',a:first.ref,b:pr});
+        if(tr) openTraceDist(first.ref,tr);
+        else if(pr&&!sameRef(first.ref,pr)) openDimInput({kind:'p2p',a:first.ref,b:pr});
         else setHint('Pick a different second point');
+      } else if(first.kind==='trace'){
+        // trace picked first: whatever comes second decides which dimension it is
+        if(pr) openTraceDist(pr,first.name);
+        else if(eh&&eh.kind==='seg') openDimInput(traceAngleDim(eh.entIdx,eh.seg,first.name));
+        else setHint('Pick a line for its angle to the plane, or a point for its distance');
       } else {
         const A=first.hit;
-        if(eh&&eh.kind==='seg'&&A.kind==='seg'&&!(eh.entIdx===A.entIdx&&eh.seg===A.seg))
+        if(tr&&A.kind==='seg') openDimInput(traceAngleDim(A.entIdx,A.seg,tr));
+        else if(eh&&eh.kind==='seg'&&A.kind==='seg'&&!(eh.entIdx===A.entIdx&&eh.seg===A.seg))
           openDimInput({kind:'angle',a:{ent:A.entIdx,seg:A.seg},b:{ent:eh.entIdx,seg:eh.seg}});
         else openDimInput(Object.assign({},A,{off:first.off}));
       }
@@ -3097,13 +3150,25 @@ const CSG = (function(){
   /* ---- erase, SolidWorks-style: one dimension or one line at a time ----
      A polyline is a single entity here, so erasing one of its segments opens
      the loop (or splits the chain) rather than deleting the whole shape. */
-  function dropDimsFor(sk,ei){
+  /* Drop entity ei's dims, then move later refs by delta: −1 when the entity
+     was removed, +1 when one was inserted just after it (a chain split), 0 when
+     the entity survived in place. The old always−1 silently retargeted every
+     later dim whenever a middle segment was erased. */
+  function dropDimsFor(sk,ei,delta){
     if(!sk.dims)return;
+    if(delta==null)delta=-1;
     const two=x=>x.kind==='p2p'||x.kind==='angle';
-    sk.dims=sk.dims.filter(x=>two(x)?(x.a.ent!==ei&&x.b.ent!==ei):x.entIdx!==ei);
+    // a trace ref carries no entity index, so it is neither dropped nor shifted
+    const hits=r=>!!r && r.ent===ei;
+    const shift=r=>{ if(r&&r.ent!=null&&r.ent>ei)r.ent+=delta; };
+    sk.dims=sk.dims.filter(x=>
+      x.kind==='ptrace' ? !hits(x.ref)
+      : two(x)          ? (!hits(x.a)&&!hits(x.b))
+                        : x.entIdx!==ei);
     sk.dims.forEach(x=>{
-      if(two(x)){ if(x.a.ent>ei)x.a.ent--; if(x.b.ent>ei)x.b.ent--; }
-      else if(x.entIdx>ei)x.entIdx--;
+      if(x.kind==='ptrace') shift(x.ref);
+      else if(two(x)){ shift(x.a); shift(x.b); }
+      else if(x.entIdx>ei)x.entIdx+=delta;
     });
   }
   function dimNear(p){
@@ -3120,6 +3185,7 @@ const CSG = (function(){
   function removePolySegment(sk,ei,si){
     const e=sk.entities[ei], n=e.pts.length;
     const cp=q=>({x:q.x,y:q.y});
+    let split=false;
     if(e.closed){
       // opening the loop: start just past the erased span and run right round
       const out=[]; for(let k=1;k<=n;k++)out.push(cp(e.pts[(si+k)%n]));
@@ -3131,10 +3197,15 @@ const CSG = (function(){
         const tail=e.pts.slice(si+1).map(cp);
         e.pts=e.pts.slice(0,si+1);
         sk.entities.splice(ei+1,0,{type:'poly',pts:tail,closed:false});
+        split=true;
       }
     }
-    dropDimsFor(sk,ei);                          // segment indices just shifted
-    if(e.pts.length<2){ sk.entities.splice(ei,1); dropDimsFor(sk,ei); }
+    /* Drop-and-reindex exactly once, keyed to the old index, and only then
+       splice — this used to call dropDimsFor twice when the entity died, and
+       the second call deleted exactly the dims the first had just rescued. */
+    const gone=e.pts.length<2;
+    dropDimsFor(sk,ei, gone?-1 : split?1 : 0);
+    if(gone) sk.entities.splice(ei,1);
   }
   function eraseAt(p){
     if(!editing)return false;
@@ -3253,6 +3324,59 @@ const CSG = (function(){
     return {x:p1.x+u1.x*t, y:p1.y+u1.y*t};
   }
 
+  /* ---- plane traces as dimension references -------------------------------
+     A trace is the datum plane seen edge-on: an infinite line in sketch UV that
+     nothing in the sketch can move. That makes it *ground* — dimensioning to it
+     costs the sketch entity's own degrees of freedom and no more, which is what
+     lets "length + angle to the Front plane" fully define a line from the
+     origin. Referenced by plane name so it survives undo as plain JSON. */
+  function traceUV(name){
+    for(const L of traceSnapUV) if(L.name===name) return L;
+    return null;
+  }
+  const traceRefOf=r=>(r&&r.trace!=null)?r.trace:null;
+  // foot of the perpendicular from a UV point onto the (infinite) trace
+  function traceFoot(L,q){
+    const t=(q.x-L.u0)*L.du+(q.y-L.v0)*L.dv;      // (du,dv) is unit length
+    return {x:L.u0+t*L.du, y:L.v0+t*L.dv};
+  }
+  // signed offset of a point from the trace, along the trace's left normal
+  function traceSigned(L,q){ return (q.x-L.u0)*(-L.dv)+(q.y-L.v0)*L.du; }
+  /* Which end of a segment holds still when a dimension spins it: a point on the
+     origin first, then one shared with another entity, then simply the first —
+     the same "what's already anchored" reading the DOF counter uses. */
+  function segPivot(f,ref){
+    const S=segPts(f,ref); if(!S) return null;
+    const EPS=1e-4;
+    for(const q of [S.a,S.b]) if(Math.hypot(q.x,q.y)<EPS) return q;
+    for(const q of [S.a,S.b])
+      for(let j=0;j<f.entities.length;j++){
+        if(j===ref.ent) continue;
+        if(entPoints(f.entities[j]).some(o=>Math.hypot(o.x-q.x,o.y-q.y)<EPS)) return q;
+      }
+    return S.a;
+  }
+  function traceAngleDim(ent,seg,name){
+    const d={kind:'angle', a:{ent:ent,seg:seg}, b:{trace:name}};
+    const L=traceUV(name), S=segPts(editing,d.a);
+    if(L&&S){
+      const piv=segPivot(editing,d.a)||S.a, far=(piv===S.a)?S.b:S.a;
+      // aim the trace the way the line runs, so the reading opens as the angle
+      // you'd measure by eye (≤90°) rather than its 180° complement
+      if((far.x-piv.x)*L.du+(far.y-piv.y)*L.dv<0) d.b.rev=true;
+    }
+    return d;
+  }
+  function openTraceDist(ref,name){
+    if(ref.ent===-1){ setHint('The origin is fixed — dimension a sketch point to the plane instead'); return; }
+    const d={kind:'ptrace', ref:{ent:ref.ent,idx:ref.idx}, trace:name};
+    const g=dimResolve(editing,d);
+    if(!g){ setHint('That point cannot be dimensioned to the '+name+' plane'); return; }
+    // a zero distance has no direction to drive, and the input refuses 0 anyway
+    if(g.value<1e-6){ setHint('That point already sits on the '+name+' plane'); return; }
+    openDimInput(d);
+  }
+
   function dimResolve(f,d){
     const OFF=(d.off!=null?d.off:DIM_OFF);      // per-dimension, draggable
     if(d.kind==='p2p'){
@@ -3262,6 +3386,38 @@ const CSG = (function(){
       return {value:Math.hypot(dx,dy), suffix:'', type:'linear', off:OFF,
               a:{x:A.x,y:A.y}, b:{x:B.x,y:B.y}, n:{x:nx,y:ny},
               anchor:{x:(A.x+B.x)/2+nx*(OFF+0.9), y:(A.y+B.y)/2+ny*(OFF+0.9)}};
+    }
+    if(d.kind==='ptrace'){
+      const Q=resolvePt(f,d.ref), L=traceUV(d.trace); if(!Q||!L) return null;
+      const F=traceFoot(L,Q), s=traceSigned(L,Q);
+      /* Measured across the trace, so the dimension line runs *along* it and the
+         witness lines are the perpendicular — FreeCAD's DistanceX/DistanceY read.
+         Anchored at the foot, which is the nearest point of an infinite line. */
+      return {value:Math.abs(s), suffix:'', type:'linear', off:OFF,
+              a:{x:F.x,y:F.y}, b:{x:Q.x,y:Q.y}, n:{x:L.du,y:L.dv},
+              anchor:{x:(F.x+Q.x)/2+L.du*(OFF+0.9), y:(F.y+Q.y)/2+L.dv*(OFF+0.9)}};
+    }
+    if(d.kind==='angle'&&traceRefOf(d.b)){
+      const S=segPts(f,d.a), L=traceUV(d.b.trace); if(!S||!L) return null;
+      const piv=segPivot(f,d.a)||S.a, far=(piv===S.a)?S.b:S.a;
+      const dx=far.x-piv.x, dy=far.y-piv.y, LL=Math.hypot(dx,dy); if(LL<1e-9) return null;
+      const o1={x:dx/LL,y:dy/LL};
+      /* The trace is a line, not a ray, so which way it "points" is a choice.
+         It's made once when the dimension is picked (d.b.rev) and then held, so
+         typing a value drives the whole 0–180° range instead of folding at 90. */
+      const sg=d.b.rev?-1:1, o2={x:L.du*sg,y:L.dv*sg};
+      const ang=Math.abs(Math.atan2(o2.x*o1.y-o2.y*o1.x, o2.x*o1.x+o2.y*o1.y))*180/Math.PI;
+      // a trace runs to infinity, so a near-parallel line crosses it miles away:
+      // fall back to the perpendicular foot to keep the arc beside the sketch
+      let P=lineIntersect(piv,o1,{x:L.u0,y:L.v0},{x:L.du,y:L.dv});
+      const mid={x:(S.a.x+S.b.x)/2,y:(S.a.y+S.b.y)/2};
+      if(!P||Math.hypot(P.x-mid.x,P.y-mid.y)>LL*3+8) P=traceFoot(L,piv);
+      let bx=o1.x+o2.x, by=o1.y+o2.y, BL=Math.hypot(bx,by);
+      if(BL<1e-6){ bx=-o1.y; by=o1.x; BL=1; }        // 180°: the bisector vanishes
+      bx/=BL; by/=BL;
+      return {value:ang, angular:true, suffix:'', type:'angle', vertex:P, o1:o1, o2:o2,
+              a:S.a, b:S.b, off:OFF,
+              anchor:{x:P.x+bx*(OFF+2.2), y:P.y+by*(OFF+2.2)}};
     }
     if(d.kind==='angle'){
       const S1=segPts(f,d.a), S2=segPts(f,d.b); if(!S1||!S2) return null;
@@ -3429,7 +3585,19 @@ const CSG = (function(){
       }
     });
     const tol=Math.max(0.6, controls.sph.radius*0.04);
-    return (best && bd<tol)? best : null;
+    if(best && bd<tol) return best;
+    /* Nothing of the sketch's own under the cursor — try the plane traces, which
+       are dimensionable too. Tighter tolerance than the sketch lines, and only
+       ever reached second, so a trace lying under a line can't steal the pick. */
+    const tolT=Math.max(0.35, controls.sph.radius*0.022);
+    let bt=null, btd=tolT;
+    for(const L of traceSnapUV){
+      let t=(p.x-L.u0)*L.du+(p.y-L.v0)*L.dv;
+      t=Math.max(L.t0,Math.min(L.t1,t));
+      const dd=Math.hypot(L.u0+t*L.du-p.x, L.v0+t*L.dv-p.y);
+      if(dd<btd){btd=dd; bt={kind:'trace', name:L.name};}
+    }
+    return bt;
   }
   // Write the value back to the parameter (driving).
   function dimApply(f,d,val){
@@ -3442,6 +3610,32 @@ const CSG = (function(){
       if(aFixed&&bFixed) return;
       if(bFixed){ A.x=B.x-ux*val; A.y=B.y-uy*val; }
       else      { B.x=A.x+ux*val; B.y=A.y+uy*val; }
+      return;
+    }
+    if(d.kind==='ptrace'){
+      const Q=resolvePt(f,d.ref), L=traceUV(d.trace);
+      if(!Q||!L||d.ref.ent===-1) return;              // the origin never gives
+      const nx=-L.dv, ny=L.du, s=traceSigned(L,Q);
+      const want=(s<0?-1:1)*val;                      // stay on the side it's on
+      Q.x+=(want-s)*nx; Q.y+=(want-s)*ny;
+      return;
+    }
+    if(d.kind==='angle'&&traceRefOf(d.b)){
+      const g=dimResolve(f,d); if(!g) return;
+      const S=segPts(f,d.a); if(!S) return;
+      const pv=segPivot(f,d.a)||S.a;                  // spin about the anchored end
+      const P={x:pv.x,y:pv.y};                        // a copy: the loop mutates pv
+      const spin=(rad)=>{
+        const c=Math.cos(rad), s=Math.sin(rad);
+        for(const q of [S.a,S.b]){
+          const dx=q.x-P.x, dy=q.y-P.y;
+          q.x=P.x+dx*c-dy*s; q.y=P.y+dx*s+dy*c;
+        }
+      };
+      const delta=(val-g.value)*Math.PI/180;
+      spin(delta);
+      const after=dimResolve(f,d);                    // rotated the wrong way? flip it
+      if(after&&Math.abs(after.value-val)>Math.abs(g.value-val)) spin(-2*delta);
       return;
     }
     if(d.kind==='angle'){
@@ -3473,15 +3667,22 @@ const CSG = (function(){
   }
   function dimKey(d){
     if(d.kind==='p2p')   return 'p2p:'+d.a.ent+'.'+d.a.idx+':'+d.b.ent+'.'+d.b.idx;
-    if(d.kind==='angle') return 'ang:'+d.a.ent+'.'+d.a.seg+':'+d.b.ent+'.'+d.b.seg;
+    if(d.kind==='ptrace')return 'ptr:'+d.ref.ent+'.'+d.ref.idx+':trace.'+d.trace;
+    // a trace ref has no ent/seg, so it needs its own tail — without it two dims
+    // against different planes would key the same and the dedupe would eat one
+    if(d.kind==='angle') return 'ang:'+d.a.ent+'.'+d.a.seg+':'+
+      (traceRefOf(d.b)?('trace.'+d.b.trace):(d.b.ent+'.'+d.b.seg));
     return d.entIdx+':'+d.kind+':'+(d.seg!=null?d.seg:'');
   }
   function ensureDimStored(d){
     editing.dims = editing.dims || [];
     if(editing.dims.some(x=>dimKey(x)===dimKey(d))) return;
-    editing.dims.push((d.kind==='p2p'||d.kind==='angle')
-      ? {kind:d.kind, a:Object.assign({},d.a), b:Object.assign({},d.b), off:d.off}
-      : {entIdx:d.entIdx, kind:d.kind, seg:d.seg, off:d.off});
+    editing.dims.push(
+      d.kind==='ptrace'
+        ? {kind:'ptrace', ref:Object.assign({},d.ref), trace:d.trace, off:d.off}
+      : (d.kind==='p2p'||d.kind==='angle')
+        ? {kind:d.kind, a:Object.assign({},d.a), b:Object.assign({},d.b), off:d.off}
+        : {entIdx:d.entIdx, kind:d.kind, seg:d.seg, off:d.off});
   }
   function screenOf(anchor){
     const fr=(sketchData[editing.id]&&sketchData[editing.id].frame)||editing.frame;
@@ -4189,8 +4390,8 @@ const CSG = (function(){
     const h=$('hint');
     if(mode==='sketch'){h.classList.add('show');
       if(tool==='line')h.innerHTML='<span class="pip"></span> Click to place points · click the white point or <kbd>Enter</kbd> to close a loop';
-      else if(tool==='select')h.innerHTML='<span class="pip"></span> Pointer: drag to rotate · drag a point (release within 1mm of another to join) · drag a dimension to reposition · click a line then <kbd>Del</kbd>';
-      else if(tool==='dim')h.innerHTML='<span class="pip"></span> Dim: click a circle, polygon, rectangle edge, or line — then type a value to drive it';
+      else if(tool==='select')h.innerHTML='<span class="pip"></span> Pointer: drag to rotate · drag a point (it snaps to the origin, plane traces and other points) · drag a dimension to reposition · click a line then <kbd>Del</kbd>';
+      else if(tool==='dim')h.innerHTML='<span class="pip"></span> Dim: click a circle, polygon, rectangle edge, line, point or plane trace — then type a value to drive it';
       else if(tool==='erase')h.innerHTML='<span class="pip"></span> Erase: click a shape to delete it';
       else if(tool==='horiz')h.innerHTML='<span class="pip"></span> Horizontal: click a line segment to lay it flat';
       else if(tool==='vert')h.innerHTML='<span class="pip"></span> Vertical: click a line segment to stand it upright';
@@ -4250,7 +4451,7 @@ const CSG = (function(){
         liveSketchRedraw();
         return;
       }
-      const snap=nearestSnap(p,dragVtx.pt,SNAP_JOIN);
+      const snap=dragSnap(p,dragVtx);
       if(snap){ dragVtx.pt.x=snap.x; dragVtx.pt.y=snap.y; dragSnapPt=snap; }
       else    { dragVtx.pt.x=p.x;   dragVtx.pt.y=p.y;   dragSnapPt=null; }
       liveSketchRedraw();
@@ -4293,8 +4494,13 @@ const CSG = (function(){
       return;
     }
     if(dragVtx){
-      // already snapped-to-coincident during move; just commit + rebuild
-      if(dragSnapPt) setHint('Points joined');
+      // already snapped during the move; just commit + rebuild. Say which of the
+      // four it caught — "joined" would be a lie about the origin or a trace.
+      if(dragSnapPt) setHint(
+        dragSnapPt.tag==='origin' ? 'Pinned to the origin'
+        : dragSnapPt.tag==='cross' ? 'Snapped to a plane-trace crossing'
+        : dragSnapPt.tag==='trace' ? 'Snapped onto a plane trace'
+        : 'Points joined');
       dragVtx=null; dragSnapPt=null; rebuild(); redrawHandles(); return;
     }
     if(dragLight){ dragLight = null; controls.enableRotate = true; return; }

@@ -114,7 +114,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line-soft);
 <main>
 <h1>freyacad</h1>
 <p class="tagline">Parametric solid modelling that runs entirely in your browser.</p>
-<p class="stamp" id="stamp">Manual — last revised 21 August 2026</p>
+<p class="stamp" id="stamp">Manual — last revised 22 August 2026</p>
 
 <h2 id="start">Start here</h2>
 <p class="lede">freyacad is a small CAD program with a real geometry kernel. You sketch on a
@@ -228,7 +228,8 @@ solid. The camera flies round to look straight at it and the drawing tools appea
       whenever you resize, then fade so they don't clutter the view.</li>
   <li><b>Plane traces</b> — dashed, colour-keyed lines showing where the other two datum
       planes slice through the one you're on. They're the sketch equivalent of a centre
-      line: extremely useful for keeping things symmetrical.</li>
+      line: extremely useful for keeping things symmetrical, and you can snap to them,
+      drop points on them and <a href="#dims">dimension to them</a>.</li>
   <li><b>The status chip</b> — a live count of what's still loose.</li>
 </ul>
 <p>Finish with <kbd>Enter</kbd> or the <b>Finish</b> button. <kbd>Esc</kbd> backs out of
@@ -267,9 +268,14 @@ whatever you're mid-way through, and again to leave the sketch.</p>
   <li><b>plane traces</b>, and the point where two of them cross;</li>
   <li><b>endpoints</b> of lines you've already drawn — these glow as you approach.</li>
 </ul>
+<p><b>Dragging catches the same things.</b> Pull an existing point around with the pointer
+and it hunts for the origin, the trace crossings, the traces and every other vertex, exactly
+as the drawing tools do — the marker turns teal when it has hold of something, and the
+status line names what it caught when you let go.</p>
 <p>Snapping isn't cosmetic. A point snapped to the origin is genuinely attached to it, and
 that costs it its freedom to move — which is how a sketch becomes defined without you
-dimensioning every last thing.</p>
+dimensioning every last thing. Dragging a loose endpoint onto the origin will define it the
+same way, mid-edit.</p>
 <p>The cursor also shows a small glyph of the active tool up and to the right, so you can
 tell at a glance whether you're about to draw a line or a circle.</p>
 
@@ -284,8 +290,15 @@ geometry <b>moves to match</b> — dimensions here drive the model, they don't j
   <tr><td>Between two points</td><td>One endpoint, then another</td></tr>
   <tr><td>A point back to the origin</td><td>The point, then the origin</td></tr>
   <tr><td>The angle between two lines</td><td>One line, then the other</td></tr>
+  <tr><td>The angle to a datum plane</td><td>A line, then a plane trace (either order)</td></tr>
+  <tr><td>A point's distance to a datum plane</td><td>The point, then a plane trace (either order)</td></tr>
   <tr><td>A circle</td><td>The circle — you get its diameter</td></tr>
 </table>
+<p>The plane traces count as <b>ground</b>: they can't move, so a dimension to one costs
+only the sketched entity its freedom. That is what makes a line drawn from the origin fully
+defined by two dimensions — its length, and its angle to a plane. Two distances to the two
+traces do the same job for a single point, which is the reliable way to pin one down: a
+single diagonal distance leaves it free to swing on a circle.</p>
 <p>Drag any dimension to reposition its leader line; long chains get unreadable fast if
 they all sit on top of each other. Values accept up to four decimal places, and the input
 box grows to fit what you type.</p>
@@ -307,12 +320,16 @@ can still deform.</p>
 <p>When it hits zero the sketch is <b>fully defined</b>. That is the state you want before
 building on it, because nothing can shift underneath a feature later.</p>
 
-<h3>Horizontal and vertical</h3>
-<p>Two ways round, whichever suits:</p>
+<h3>Horizontal, vertical, parallel, equal</h3>
+<p>Four constraints live in the tool dock. Horizontal and vertical work either way round:</p>
 <ul>
   <li><b>Select first</b> — click a line with the pointer, then click the H or V icon.</li>
   <li><b>Tool first</b> — click the H or V icon, then click the line.</li>
 </ul>
+<p><b>Parallel</b> (∥) and <b>equal</b> (=) relate two lines, so they always want a
+reference first: click the icon (or have a line selected when you click it), click the
+line to copy from, then click the line to change. Parallel matches its direction; equal
+matches its length.</p>
 <p>These are cheap and worth using freely. A line pinned horizontal loses a degree of
 freedom that no dimension then has to spend.</p>
 
@@ -352,7 +369,8 @@ mistaken for geometry in any state.</p>
 <p>All of this needs the <b>pointer</b> tool active.</p>
 <ul>
   <li><b>Move a point</b> — drag any endpoint, as long as it's still blue. The view stays
-      put while you drag.</li>
+      put while you drag, and the point snaps to the origin, the plane traces and other
+      vertices on its way past.</li>
   <li><b>Resize or spin a polygon</b> — drag one of its corners.</li>
   <li><b>Delete</b> — click a line to select it, then <kbd>Delete</kbd>. Or use the eraser
       to remove individual segments and dimensions.</li>
@@ -490,10 +508,8 @@ environment with mates and joints.</p>
 <ul>
   <li><b>No constraint solver yet.</b> Dimensions apply one at a time and can disturb each
       other. See the note under <a href="#dims">Dimensions</a>.</li>
-  <li><b>Dimensioning to the datum planes isn't in yet.</b> You can dimension to the origin;
-      distances and angles measured to a plane trace are still to come.</li>
-  <li><b>No parallel / perpendicular / equal constraints.</b> Horizontal and vertical only,
-      for now.</li>
+  <li><b>No perpendicular constraint.</b> Horizontal, vertical, parallel and equal are in;
+      perpendicular isn't yet.</li>
   <li><b>The parameter panel is outside undo.</b></li>
   <li><b>Desktop only</b>, by design.</li>
   <li><b>No autosave.</b> The tab is the only copy until you save.</li>
@@ -510,7 +526,7 @@ framework.</p>
 rel="noopener">github.com/Lee677/freya</a></p>
 
 <footer>
-  freyacad manual · revised 21 August 2026 · part of <a href="https://freya.co.nz">freya.co.nz</a><br>
+  freyacad manual · revised 22 August 2026 · part of <a href="https://freya.co.nz">freya.co.nz</a><br>
   This manual is kept in step with the application; if something here doesn't match what
   you see, the manual is the thing that's wrong.
 </footer>
