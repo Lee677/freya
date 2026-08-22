@@ -325,18 +325,27 @@ can still deform.</p>
 <p>When it hits zero the sketch is <b>fully defined</b>. That is the state you want before
 building on it, because nothing can shift underneath a feature later.</p>
 
-<h3>Horizontal, vertical, parallel, equal, concentric</h3>
-<p>Five constraints live in the tool dock. Horizontal and vertical work either way round:</p>
+<h3>The constraints</h3>
+<p>Six constraints live in the tool dock. Horizontal and vertical work either way round:</p>
 <ul>
   <li><b>Select first</b> — click a line with the pointer, then click the H or V icon.</li>
   <li><b>Tool first</b> — click the H or V icon, then click the line.</li>
 </ul>
+<p><b>Horizontal</b> and <b>vertical</b> are permanent: the line straightens and then
+<em>stays</em> that way — drag it and it slides or stretches, but it will not turn. A
+small green <b>H</b> or <b>V</b> badge appears up-right of the line's middle; the only
+way the line's angle changes again is deleting that badge (click it and press
+<kbd>Delete</kbd>, or click it with the eraser).</p>
+<p><b>Coincident</b> (⊕) locks two points together — click one point, then the point to
+lock it to, and from then on they move as one. Lock a point to the <b>origin</b> the same
+way to pin it to ground. Its badge sits by the joined point and deletes like the
+others.</p>
 <p><b>Parallel</b> (∥) and <b>equal</b> (=) relate two lines, so they always want a
 reference first: click the icon (or have a line selected when you click it), click the
 line to copy from, then click the line to change. Parallel matches its direction; equal
 matches its length. <b>Concentric</b> (◎) does the same for circles and polygons: click
-the reference, then the one to move onto its centre. The shared centre then counts as a
-coincidence, so it shows up in the degrees-of-freedom arithmetic like any other join.</p>
+the reference, then the one to move onto its centre. These three apply once rather than
+persisting — permanence like H/V's is the eventual plan for them too.</p>
 <p>Constraints respect what's already anchored. A line drawn from the origin is attached
 there, so making it vertical swings its <em>free</em> end round — it won't drag the
 anchored end off its datum. Only when neither end is held does the line pivot about its
@@ -542,8 +551,10 @@ environment with mates and joints.</p>
 <ul>
   <li><b>No constraint solver yet.</b> Dimensions apply one at a time and can disturb each
       other. See the note under <a href="#dims">Dimensions</a>.</li>
-  <li><b>No perpendicular constraint.</b> Horizontal, vertical, parallel, equal and
-      concentric are in; perpendicular isn't yet.</li>
+  <li><b>No perpendicular constraint.</b> Horizontal, vertical, parallel, equal,
+      concentric and coincident are in; perpendicular isn't yet.</li>
+  <li><b>Parallel, equal and concentric apply once</b> rather than persisting the way
+      horizontal, vertical and coincident do.</li>
   <li><b>STL imports are faceted.</b> A mesh has no true surfaces, so an imported STL
       can be viewed, placed and exported but not filleted or chamfered.</li>
   <li><b>The parameter panel is outside undo.</b></li>

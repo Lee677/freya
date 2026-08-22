@@ -205,6 +205,13 @@ if(!window.THREE){
   .dim-label{position:absolute;z-index:55;transform:translate(-50%,-50%);padding:1px 6px;font-family:var(--mono);font-size:11px;
     background:rgba(13,17,23,.86);color:var(--dim);border:1px solid rgba(214,162,245,.45);border-radius:4px;cursor:pointer;pointer-events:auto;white-space:nowrap;user-select:none}
   .dim-label:hover{background:rgba(214,162,245,.2);color:#fff}
+  /* constraint badges: SW's little green boxes — H, V, ⊕ */
+  .con-badge{position:absolute;z-index:54;transform:translate(-50%,-50%);padding:0 3px;
+    font-family:var(--mono);font-size:9px;line-height:13px;font-weight:600;
+    background:rgba(13,17,23,.88);color:var(--g-green);border:1px solid rgba(52,168,83,.55);
+    border-radius:3px;cursor:pointer;pointer-events:auto;user-select:none}
+  .con-badge:hover{background:rgba(52,168,83,.18)}
+  .con-badge.sel{background:rgba(52,168,83,.3);color:#fff}
 
   /* props panel */
   .props{position:absolute;top:14px;right:14px;width:260px;background:rgba(13,17,23,.92);backdrop-filter:blur(10px);border:1px solid var(--g-blue);border-radius:11px;padding:0;z-index:10;box-shadow:0 15px 40px -10px rgba(0,0,0,.9),0 0 20px rgba(66,133,244,0.15);overflow:hidden}
@@ -518,6 +525,7 @@ if(!window.THREE){
       <button data-tool="paral" title="Make one line parallel to another">∥ Parallel</button>
       <button data-tool="equal" title="Make one line the same length as another">= Equal</button>
       <button data-tool="conc" title="Make a circle or polygon share another's centre">◎ Conc</button>
+      <button data-tool="coinc" title="Lock two points together (or a point to the origin)">⊕ Coinc</button>
       <button data-tool="erase">Erase</button>
     </div>
     <div class="hint" id="hint"></div>
@@ -1256,7 +1264,8 @@ const CSG = (function(){
   function defineState(sk){
     const anc=anchoredSet(sk);          // once, not per entity — it's a flood fill
     return sk.entities.map(function(e,i){
-      const dof=Math.max(0, entVarCount(e) - 2*pinsOn(sk,i,anc) - dimsOn(sk,i));
+      const dof=Math.max(0, entVarCount(e) - 2*pinsOn(sk,i,anc) - dimsOn(sk,i)
+                            - (typeof consOn==='function'?consOn(sk,i):0));
       return {dof:dof, defined:dof<=0};
     });
   }
@@ -2817,8 +2826,9 @@ const CSG = (function(){
     if(t!=='horiz'&&t!=='vert'&&t!=='paral'&&t!=='equal')return false;
     const d={entIdx:sketchSel.entIdx,kind:'seg',seg:sketchSel.seg};
     if(t==='horiz'||t==='vert'){
-      pushUndo(t); applyHVConstraint(d,t); rebuild();
-      setHint(t==='horiz'?'Line set horizontal':'Line set vertical');
+      pushUndo(t); applyHVConstraint(d,t); storeHV(editing,d,t); rebuild();
+      setHint(t==='horiz'?'Line constrained horizontal — delete its badge to free it'
+                         :'Line constrained vertical — delete its badge to free it');
       return true;
     }
     // parallel / equal need a reference, so seed it from the selection
@@ -3032,6 +3042,7 @@ const CSG = (function(){
     dim:'<span>&#10231;</span>', horiz:'<span>&#8866;</span>', vert:'<span>&#8869;</span>',
     paral:'<span>&#8741;</span>', equal:'<span>=</span>',
     conc:'<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
+    coinc:'<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2" fill="currentColor"/><path d="M8 2v3.4M8 10.6V14M2 8h3.4M10.6 8H14" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
     erase:'<svg viewBox="0 0 16 16"><path d="M4 12 12 4M4 4l8 8" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>'
   };
   let toolBadgeShown=null;
@@ -3188,7 +3199,7 @@ const CSG = (function(){
     // one snapshot per committed shape; the in-progress polyline is covered by
     // Backspace/Escape, so only the commit is worth an undo step
     if(tool==='rect'||tool==='circle'||tool==='polygon'){ if(draftStage===1)pushUndo('draw '+tool); }
-    else if(tool==='erase'||tool==='horiz'||tool==='vert'||tool==='paral'||tool==='equal'||tool==='conc'){ pushUndo(tool); }
+    else if(tool==='erase'||tool==='horiz'||tool==='vert'||tool==='paral'||tool==='equal'||tool==='conc'||tool==='coinc'){ pushUndo(tool); }
     if(tool==='line'){
       if(draftPts.length>=3){const f=draftPts[0];if(Math.hypot(p.x-f.x,p.y-f.y)<=Math.max(snapSize,0.6)){commitDraftLine();return;}}
       const last=draftPts[draftPts.length-1];
@@ -3240,7 +3251,9 @@ const CSG = (function(){
       drawSnapMark(); return;
     } else if(tool==='horiz' || tool==='vert'){
       const d=dimHit(p);
-      if(d && d.kind==='seg'){ applyHVConstraint(d, tool); rebuild(); setHint(tool==='horiz'?'Line set horizontal':'Line set vertical'); }
+      if(d && d.kind==='seg'){ applyHVConstraint(d, tool); storeHV(editing,d,tool); rebuild();
+        setHint(tool==='horiz'?'Line constrained horizontal — delete its badge to free it'
+                              :'Line constrained vertical — delete its badge to free it'); }
       else setHint('Click on a line segment');
     } else if(tool==='paral'){
       const d=dimHit(p);
@@ -3261,6 +3274,17 @@ const CSG = (function(){
         else { if(applyConcentric(concRef, d)) setHint('Centres made concentric');
                concRef=null; rebuild(); }
       } else setHint('Click a reference circle or polygon first');
+    } else if(tool==='coinc'){
+      const pr=nearestPointRef(p);
+      if(pr){
+        if(!coincRef){ coincRef=pr; setHint('Now click the point to lock it to'); }
+        else {
+          if(sameRef(coincRef,pr)) setHint('Pick a different second point');
+          else if(applyCoincident(coincRef,pr)) setHint('Points locked together — delete the badge to separate them');
+          else setHint('Neither of those points can move — pick a movable one');
+          coincRef=null; rebuild();
+        }
+      } else setHint('Click a line end, a centre, or the origin');
     } else if(tool==='erase'){
       if(eraseAt(p))rebuild(); else setHint('Nothing under the cursor to erase');
     }
@@ -3288,6 +3312,16 @@ const CSG = (function(){
       else if(two(x)){ shift(x.a); shift(x.b); }
       else if(x.entIdx>ei)x.entIdx+=delta;
     });
+    // stored constraints ride the same reindex
+    if(sk.cons){
+      sk.cons=sk.cons.filter(c=>
+        c.kind==='coinc' ? (!hits(c.a)&&!hits(c.b))
+                         : c.ent!==ei);
+      sk.cons.forEach(c=>{
+        if(c.kind==='coinc'){ shift(c.a); shift(c.b); }
+        else if(c.ent>ei)c.ent+=delta;
+      });
+    }
   }
   function dimNear(p){
     if(!editing||!editing.dims)return -1;
@@ -3437,7 +3471,8 @@ const CSG = (function(){
      A dimension writes its value straight back to the shape parameter, so the
      geometry moves to match — true driving behaviour. Each dim is stored on the
      sketch feature and shown as an editable label. */
-  let dimInputEl=null, dimLabelEls=[], paralRef=null, equalRef=null, concRef=null;
+  let dimInputEl=null, dimLabelEls=[], paralRef=null, equalRef=null, concRef=null, coincRef=null;
+  let selCon=null;                       // constraint picked by clicking its badge
   function seg2Dist(p,a,b){
     const dx=b.x-a.x, dy=b.y-a.y, L2=dx*dx+dy*dy;
     let t = L2>0 ? ((p.x-a.x)*dx+(p.y-a.y)*dy)/L2 : 0; t=Math.max(0,Math.min(1,t));
@@ -3526,6 +3561,15 @@ const CSG = (function(){
         if(j===ref.ent) continue;
         if(entPoints(f.entities[j]).some(o=>Math.hypot(o.x-q.x,o.y-q.y)<EPS)) return q;
       }
+    /* A chain segment must spin about its elbow, not its outer tip: the elbow
+       belongs to the neighbouring segment too, so rotating about the tip drags
+       the sibling around and the relaxation chases its own tail. */
+    const e=f.entities[ref.ent];
+    if(e&&e.type==='poly'&&!e.closed){
+      const n=e.pts.length;
+      for(const [q,idx] of [[S.a,ref.seg],[S.b,ref.seg+1]])
+        if(idx>0&&idx<n-1) return q;
+    }
     return S.a;
   }
   function traceAngleDim(ent,seg,name){
@@ -3813,7 +3857,10 @@ const CSG = (function(){
     if(d.kind==='angle'){
       const g=dimResolve(f,d); if(!g) return;
       const S2=segPts(f,d.b); if(!S2) return;
-      const P=g.vertex;
+      /* Spin about the segment's own held end, never the two lines' crossing:
+         a near-parallel pair intersects far off-sketch, and rotating about a
+         distant point translates the line — on screen it teleports. */
+      const pv=segPivot(f,d.b)||S2.a, P={x:pv.x,y:pv.y};
       const spin=(rad)=>{
         const c=Math.cos(rad), s=Math.sin(rad);
         for(const q of [S2.a,S2.b]){
@@ -3871,25 +3918,122 @@ const CSG = (function(){
     if(!sk||!sk.dims)return;
     for(const d of sk.dims){ if(d.v==null){ const g=dimResolve(sk,d); if(g)d.v=g.value; } }
   }
+  /* ---- stored constraints ------------------------------------------------
+     H and V used to be one-shot nudges: they moved the line once and were
+     forgotten, so nothing stopped a later drag or dimension turning the line
+     again — which read as constraints that mysteriously wear off. They are
+     real records now, enforced in the same relaxation as the dimensions, and
+     the only way a constrained line changes direction is deleting the badge.
+     Coincident does the same for a pair of points (or a point and the origin). */
+  function consOf(sk){ return sk.cons||(sk.cons=[]); }
+  // refs whose resolved point is a live object we may write to (rect's two
+  // derived corners and the origin resolve to throwaways)
+  function liveRef(sk,r){
+    if(!r||r.ent==null||r.ent<0)return false;
+    const e=sk.entities[r.ent]; if(!e)return false;
+    if(e.type==='poly')return r.idx>=0&&r.idx<e.pts.length;
+    if(e.type==='circle'||e.type==='polygon')return r.idx===0;
+    if(e.type==='rect')return r.idx===0||r.idx===2;
+    return false;
+  }
+  function storeHV(sk,d,kind){
+    const cons=consOf(sk);
+    // a line is horizontal or vertical, never both — the newer wish wins
+    const i=cons.findIndex(c=>(c.kind==='horiz'||c.kind==='vert')&&c.ent===d.entIdx&&c.seg===d.seg);
+    if(i>=0)cons.splice(i,1);
+    cons.push({kind:kind,ent:d.entIdx,seg:d.seg});
+  }
+  function applyCoincident(ra,rb){
+    const sk=editing;
+    let src=ra,dst=rb;                        // second-picked point moves...
+    if(!liveRef(sk,dst)){ if(!liveRef(sk,src))return false; const t=src;src=dst;dst=t; }
+    const S=resolvePt(sk,src), D=resolvePt(sk,dst); if(!S||!D)return false;
+    D.x=S.x; D.y=S.y;
+    const key=r=>r.ent+'.'+r.idx, cons=consOf(sk);
+    if(!cons.some(c=>c.kind==='coinc'&&
+        ((key(c.a)===key(src)&&key(c.b)===key(dst))||(key(c.a)===key(dst)&&key(c.b)===key(src)))))
+      cons.push({kind:'coinc',a:{ent:src.ent,idx:src.idx},b:{ent:dst.ent,idx:dst.idx}});
+    return true;
+  }
+  function applyCons(sk,dragged){
+    if(!sk.cons)return;
+    for(const c of sk.cons){
+      if(c.kind==='horiz'||c.kind==='vert'){
+        const s=segPts(sk,{ent:c.ent,seg:c.seg}); if(!s)continue;
+        const k=c.kind==='horiz'?'y':'x';
+        let hold=null;
+        if(dragged&&dragged.ei===c.ent&&(dragged.pt===s.a||dragged.pt===s.b))hold=dragged.pt;
+        else hold=heldEnd({entIdx:c.ent},s);
+        if(hold){ const mv=(hold===s.a)?s.b:s.a; mv[k]=hold[k]; }
+        else { const m=(s.a[k]+s.b[k])/2; s.a[k]=m; s.b[k]=m; }
+      } else if(c.kind==='coinc'){
+        // origin is ground; otherwise the dragged (or only-live) side leads
+        let src=c.a,dst=c.b;
+        if(c.b.ent===-1||!liveRef(sk,c.b)){ src=c.b; dst=c.a; }
+        else if(dragged&&liveRef(sk,c.b)&&liveRef(sk,c.a)){
+          const e=sk.entities[c.b.ent];
+          const pi=e&&e.type==='poly'?e.pts.indexOf(dragged.pt):-1;
+          if(dragged.ei===c.b.ent&&(e.type!=='poly'||pi===c.b.idx)){ src=c.b; dst=c.a; }
+        }
+        if(!liveRef(sk,dst))continue;
+        const S=resolvePt(sk,src), D=resolvePt(sk,dst); if(!S||!D)continue;
+        D.x=S.x; D.y=S.y;
+      }
+    }
+  }
+  // constraints spend freedoms too: H or V costs its line one, and a stored
+  // coincidence shows up through pinsOn once the points sit together
+  function consOn(sk,i){
+    let n=0;
+    for(const c of (sk.cons||[])){
+      if((c.kind==='horiz'||c.kind==='vert')&&c.ent===i){
+        const s=segPts(sk,{ent:i,seg:c.seg}); if(s)n++;
+      }
+    }
+    return n;
+  }
   function relaxDims(sk,iters,dragged){
-    if(!sk||!sk.dims||!sk.dims.length)return;
-    ensureDimValues(sk);
+    if(!sk)return;
+    const hasD=sk.dims&&sk.dims.length, hasC=sk.cons&&sk.cons.length;
+    if(!hasD&&!hasC)return;
+    if(hasD)ensureDimValues(sk);
     /* dimApply restores a two-ref dim by moving the *b* side. During a drag
        that's an asymmetry the user can feel: with an angle dim, dragging the
        a-line swung the pair while dragging the b-line could only stretch,
        because apply kept rotating it straight back. Both angles and distances
        are symmetric in their refs, so when the hand is on b, apply a and b
        swapped and the *other* line does the following — either line drags. */
+    /* Segment-level, not entity-level: two lines drawn as one chain are two
+       segs of a single poly entity, and an entity-level test never swapped —
+       which is exactly "only one of the two lines will drag". The elbow they
+       share belongs to both segs; either direction works there, so no swap. */
+    const onSeg=r=>{
+      if(!dragged||r.ent==null||r.ent<0||dragged.ei!==r.ent)return false;
+      const e=sk.entities[r.ent]; if(!e)return false;
+      if(e.type!=='poly')return true;
+      const pi=e.pts.indexOf(dragged.pt); if(pi<0)return false;
+      const b=e.closed?(r.seg+1)%e.pts.length:r.seg+1;
+      return pi===r.seg||pi===b;
+    };
+    const onPt=r=>{
+      if(!dragged||r.ent==null||r.ent<0||dragged.ei!==r.ent)return false;
+      const e=sk.entities[r.ent]; if(!e)return false;
+      if(e.type==='poly'){const pi=e.pts.indexOf(dragged.pt);return pi>=0&&pi===r.idx;}
+      return true;
+    };
     const sw=d=>{
       if(!dragged||dragged.ei==null)return d;
-      if((d.kind==='angle'||d.kind==='p2p')&&d.a&&d.b
-         &&d.a.ent!=null&&d.b.ent!=null&&d.a.ent>=0&&d.b.ent>=0
-         &&dragged.ei===d.b.ent&&dragged.ei!==d.a.ent)
-        return {kind:d.kind,a:d.b,b:d.a};
+      if(d.kind==='angle'&&d.a&&d.b&&d.a.ent>=0&&d.b.ent!=null&&d.b.ent>=0
+         &&onSeg(d.b)&&!onSeg(d.a)) return {kind:'angle',a:d.b,b:d.a};
+      if(d.kind==='p2p'&&d.a&&d.b&&d.a.ent>=0&&d.b.ent>=0
+         &&onPt(d.b)&&!onPt(d.a)) return {kind:'p2p',a:d.b,b:d.a};
       return d;
     };
-    for(let i=0;i<(iters||2);i++)
-      for(const d of sk.dims){ if(d.v!=null){ try{ dimApply(sk,sw(d),d.v); }catch(_){ } } }
+    for(let i=0;i<(iters||2);i++){
+      if(hasD)for(const d of sk.dims){ if(d.v!=null){ try{ dimApply(sk,sw(d),d.v); }catch(_){ } } }
+      // constraints go last in each pass, so H/V and coincident win any tie
+      try{ applyCons(sk,dragged); }catch(_){ }
+    }
   }
   function screenOf(anchor){
     const fr=(sketchData[editing.id]&&sketchData[editing.id].frame)||editing.frame;
@@ -3927,7 +4071,27 @@ const CSG = (function(){
   function clearDimLabels(){ dimLabelEls.forEach(o=>o.el.remove()); dimLabelEls=[]; clearDimGeometry(); }
   function rebuildDimLabels(){
     clearDimLabels();
-    if(mode!=='sketch'||!editing||!editing.dims) return;
+    if(mode!=='sketch'||!editing||(!editing.dims&&!editing.cons)) return;
+    /* constraint badges: the little H / V / ⊕ living up-right of what they
+       hold. Click selects (Delete removes); the eraser removes outright. */
+    (editing.cons||[]).forEach(c=>{
+      const el=document.createElement('div');
+      el.className='con-badge'+(selCon===c?' sel':'');
+      el.textContent=c.kind==='horiz'?'H':c.kind==='vert'?'V':'⊕';
+      el.title=(c.kind==='horiz'?'Horizontal':c.kind==='vert'?'Vertical':'Coincident')+
+        ' constraint — click to select, Delete to remove';
+      el.addEventListener('pointerdown',ev=>{
+        ev.stopPropagation(); ev.preventDefault();
+        const cons=editing.cons||[], i=cons.indexOf(c);
+        if(tool==='erase'){ if(i>=0){pushUndo('erase constraint');cons.splice(i,1);selCon=null;rebuild();} return; }
+        selCon=(selCon===c)?null:c; clearSketchSel();
+        document.querySelectorAll('.con-badge').forEach(b=>b.classList.remove('sel'));
+        if(selCon){ el.classList.add('sel'); setHint('Constraint selected — press Delete to remove it'); }
+      });
+      viewport.appendChild(el); dimLabelEls.push({el:el,con:c});
+    });
+    if(selCon&&(!editing.cons||editing.cons.indexOf(selCon)<0))selCon=null;
+    if(!editing.dims) return;
     editing.dims.forEach(d=>{
       const el=document.createElement('div'); el.className='dim-label';
       // drag the number to walk the dimension line in or out; a plain click edits
@@ -3967,6 +4131,21 @@ const CSG = (function(){
   function updateDimLabels(){
     if(!dimLabelEls.length) return;
     for(const o of dimLabelEls){
+      if(o.con){
+        const c=o.con; let ap=null;
+        if(c.kind==='coinc'){
+          const P=resolvePt(editing,(c.b&&c.b.ent!==-1)?c.b:c.a);
+          if(P)ap={x:P.x+0.7,y:P.y+0.7};
+        } else {
+          const s=segPts(editing,{ent:c.ent,seg:c.seg});
+          if(s)ap={x:(s.a.x+s.b.x)/2+0.7,y:(s.a.y+s.b.y)/2+0.7};
+        }
+        if(!ap){ o.el.style.display='none'; continue; }
+        const spc=screenOf(ap);
+        o.el.style.display=spc.behind?'none':'block';
+        o.el.style.left=Math.round(spc.x)+'px'; o.el.style.top=Math.round(spc.y)+'px';
+        continue;
+      }
       const cur=dimResolve(editing,o.d);
       if(!cur){ o.el.style.display='none'; continue; }
       const sp=screenOf(cur.anchor);
@@ -4152,6 +4331,7 @@ const CSG = (function(){
     paral:_sw(`<path d="M6 20 12 4M12 20 18 4" stroke="${_G}" stroke-width="2"/>`),
     equal:_sw(`<path d="M6 10h12M6 14h12" stroke="${_G}" stroke-width="2.2"/>`),
     conc:_sw(`<circle cx="12" cy="12" r="8" stroke="${_G}"/><circle cx="12" cy="12" r="3.5" stroke="${_G}"/>`),
+    coinc:_sw(`<circle cx="12" cy="12" r="2.6" fill="${_G}" stroke="none"/><path d="M12 3v5M12 16v5M3 12h5M16 12h5" stroke="${_G}"/>`),
     import:_sw(`<path d="M4 14v5h16v-5" stroke="${_B}"/><path d="M12 3v11M7.5 9.5 12 14l4.5-4.5" stroke="${_Y}"/>`),
     erase:_sw(`<path d="M14.5 4.5 20 10l-8.5 8.5H7l-2.5-2.5z" stroke="${_R}"/><path d="M11 8l5.5 5.5" stroke="${_R}"/><path d="M4 20.5h16" stroke="${_B}" opacity=".5"/>`),
     sketch:_sw(`<path d="M4 20V6M4 20h13" stroke="${_B}"/><path d="M9 15 18 6l2 2-9 9-3.4 1.4z" stroke="${_Y}"/>`),
@@ -4670,6 +4850,7 @@ const CSG = (function(){
       else if(tool==='vert')h.innerHTML='<span class="pip"></span> Vertical: click a line segment to stand it upright';
       else if(tool==='paral')h.innerHTML='<span class="pip"></span> Parallel: click the reference line, then the line to align to it';
       else if(tool==='conc')h.innerHTML='<span class="pip"></span> Concentric: click the reference circle or polygon, then the one to move onto its centre';
+      else if(tool==='coinc')h.innerHTML='<span class="pip"></span> Coincident: click a point, then the point to lock it to — the pair then moves as one';
       else if(tool==='equal')h.innerHTML='<span class="pip"></span> Equal: click the reference line, then the line to match its length';
       else h.innerHTML=`<span class="pip"></span> ${tool}: click two points`;
     } else h.classList.remove('show');
@@ -4993,7 +5174,7 @@ const CSG = (function(){
     buildCtxMenu(x,y,items,{cols:true});
   }
   function openSketchMenu(x,y){
-    const setTool=t=>()=>{tool=t;draftStage=0;draftA=null;paralRef=null;equalRef=null;concRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();redrawHandles();dockSel();};
+    const setTool=t=>()=>{tool=t;draftStage=0;draftA=null;paralRef=null;equalRef=null;concRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();redrawHandles();dockSel();};
     buildCtxMenu(x,y,[
       {sect:'Sketch tools'},
       {ic:'move',label:'Pointer — select & rotate',fn:setTool('select')},
@@ -5009,6 +5190,7 @@ const CSG = (function(){
       {ic:'paral',label:'Parallel',fn:setTool('paral')},
       {ic:'equal',label:'Equal length',fn:setTool('equal')},
       {ic:'conc',label:'Concentric',fn:setTool('conc')},
+      {ic:'coinc',label:'Coincident',fn:setTool('coinc')},
       {sect:'View'},
       {ic:'normal',label:'Normal to',fn:viewNormalTo},
       {ic:'iso',label:'Isometric',fn:viewIso},
@@ -5283,7 +5465,7 @@ const CSG = (function(){
   /* decorate every button with its pictogram; original text becomes a .lbl */
   (function decorate(){
     menu.querySelectorAll('[data-ic]').forEach(b=>{ b.innerHTML=icHTML(b.dataset.ic)+'<span class="lbl">'+b.textContent+'</span>'; });
-    const dockLbl={select:'Pointer',line:'Line',move:'Move',rect:'Rect',circle:'Circle',polygon:'Polygon',dim:'Dim',horiz:'Horiz',vert:'Vert',paral:'Parallel',equal:'Equal',conc:'Conc',erase:'Erase'};
+    const dockLbl={select:'Pointer',line:'Line',move:'Move',rect:'Rect',circle:'Circle',polygon:'Polygon',dim:'Dim',horiz:'Horiz',vert:'Vert',paral:'Parallel',equal:'Equal',conc:'Conc',coinc:'Coinc',erase:'Erase'};
     $('dock').querySelectorAll('button').forEach(b=>{ const t=b.dataset.tool; b.innerHTML=icHTML(t)+'<span class="lbl">'+(dockLbl[t]||t)+'</span>'; });
     const tb={'btn-save':'save','btn-load':'open','btn-export':'stl','btn-step':'step','btn-new':'newpart','btn-new-asm':'asm','btn-insert':'add','btn-finish':'finish','btn-cancel-sk':'cancel'};
     for(const id in tb){ const b=$(id); b.innerHTML=icHTML(tb[id])+'<span class="lbl">'+b.textContent+'</span>'; }
@@ -5400,7 +5582,7 @@ const CSG = (function(){
     else addFeature(a);
   }));
   $('dock').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
-    tool=b.dataset.tool;draftStage=0;draftA=null;paralRef=null;equalRef=null;concRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();
+    tool=b.dataset.tool;draftStage=0;draftA=null;paralRef=null;equalRef=null;concRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();
     $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));
     // a line already picked with the Pointer? apply the constraint to it now,
     // rather than making the user click the icon and then the line
@@ -5565,7 +5747,10 @@ const CSG = (function(){
         if(dimPick){dimPick=null;drawSnapMark();setHint('Dimension cancelled');}
         else if(draftPts.length){draftPts.pop();redrawDraft(null);}else cancelSketch();}
       else if(e.key==='Delete'){e.preventDefault();
-        if(!deleteSketchSel())setHint('Nothing selected — use the Pointer to click a line first');}
+        if(selCon&&editing&&editing.cons&&editing.cons.indexOf(selCon)>=0){
+          pushUndo('delete constraint');
+          editing.cons.splice(editing.cons.indexOf(selCon),1);selCon=null;rebuild();
+        } else if(!deleteSketchSel())setHint('Nothing selected — use the Pointer to click a line or a constraint badge first');}
       else if(e.key==='Backspace'){e.preventDefault();
         if(draftPts.length){draftPts.pop();redrawDraft(null);} else deleteSketchSel();}
       else if(e.key==='1'){tool='line';dockSel();}else if(e.key==='2'){tool='rect';dockSel();}

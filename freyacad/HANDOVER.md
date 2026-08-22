@@ -90,6 +90,19 @@ the overlay iframe.
     and the other only stretches. And the `d.v` backfill for old files must run at grab
     time (`ensureDimValues` on pointerdown), not lazily mid-drag — a lazy fill measures
     geometry the pointer has already moved and blesses a broken value.
+12. **H/V and coincident are stored constraints (`sk.cons`), not one-shot nudges.**
+    One-shot was the original sin: nothing remembered the constraint, so drags and dims
+    turned "constrained" lines freely. `applyCons` enforces them at the end of every
+    relaxation pass (so they win ties against dims), `consOn` charges them to the DOF
+    count, badges render beside dim labels, and `dropDimsFor` reindexes them. Parallel /
+    equal / concentric are still one-shot — promote them the same way when asked.
+13. **Angle dims must rotate about a point on the segment itself.** Two earlier pivots
+    both failed observably: the two lines' *intersection* (near-parallel pairs intersect
+    far away — rotation reads as teleportation), and a chain segment's *outer tip* (the
+    elbow then swings, dragging the sibling segment, and relaxation chases its tail).
+    `segPivot` prefers origin, then a cross-entity shared point, then a chain-interior
+    point, then the first end. The a/b swap in `relaxDims` is segment-level, not
+    entity-level — two lines drawn as one chain are segs of one entity.
 
 ## Biggest thing still missing
 
