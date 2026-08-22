@@ -4252,16 +4252,52 @@ const CSG = (function(){
     // must always turn the other line — regardless of which one the hand is on
     const hvOn=r=>!!r&&r.ent!=null&&r.ent>=0&&r.seg!=null&&
       (sk.cons||[]).some(c=>(c.kind==='horiz'||c.kind==='vert')&&c.ent===r.ent&&c.seg===r.seg);
+    /* Hop distance from the hand across the relationship graph. A drag must
+       propagate outward — the hand moves C, C's angle turns B, B's angle turns
+       A. Without this, two dims sharing a middle line both try to rotate it
+       (one to follow the hand, one to undo that) and the pair collapses to a
+       compromise satisfying neither, which the release check then throws away:
+       the "angles change while I drag, then it pops back" report. */
+    let dist=null;
+    if(dragged&&dragged.ei!=null&&sk.entities.length>1){
+      dist=new Array(sk.entities.length).fill(Infinity);
+      const adj=sk.entities.map(()=>[]);
+      const link=(x,y)=>{ if(x!=null&&y!=null&&x>=0&&y>=0&&x!==y&&adj[x]&&adj[y]){adj[x].push(y);adj[y].push(x);} };
+      for(const d of sk.dims||[]){
+        if(d.kind==='angle'&&d.a&&d.b&&d.b.ent!=null)link(d.a.ent,d.b.ent);
+        else if(d.kind==='p2p'&&d.a&&d.b)link(d.a.ent,d.b.ent);
+      }
+      for(const c of sk.cons||[]){
+        if(c.kind==='coinc')link(c.a.ent,c.b.ent);
+        else if(c.kind==='paral'||c.kind==='equal')link(c.a.ent,c.b.ent);
+      }
+      if(dragJoins)for(const c of dragJoins)link(c.a.ent,c.b.ent);
+      const q=[dragged.ei]; dist[dragged.ei]=0;
+      while(q.length){const u=q.shift();
+        for(const v2 of adj[u])if(dist[v2]===Infinity){dist[v2]=dist[u]+1;q.push(v2);}}
+    }
     const sw=d=>{
       if(d.kind==='angle'&&d.a&&d.b&&d.a.ent>=0&&d.b.ent!=null&&d.b.ent>=0){
         if(hvOn(d.b)&&!hvOn(d.a)) return {kind:'angle',a:d.b,b:d.a};
         if(hvOn(d.a)&&!hvOn(d.b)) return d;
+        // change flows away from the hand: rotate the ref that is farther out
+        if(dist&&d.a.ent!==d.b.ent){
+          const da=dist[d.a.ent], db=dist[d.b.ent];
+          if(db<da) return {kind:'angle',a:d.b,b:d.a};
+          if(da<db) return d;
+        }
         if(dragged&&dragged.ei!=null&&onSeg(d.b)&&!onSeg(d.a)) return {kind:'angle',a:d.b,b:d.a};
         return d;
       }
       if(!dragged||dragged.ei==null)return d;
-      if(d.kind==='p2p'&&d.a&&d.b&&d.a.ent>=0&&d.b.ent>=0
-         &&onPt(d.b)&&!onPt(d.a)) return {kind:'p2p',a:d.b,b:d.a};
+      if(d.kind==='p2p'&&d.a&&d.b&&d.a.ent>=0&&d.b.ent>=0){
+        if(dist&&d.a.ent!==d.b.ent){
+          const da=dist[d.a.ent], db=dist[d.b.ent];
+          if(db<da) return {kind:'p2p',a:d.b,b:d.a};
+          if(da<db) return d;
+        }
+        if(onPt(d.b)&&!onPt(d.a)) return {kind:'p2p',a:d.b,b:d.a};
+      }
       return d;
     };
     // early-out on convergence: closed loops need many passes to settle, most
@@ -5187,7 +5223,7 @@ const CSG = (function(){
           ent.rot=Math.atan2(dy,dx)-dragVtx.corner/ent.sides*Math.PI*2;
         }
         dragVtx.pt.x=p.x; dragVtx.pt.y=p.y; dragSnapPt=null;
-        relaxDims(editing,4,dragVtx);         // dims hold their values mid-drag
+        relaxDims(editing,12,dragVtx);        // dims hold their values mid-drag
         liveSketchRedraw();
         return;
       }
@@ -5263,7 +5299,11 @@ const CSG = (function(){
           }
         }
       }
-      relaxDims(editing,40,dragVtx);          // settle exactly before the rebuild
+      /* Settle hard before judging: closed loops converge slowly (each pass
+         walks the ring once), and the early-out makes spare passes free for
+         everything that settles fast. Being stingy here made the integrity
+         check revert legitimate drags the relaxation just hadn't finished. */
+      relaxDims(editing,400,dragVtx);
       /* The hard promise: a drag never changes a dimension. If relaxation
          could not keep every number (beyond whatever disagreement existed
          before the grab), the whole drag is taken back. */
