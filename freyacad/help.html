@@ -344,8 +344,12 @@ others.</p>
 reference first: click the icon (or have a line selected when you click it), click the
 line to copy from, then click the line to change. Parallel matches its direction; equal
 matches its length. <b>Concentric</b> (◎) does the same for circles and polygons: click
-the reference, then the one to move onto its centre. These three apply once rather than
-persisting — permanence like H/V's is the eventual plan for them too.</p>
+the reference, then the one to move onto its centre. All of these persist exactly like
+H and V — the badge sits on the following line (or the shared centre), and deleting it
+is what dissolves the relationship.</p>
+<p>Every constraint holds through everything: drags, other constraints, and typed
+dimension changes all settle together, so a line that says H <em>is</em> horizontal —
+if a dimension edit would bend it, the free geometry moves instead.</p>
 <p>Constraints respect what's already anchored. A line drawn from the origin is attached
 there, so making it vertical swings its <em>free</em> end round — it won't drag the
 anchored end off its datum. Only when neither end is held does the line pivot about its
@@ -553,8 +557,6 @@ environment with mates and joints.</p>
       other. See the note under <a href="#dims">Dimensions</a>.</li>
   <li><b>No perpendicular constraint.</b> Horizontal, vertical, parallel, equal,
       concentric and coincident are in; perpendicular isn't yet.</li>
-  <li><b>Parallel, equal and concentric apply once</b> rather than persisting the way
-      horizontal, vertical and coincident do.</li>
   <li><b>STL imports are faceted.</b> A mesh has no true surfaces, so an imported STL
       can be viewed, placed and exported but not filleted or chamfered.</li>
   <li><b>The parameter panel is outside undo.</b></li>

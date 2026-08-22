@@ -2826,7 +2826,7 @@ const CSG = (function(){
     if(t!=='horiz'&&t!=='vert'&&t!=='paral'&&t!=='equal')return false;
     const d={entIdx:sketchSel.entIdx,kind:'seg',seg:sketchSel.seg};
     if(t==='horiz'||t==='vert'){
-      pushUndo(t); applyHVConstraint(d,t); storeHV(editing,d,t); rebuild();
+      pushUndo(t); applyHVConstraint(d,t); storeHV(editing,d,t); relaxDims(editing,3); rebuild();
       setHint(t==='horiz'?'Line constrained horizontal — delete its badge to free it'
                          :'Line constrained vertical — delete its badge to free it');
       return true;
@@ -3251,7 +3251,8 @@ const CSG = (function(){
       drawSnapMark(); return;
     } else if(tool==='horiz' || tool==='vert'){
       const d=dimHit(p);
-      if(d && d.kind==='seg'){ applyHVConstraint(d, tool); storeHV(editing,d,tool); rebuild();
+      if(d && d.kind==='seg'){ applyHVConstraint(d, tool); storeHV(editing,d,tool);
+        relaxDims(editing,3); rebuild();
         setHint(tool==='horiz'?'Line constrained horizontal — delete its badge to free it'
                               :'Line constrained vertical — delete its badge to free it'); }
       else setHint('Click on a line segment');
@@ -3259,20 +3260,23 @@ const CSG = (function(){
       const d=dimHit(p);
       if(d && d.kind==='seg'){
         if(!paralRef){ paralRef=d; redrawDraft(null); setHint('Now click the line to make parallel'); }
-        else { applyParallel(paralRef, d); paralRef=null; rebuild(); setHint('Lines made parallel'); }
+        else { applyParallel(paralRef, d); storeSegPair('paral',paralRef,d); paralRef=null;
+               relaxDims(editing,3); rebuild(); setHint('Lines constrained parallel — delete the ∥ badge to free them'); }
       } else setHint('Click a reference line segment first');
     } else if(tool==='equal'){
       const d=dimHit(p);
       if(d && d.kind==='seg'){
         if(!equalRef){ equalRef=d; redrawDraft(null); setHint('Now click the line to match its length'); }
-        else { applyEqual(equalRef, d); equalRef=null; rebuild(); setHint('Lines made equal length'); }
+        else { applyEqual(equalRef, d); storeSegPair('equal',equalRef,d); equalRef=null;
+               relaxDims(editing,3); rebuild(); setHint('Lines constrained equal — delete the = badge to free them'); }
       } else setHint('Click a reference line segment first');
     } else if(tool==='conc'){
       const d=dimHit(p);
       if(d && (d.kind==='dia'||d.kind==='pdia')){
         if(!concRef){ concRef=d; redrawDraft(null); setHint('Now click the circle or polygon to move onto that centre'); }
-        else { if(applyConcentric(concRef, d)) setHint('Centres made concentric');
-               concRef=null; rebuild(); }
+        else { if(applyConcentric(concRef, d)){ storeConc(concRef,d);
+                 setHint('Centres constrained concentric — delete the ◎ badge to free them'); }
+               concRef=null; relaxDims(editing,3); rebuild(); }
       } else setHint('Click a reference circle or polygon first');
     } else if(tool==='coinc'){
       const pr=nearestPointRef(p);
@@ -3282,7 +3286,7 @@ const CSG = (function(){
           if(sameRef(coincRef,pr)) setHint('Pick a different second point');
           else if(applyCoincident(coincRef,pr)) setHint('Points locked together — delete the badge to separate them');
           else setHint('Neither of those points can move — pick a movable one');
-          coincRef=null; rebuild();
+          coincRef=null; relaxDims(editing,3); rebuild();
         }
       } else setHint('Click a line end, a centre, or the origin');
     } else if(tool==='erase'){
@@ -3314,11 +3318,14 @@ const CSG = (function(){
     });
     // stored constraints ride the same reindex
     if(sk.cons){
+      const pair=c=>c.kind==='paral'||c.kind==='equal';
       sk.cons=sk.cons.filter(c=>
         c.kind==='coinc' ? (!hits(c.a)&&!hits(c.b))
+        : pair(c)        ? (c.a.ent!==ei&&c.b.ent!==ei)
                          : c.ent!==ei);
       sk.cons.forEach(c=>{
         if(c.kind==='coinc'){ shift(c.a); shift(c.b); }
+        else if(pair(c)){ if(c.a.ent>ei)c.a.ent+=delta; if(c.b.ent>ei)c.b.ent+=delta; }
         else if(c.ent>ei)c.ent+=delta;
       });
     }
@@ -3943,6 +3950,22 @@ const CSG = (function(){
     if(i>=0)cons.splice(i,1);
     cons.push({kind:kind,ent:d.entIdx,seg:d.seg});
   }
+  function storeSegPair(kind,refD,tgtD){
+    const cons=consOf(editing);
+    // one master per follower line: a newer parallel/equal replaces the old
+    const i=cons.findIndex(c=>c.kind===kind&&c.b.ent===tgtD.entIdx&&c.b.seg===tgtD.seg);
+    if(i>=0)cons.splice(i,1);
+    cons.push({kind:kind,a:{ent:refD.entIdx,seg:refD.seg},b:{ent:tgtD.entIdx,seg:tgtD.seg}});
+  }
+  function storeConc(refD,tgtD){
+    // concentric IS coincidence of centres — stored as one so it shares the
+    // enforcement, badge, deletion and reindex machinery. via marks the glyph.
+    const cons=consOf(editing), key=r=>r.ent+'.'+r.idx;
+    const a={ent:refD.entIdx,idx:0}, b={ent:tgtD.entIdx,idx:0};
+    if(!cons.some(c=>c.kind==='coinc'&&
+        ((key(c.a)===key(a)&&key(c.b)===key(b))||(key(c.a)===key(b)&&key(c.b)===key(a)))))
+      cons.push({kind:'coinc',via:'conc',a:a,b:b});
+  }
   function applyCoincident(ra,rb){
     const sk=editing;
     let src=ra,dst=rb;                        // second-picked point moves...
@@ -3957,7 +3980,35 @@ const CSG = (function(){
   }
   function applyCons(sk,dragged){
     if(!sk.cons)return;
+    // is the dragged handle an endpoint of this seg ref?
+    const onSegC=r=>{
+      if(!dragged||!r||r.ent==null||dragged.ei!==r.ent)return false;
+      const e=sk.entities[r.ent]; if(!e)return false;
+      if(e.type!=='poly')return true;
+      const pi=e.pts.indexOf(dragged.pt); if(pi<0)return false;
+      const b=e.closed?(r.seg+1)%e.pts.length:r.seg+1;
+      return pi===r.seg||pi===b;
+    };
     for(const c of sk.cons){
+      if(c.kind==='paral'||c.kind==='equal'){
+        let ra=c.a, rb=c.b;
+        if(onSegC(c.b)&&!onSegC(c.a)){ ra=c.b; rb=c.a; }   // the dragged side leads
+        const A=segPts(sk,{ent:ra.ent,seg:ra.seg}), B=segPts(sk,{ent:rb.ent,seg:rb.seg});
+        if(!A||!B)continue;
+        const pv=segPivot(sk,{ent:rb.ent,seg:rb.seg})||B.a;
+        const mv=(pv===B.a)?B.b:B.a;
+        if(c.kind==='paral'){
+          let dx=A.b.x-A.a.x, dy=A.b.y-A.a.y; const AL=Math.hypot(dx,dy)||1; dx/=AL; dy/=AL;
+          const L=Math.hypot(mv.x-pv.x,mv.y-pv.y);
+          const sgn=((mv.x-pv.x)*dx+(mv.y-pv.y)*dy)<0?-1:1;
+          mv.x=pv.x+sgn*dx*L; mv.y=pv.y+sgn*dy*L;
+        } else {
+          const AL=Math.hypot(A.b.x-A.a.x,A.b.y-A.a.y);
+          const L=Math.hypot(mv.x-pv.x,mv.y-pv.y)||1;
+          mv.x=pv.x+(mv.x-pv.x)/L*AL; mv.y=pv.y+(mv.y-pv.y)/L*AL;
+        }
+        continue;
+      }
       if(c.kind==='horiz'||c.kind==='vert'){
         const s=segPts(sk,{ent:c.ent,seg:c.seg}); if(!s)continue;
         const k=c.kind==='horiz'?'y':'x';
@@ -3988,6 +4039,10 @@ const CSG = (function(){
     for(const c of (sk.cons||[])){
       if((c.kind==='horiz'||c.kind==='vert')&&c.ent===i){
         const s=segPts(sk,{ent:i,seg:c.seg}); if(s)n++;
+      }
+      // parallel/equal each cost the following line one freedom
+      else if((c.kind==='paral'||c.kind==='equal')&&c.b&&c.b.ent===i){
+        const s=segPts(sk,{ent:i,seg:c.b.seg}); if(s)n++;
       }
     }
     return n;
@@ -4021,10 +4076,18 @@ const CSG = (function(){
       if(e.type==='poly'){const pi=e.pts.indexOf(dragged.pt);return pi>=0&&pi===r.idx;}
       return true;
     };
+    // an H/V-constrained segment can never rotate, so an angle dim touching one
+    // must always turn the other line — regardless of which one the hand is on
+    const hvOn=r=>!!r&&r.ent!=null&&r.ent>=0&&r.seg!=null&&
+      (sk.cons||[]).some(c=>(c.kind==='horiz'||c.kind==='vert')&&c.ent===r.ent&&c.seg===r.seg);
     const sw=d=>{
+      if(d.kind==='angle'&&d.a&&d.b&&d.a.ent>=0&&d.b.ent!=null&&d.b.ent>=0){
+        if(hvOn(d.b)&&!hvOn(d.a)) return {kind:'angle',a:d.b,b:d.a};
+        if(hvOn(d.a)&&!hvOn(d.b)) return d;
+        if(dragged&&dragged.ei!=null&&onSeg(d.b)&&!onSeg(d.a)) return {kind:'angle',a:d.b,b:d.a};
+        return d;
+      }
       if(!dragged||dragged.ei==null)return d;
-      if(d.kind==='angle'&&d.a&&d.b&&d.a.ent>=0&&d.b.ent!=null&&d.b.ent>=0
-         &&onSeg(d.b)&&!onSeg(d.a)) return {kind:'angle',a:d.b,b:d.a};
       if(d.kind==='p2p'&&d.a&&d.b&&d.a.ent>=0&&d.b.ent>=0
          &&onPt(d.b)&&!onPt(d.a)) return {kind:'p2p',a:d.b,b:d.a};
       return d;
@@ -4062,7 +4125,13 @@ const CSG = (function(){
         pushUndo('dimension');
         const val=cur.angular?v:fromDisp(v);
         ensureDimStored(d).v=val;                       // the value dragging must preserve
-        dimApply(editing,d,val); rebuild(); } };
+        dimApply(editing,d,val);
+        /* then settle the whole system: typing one number must not quietly
+           break another dim or turn an H/V-constrained line (that was the
+           "it says H but it's not horizontal" bug — nothing re-flattened
+           after a dimension edit) */
+        relaxDims(editing,3);
+        rebuild(); } };
     inp.addEventListener('keydown',ev=>{ if(ev.key==='Enter'){ev.preventDefault();apply();}
       else if(ev.key==='Escape'){ev.preventDefault();done=true;closeDimInput();
         pendingDim=null;drawDimGeometry();} });
@@ -4077,8 +4146,12 @@ const CSG = (function(){
     (editing.cons||[]).forEach(c=>{
       const el=document.createElement('div');
       el.className='con-badge'+(selCon===c?' sel':'');
-      el.textContent=c.kind==='horiz'?'H':c.kind==='vert'?'V':'⊕';
-      el.title=(c.kind==='horiz'?'Horizontal':c.kind==='vert'?'Vertical':'Coincident')+
+      el.textContent=c.kind==='horiz'?'H':c.kind==='vert'?'V'
+        :c.kind==='paral'?'∥':c.kind==='equal'?'='
+        :c.via==='conc'?'◎':'⊕';
+      el.title=(c.kind==='horiz'?'Horizontal':c.kind==='vert'?'Vertical'
+        :c.kind==='paral'?'Parallel':c.kind==='equal'?'Equal length'
+        :c.via==='conc'?'Concentric':'Coincident')+
         ' constraint — click to select, Delete to remove';
       el.addEventListener('pointerdown',ev=>{
         ev.stopPropagation(); ev.preventDefault();
@@ -4137,7 +4210,9 @@ const CSG = (function(){
           const P=resolvePt(editing,(c.b&&c.b.ent!==-1)?c.b:c.a);
           if(P)ap={x:P.x+0.7,y:P.y+0.7};
         } else {
-          const s=segPts(editing,{ent:c.ent,seg:c.seg});
+          // H/V carry {ent,seg}; parallel/equal badge the following line
+          const ref=(c.kind==='paral'||c.kind==='equal')?{ent:c.b.ent,seg:c.b.seg}:{ent:c.ent,seg:c.seg};
+          const s=segPts(editing,ref);
           if(s)ap={x:(s.a.x+s.b.x)/2+0.7,y:(s.a.y+s.b.y)/2+0.7};
         }
         if(!ap){ o.el.style.display='none'; continue; }
