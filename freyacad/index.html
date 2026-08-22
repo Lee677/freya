@@ -4466,21 +4466,33 @@ const CSG = (function(){
     supp.style.marginTop='4px';add(supp);
   }
 
+  /* The sketch panel is contextual, not furniture. "Polygon sides" only means
+     anything while the polygon tool is in hand, and the corner treatment only
+     while you've asked for it (Sketch corners in the menu) or the sketch
+     already carries one — an empty sketch shouldn't open with either. */
+  let cornerUI=false;
   function ensureSketchProps(){
-    if(!editing)return; if(propsFeat===editing && propsEl)return;
-    closeProps();const f=editing;propsFeat=f;
+    if(!editing){cornerUI=false;return;}
+    const f=editing;
+    const wantCorners=cornerUI||f.fillet>0||f.chamfer>0;
+    const wantSides=(tool==='polygon');
+    if(!wantCorners&&!wantSides){ if(propsFeat===f)closeProps(); return; }
+    closeProps();propsFeat=f;
     const el=document.createElement('aside');el.className='props';
     el.innerHTML=`<div class="props-head">${icHTML('sketch')}<h3>${f.name}</h3></div><div class="props-body" id="pbody"></div>`;
     viewport.appendChild(el);propsEl=el;const body=el.querySelector('#pbody');
-    const mode=fieldSeg('Corner treatment',[{l:'None',v:'none'},{l:'Fillet',v:'fillet'},{l:'Chamfer',v:'chamfer'}],f.fillet>0?'fillet':f.chamfer>0?'chamfer':'none',v=>{
-      if(v==='none'){f.fillet=0;f.chamfer=0;} else if(v==='fillet'){f.chamfer=0;if(f.fillet<=0)f.fillet=0.5;} else {f.fillet=0;if(f.chamfer<=0)f.chamfer=0.5;}
-      rebuild();redrawSketchPropsValue();
-    });
-    body.appendChild(mode);
-    const valWrap=document.createElement('div');valWrap.id='corner-val';body.appendChild(valWrap);
-    const sides=fieldNumber('Polygon sides',polygonSides,1,3,20,'',v=>{polygonSides=Math.max(3,Math.round(v));});
-    body.appendChild(sides);
-    redrawSketchPropsValue();
+    if(wantSides){
+      body.appendChild(fieldNumber('Polygon sides',polygonSides,1,3,20,'',v=>{polygonSides=Math.max(3,Math.round(v));}));
+    }
+    if(wantCorners){
+      const mode=fieldSeg('Corner treatment',[{l:'None',v:'none'},{l:'Fillet',v:'fillet'},{l:'Chamfer',v:'chamfer'}],f.fillet>0?'fillet':f.chamfer>0?'chamfer':'none',v=>{
+        if(v==='none'){f.fillet=0;f.chamfer=0;} else if(v==='fillet'){f.chamfer=0;if(f.fillet<=0)f.fillet=0.5;} else {f.fillet=0;if(f.chamfer<=0)f.chamfer=0.5;}
+        rebuild();redrawSketchPropsValue();
+      });
+      body.appendChild(mode);
+      const valWrap=document.createElement('div');valWrap.id='corner-val';body.appendChild(valWrap);
+      redrawSketchPropsValue();
+    }
   }
   function redrawSketchPropsValue(){
     const w=$('corner-val');if(!w)return;w.innerHTML='';const f=editing;if(!f)return;
@@ -4588,7 +4600,10 @@ const CSG = (function(){
     $('tb-asm-main').style.display=(docMode==='asm')?'flex':'none';
     $('tb-sketch').style.display=m==='sketch'?'flex':'none';
     $('dock').style.display=m==='sketch'?'flex':'none';
-    if(m==='sketch')ensureSketchProps(); else if(propsFeat===editing)closeProps();
+    if(m==='sketch')ensureSketchProps();
+    else {cornerUI=false;
+      // `editing` may already be null by now, so match the panel by type
+      if(propsFeat&&(propsFeat===editing||propsFeat.type==='sketch'))closeProps();}
     canvas.style.cursor=(m==='sketch')?'crosshair':'default';
     const nc=$('navcube'); if(nc)nc.style.display=(m==='sketch')?'none':'';
     if(m!=='sketch'){ closeDimInput(); clearDimLabels(); dragVtx=null; dragSnapPt=null; redrawHandles();
@@ -4978,6 +4993,8 @@ const CSG = (function(){
       {ic:'fit',label:'Fit all',fn:fitAll},
       {ic:'proj',label:orthoOn?'Perspective':'Orthographic',fn:()=>setProjection(!orthoOn)},
       {sect:'Sketch'},
+      {ic:'fillet',label:'Sketch corners…',fn:()=>{cornerUI=true;ensureSketchProps();
+        setHint('Corner treatment: round or bevel every corner of the sketch profile');}},
       {ic:'finish',label:'Finish sketch',fn:finishSketch},
       {ic:'extrude',label:'Finish + extrude',fn:()=>{finishSketch();addFeature('extrude');}},
       {ic:'cancel',label:'Cancel sketch',fn:cancelSketch}
@@ -5542,7 +5559,9 @@ const CSG = (function(){
     }
   });
   function dockSel(){$('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.tool===tool));
-    syncRotateGate(); if(tool!=='select')clearSketchSel(); redrawDraft(null);updateHint();}
+    syncRotateGate(); if(tool!=='select')clearSketchSel(); redrawDraft(null);updateHint();
+    if(mode==='sketch')ensureSketchProps();   // the panel follows the tool in hand
+  }
 
   function resize(){const w=viewport.clientWidth,h=viewport.clientHeight;renderer.setSize(w,h,false);perspCam.aspect=w/h;perspCam.updateProjectionMatrix();syncOrtho();
     if(mode==='sketch'&&typeof flashOrigin==='function')flashOrigin();}
