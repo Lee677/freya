@@ -4403,7 +4403,14 @@ const CSG = (function(){
     const r=canvas.getBoundingClientRect();
     return {x:(w.x*0.5+0.5)*r.width, y:(-w.y*0.5+0.5)*r.height, behind:w.z>1};
   }
-  function closeDimInput(){ if(dimInputEl){dimInputEl.remove();dimInputEl=null;} }
+  function closeDimInput(){
+    /* Null the reference BEFORE removing: removing a focused input fires blur
+       synchronously, the blur handler calls back into here, and a second
+       remove() on the same node mid-removal is the NotFoundError that took the
+       whole app down when a second dimension was clicked with an input open. */
+    const el=dimInputEl; dimInputEl=null;
+    if(el){ try{ el.remove(); }catch(_){ } }
+  }
   function openDimInput(d){
     closeDimInput();
     const cur=dimResolve(editing,d); if(!cur) return;
