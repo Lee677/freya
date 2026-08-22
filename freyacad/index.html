@@ -355,6 +355,10 @@ if(!window.THREE){
     pointer-events:none}
   #sk-anchor.ok{color:var(--g-green);border-color:rgba(52,168,83,.5);text-shadow:0 0 6px rgba(52,168,83,.5)}
   #sk-anchor.no{color:#8ab4f8;border-color:rgba(66,133,244,.45)}
+  /* which build is this tab actually running — ends every "did the refresh
+     take?" debate in one glance */
+  #build-tag{position:fixed;right:8px;bottom:4px;z-index:21;font-family:var(--mono);
+    font-size:9px;color:var(--muted-2);opacity:.65;pointer-events:none;user-select:none}
   #sk-plane{position:fixed;top:143px;left:238px;z-index:24;display:none;pointer-events:none;
     font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;
     color:var(--muted);text-shadow:0 0 6px rgba(0,0,0,.8)}
@@ -533,6 +537,8 @@ if(!window.THREE){
       <button data-tool="erase">Erase</button>
     </div>
     <div class="hint" id="hint"></div>
+    <div id="build-tag"></div>
+    <script>document.getElementById('build-tag').textContent='build '+document.lastModified;</script>
     <button id="btn-demo" class="demo-btn" style="display:none" title="Builds an 11-feature pillow-block bearing mount — explore or edit every step in the feature tree">⚙ Load the demo part — a pillow-block bearing</button>
     <div class="help-panel" id="help-panel"><div class="help-title" id="help-title"></div><div id="help-body"></div></div>
   </main>
@@ -3966,10 +3972,20 @@ const CSG = (function(){
     if(d.kind==='angle'){
       const g=dimResolve(f,d); if(!g) return;
       const S2=segPts(f,d.b); if(!S2) return;
-      /* Spin about the segment's own held end, never the two lines' crossing:
-         a near-parallel pair intersects far off-sketch, and rotating about a
-         distant point translates the line — on screen it teleports. */
-      const pv=segPivot(f,d.b)||S2.a, P={x:pv.x,y:pv.y};
+      /* Pivot preference: the vertex this segment SHARES with its partner —
+         rotating about it leaves the partner untouched, so the apply is exact
+         in one shot. Anything else (the far elbow, the lines' intersection)
+         moves the shared joint, disturbs the very angle being fixed, and the
+         relaxation grinds to a stalemate a fraction of a degree off. */
+      const S1=segPts(f,d.a);
+      let pv=null;
+      if(S1){
+        outer: for(const q of [S2.a,S2.b])
+          for(const w2 of [S1.a,S1.b])
+            if(Math.hypot(q.x-w2.x,q.y-w2.y)<1e-6){ pv=q; break outer; }
+      }
+      if(!pv)pv=segPivot(f,d.b)||S2.a;
+      const P={x:pv.x,y:pv.y};
       const spin=(rad)=>{
         const c=Math.cos(rad), s=Math.sin(rad);
         for(const q of [S2.a,S2.b]){
@@ -5272,7 +5288,10 @@ const CSG = (function(){
           ent.rot=Math.atan2(dy,dx)-dragVtx.corner/ent.sides*Math.PI*2;
         }
         dragVtx.pt.x=p.x; dragVtx.pt.y=p.y; dragSnapPt=null;
-        relaxDims(editing,12,dragVtx);        // dims hold their values mid-drag
+        relaxDims(editing,400,dragVtx);       // settle fully EVERY move: a number
+                                            // that flickers mid-drag reads as
+                                            // "dragging changes my dimension",
+                                            // and the early-out keeps it cheap
         liveSketchRedraw();
         return;
       }
