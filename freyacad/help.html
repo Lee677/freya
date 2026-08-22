@@ -380,7 +380,13 @@ free as its constraints leave it, and dragging honours that:</p>
   <li><b>Fully defined geometry won't drag at all.</b> Once every freedom is spent
       against the origin and planes, there is nowhere left to go — the point flashes red
       and the only way to move it is to edit a dimension.</li>
+  <li><b>And if a drag can't keep every number, it doesn't happen.</b> When you let go,
+      the sketch checks that every dimension still reads what you typed; a move that
+      would have changed one is taken back, with a hint saying so. Typing is the only
+      door a dimension's value can change through.</li>
 </ul>
+<p>Points from different lines sitting on the same spot count as joined: drag a shared
+corner and everything meeting there moves together.</p>
 
 <div class="note">
   <span class="tag">Why "fully defined" matters</span>

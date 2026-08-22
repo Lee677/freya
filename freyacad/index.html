@@ -896,19 +896,22 @@ const CSG = (function(){
         return {x:(w.x*0.5+0.5)*rect.width, y:(-w.y*0.5+0.5)*rect.height, behind:w.z>1}; };
       const A=sp(L.t0), B=sp(L.t1);
       if(A.behind&&B.behind){ el.style.display='none'; continue; }
-      // clip the screen-space segment to an inset view box and label the exit
-      const PAD=14; let ta=0, tb=1;
+      /* clip the screen-space segment to an inset view box and label the exit.
+         The top inset is deep so a label leaving upward clears the sketch
+         menu; the label also lifts perpendicular off its own line so a trace
+         never runs through its name. */
+      const PADX=14, PADT=52, PADB=16; let ta=0, tb=1;
       const dx=B.x-A.x, dy=B.y-A.y;
       const cl=(p,q)=>{ if(Math.abs(p)<1e-9)return q>=0;
         const t=q/p; if(p<0){ if(t>tb)return false; if(t>ta)ta=t; }
         else { if(t<ta)return false; if(t<tb)tb=t; } return true; };
-      if(!(cl(-dx,A.x-PAD)&&cl(dx,rect.width-PAD-A.x)&&cl(-dy,A.y-PAD)&&cl(dy,rect.height-PAD-A.y))
+      if(!(cl(-dx,A.x-PADX)&&cl(dx,rect.width-PADX-A.x)&&cl(-dy,A.y-PADT)&&cl(dy,rect.height-PADB-A.y))
          ||ta>tb){ el.style.display='none'; continue; }
-      // the far end of the visible run, nudged inward so the text isn't cut
       const ex=A.x+dx*tb, ey=A.y+dy*tb, len=Math.hypot(dx,dy)||1;
+      let px=-dy/len, py=dx/len; if(py>0){px=-px;py=-py;}   // lift to the screen-up side
       el.style.display='block';
-      el.style.left=Math.round(ex-dx/len*30)+'px';
-      el.style.top =Math.round(ey-dy/len*30)+'px';
+      el.style.left=Math.round(ex-dx/len*30+px*10)+'px';
+      el.style.top =Math.round(ey-dy/len*30+py*10)+'px';
     }
     for(const k in traceLabelEls) if(!seen[k]){ traceLabelEls[k].remove(); delete traceLabelEls[k]; }
   }
@@ -3045,9 +3048,19 @@ const CSG = (function(){
     for(const c of pts){const d=Math.hypot(c.x-p.x,c.y-p.y);if(d<bd){bd=d;best=c;}}
     if(best){hoverSnap={x:best.x,y:best.y,kind:'point'};
       // ground rides along so the click can store a real constraint: origin
-      // and trace crossings (which sit at the origin) pin the point outright
+      // and trace crossings (which sit at the origin) pin the point outright,
+      // and snapping onto an existing vertex records the join itself
       const g=(best.tag==='origin'||(best.tag==='cross'&&Math.hypot(best.x,best.y)<1e-6))?'origin':null;
-      return{x:best.x,y:best.y,_g:g};}
+      let gv=null;
+      if(!g&&best.tag==='vertex'&&best.ei!=null&&best.pt){
+        const e2=editing.entities[best.ei];
+        if(e2){
+          if(e2.type==='poly'){const i2=e2.pts.indexOf(best.pt); if(i2>=0)gv={ent:best.ei,idx:i2};}
+          else if((e2.type==='circle'||e2.type==='polygon')&&best.pt===e2.c)gv={ent:best.ei,idx:0};
+          else if(e2.type==='rect')gv=best.pt===e2.a?{ent:best.ei,idx:0}:best.pt===e2.b?{ent:best.ei,idx:2}:null;
+        }
+      }
+      return{x:best.x,y:best.y,_g:g,_gv:gv};}
     // inference: dashed guides when the cursor lines up H/V with a known point,
     // and the point-to-place slides onto that alignment (SW-style)
     let gx=null,gxd=tolP,gy=null,gyd=tolP;
@@ -3268,7 +3281,7 @@ const CSG = (function(){
       if(draftPts.length>=3){const f=draftPts[0];if(Math.hypot(p.x-f.x,p.y-f.y)<=Math.max(snapSize,0.6)){commitDraftLine();return;}}
       const last=draftPts[draftPts.length-1];
       if(last&&Math.abs(last.x-p.x)<1e-6&&Math.abs(last.y-p.y)<1e-6)return;
-      draftPts.push({x:p.x,y:p.y,g:p._g||undefined}); redrawDraft(null);
+      draftPts.push({x:p.x,y:p.y,g:p._g||undefined,gv:p._gv||undefined}); redrawDraft(null);
     } else if(tool==='rect'){
       if(draftStage===0){draftA=p;draftStage=1;} else {if(Math.abs(p.x-draftA.x)>1e-4&&Math.abs(p.y-draftA.y)>1e-4){const ent={type:'rect',a:{x:draftA.x,y:draftA.y},b:{x:p.x,y:p.y}};editing.entities.push(ent);
         const ei=editing.entities.length-1;
@@ -3461,7 +3474,16 @@ const CSG = (function(){
       editing.entities.push(ent);
       // points that were snapped onto ground become constrained to it
       const ei=editing.entities.length-1;
-      ent.pts.forEach((q,i)=>{ if(q.g){ storeGround({ent:ei,idx:i},q.g); delete q.g; } });
+      ent.pts.forEach((q,i)=>{
+        if(q.g)storeGround({ent:ei,idx:i},q.g);
+        else if(q.gv){                       // drawn onto an existing point: joined
+          const cons=consOf(editing), key=r=>r.ent+'.'+r.idx, me={ent:ei,idx:i};
+          if(!cons.some(c=>c.kind==='coinc'&&
+              ((key(c.a)===key(q.gv)&&key(c.b)===key(me))||(key(c.a)===key(me)&&key(c.b)===key(q.gv)))))
+            cons.push({kind:'coinc',a:{ent:q.gv.ent,idx:q.gv.idx},b:me});
+        }
+        delete q.g; delete q.gv;
+      });
       flashLoop(editing,ent);}
     draftPts=[];redrawDraft(null);rebuild();
   }
@@ -4063,6 +4085,38 @@ const CSG = (function(){
         cons.push({kind:'ontrace',ref:{ent:ref.ent,idx:ref.idx},trace:name});
     }
   }
+  /* Points from different entities sitting on the same spot are joints in the
+     user's eyes (and in pinsOn's arithmetic) even when no constraint was ever
+     stored — old files, mostly. Collected at grab time and enforced for the
+     drag's duration, so pulling a shared elbow moves every line that meets
+     there instead of tearing one loose and letting its angle dim drift. */
+  let dragJoins=null, dragPreErr=0;
+  function collectJoins(sk){
+    const EPS=1e-4, refs=[], out=[];
+    sk.entities.forEach((e,ei)=>{
+      entPoints(e).forEach((q,qi)=>{
+        const live=(e.type==='poly')||((e.type==='circle'||e.type==='polygon')&&qi===0)
+                 ||(e.type==='rect'&&(qi===0||qi===2));
+        if(live)refs.push({ent:ei,idx:qi,x:q.x,y:q.y});
+      });
+    });
+    for(let i=0;i<refs.length;i++)for(let j=i+1;j<refs.length;j++){
+      if(refs[i].ent===refs[j].ent)continue;
+      if(Math.hypot(refs[i].x-refs[j].x,refs[i].y-refs[j].y)<EPS)
+        out.push({kind:'coinc',a:{ent:refs[i].ent,idx:refs[i].idx},b:{ent:refs[j].ent,idx:refs[j].idx}});
+    }
+    return out;
+  }
+  // worst relative disagreement between any dim's stored value and its geometry
+  function maxDimErr(sk){
+    let m=0;
+    for(const d of (sk.dims||[])){ if(d.v==null)continue;
+      const g=dimResolve(sk,d); if(!g)continue;
+      const scale=g.angular?1:Math.max(1,Math.abs(d.v));
+      const e=Math.abs(g.value-d.v)/scale; if(e>m)m=e;
+    }
+    return m;
+  }
   // the {ent,idx} ref behind a drag handle, for storing constraints on it
   function refOfHandle(h){
     if(!h||h.ei==null)return null;
@@ -4085,7 +4139,10 @@ const CSG = (function(){
     return true;
   }
   function applyCons(sk,dragged){
-    if(!sk.cons)return;
+    const stored=sk.cons||[];
+    const extra=(dragged&&dragJoins)?dragJoins:[];
+    const all=extra.length?stored.concat(extra):stored;
+    if(!all.length)return;
     // is the dragged handle an endpoint of this seg ref?
     const onSegC=r=>{
       if(!dragged||!r||r.ent==null||dragged.ei!==r.ent)return false;
@@ -4095,7 +4152,7 @@ const CSG = (function(){
       const b=e.closed?(r.seg+1)%e.pts.length:r.seg+1;
       return pi===r.seg||pi===b;
     };
-    for(const c of sk.cons){
+    for(const c of all){
       if(c.kind==='paral'||c.kind==='equal'){
         let ra=c.a, rb=c.b;
         if(onSegC(c.b)&&!onSegC(c.a)){ ra=c.b; rb=c.a; }   // the dragged side leads
@@ -5104,6 +5161,8 @@ const CSG = (function(){
           }
           if(h){ pushUndo('move point'); dragVtx=h; dragSnapPt=null;
             ensureDimValues(editing);   // capture targets before anything moves
+            dragJoins=collectJoins(editing);   // loose joints ride along with the hand
+            dragPreErr=maxDimErr(editing);     // so the release check judges the delta
             controls._s=0;              // this gesture is a point drag, not an orbit
             redrawHandles(); } }
       }
@@ -5205,7 +5264,15 @@ const CSG = (function(){
         }
       }
       relaxDims(editing,40,dragVtx);          // settle exactly before the rebuild
-      dragVtx=null; dragSnapPt=null; rebuild(); redrawHandles(); return;
+      /* The hard promise: a drag never changes a dimension. If relaxation
+         could not keep every number (beyond whatever disagreement existed
+         before the grab), the whole drag is taken back. */
+      if(editing&&maxDimErr(editing)>dragPreErr+1e-3){
+        const s=undoStack.pop();               // the snapshot pushUndo took at grab
+        if(s){ applyState(s); refreshUndoUI(); }
+        setHint('That move would change a dimension — edit the value to move it');
+      }
+      dragJoins=null; dragVtx=null; dragSnapPt=null; rebuild(); redrawHandles(); return;
     }
     if(dragLight){ dragLight = null; controls.enableRotate = true; return; }
     const moved=Math.hypot(e.clientX-downX,e.clientY-downY)>5;
