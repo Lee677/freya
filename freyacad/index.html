@@ -4258,31 +4258,73 @@ const CSG = (function(){
        (one to follow the hand, one to undo that) and the pair collapses to a
        compromise satisfying neither, which the release check then throws away:
        the "angles change while I drag, then it pops back" report. */
-    let dist=null;
-    if(dragged&&dragged.ei!=null&&sk.entities.length>1){
-      dist=new Array(sk.entities.length).fill(Infinity);
-      const adj=sk.entities.map(()=>[]);
-      const link=(x,y)=>{ if(x!=null&&y!=null&&x>=0&&y>=0&&x!==y&&adj[x]&&adj[y]){adj[x].push(y);adj[y].push(x);} };
-      for(const d of sk.dims||[]){
-        if(d.kind==='angle'&&d.a&&d.b&&d.b.ent!=null)link(d.a.ent,d.b.ent);
-        else if(d.kind==='p2p'&&d.a&&d.b)link(d.a.ent,d.b.ent);
+    /* The graph is POINT-level, not entity-level: two lines drawn as one
+       chain are segments of a single poly, and an entity-level map is blind
+       inside it — which is exactly where the natural way of drawing puts
+       every elbow. Nodes are the sketch's points; edges are shared segments,
+       coincidences, and the dims themselves. */
+    let pdist=null, pbase=null;
+    if(dragged&&dragged.ei!=null){
+      pbase=[]; let tot=0;
+      sk.entities.forEach((e,i)=>{ pbase[i]=tot; tot+=entPoints(e).length; });
+      const start=(()=>{
+        const e=sk.entities[dragged.ei]; if(!e)return -1;
+        if(e.type==='poly'){const i2=e.pts.indexOf(dragged.pt); return i2<0?-1:pbase[dragged.ei]+i2;}
+        if(e.type==='circle'||e.type==='polygon')return dragged.pt===e.c?pbase[dragged.ei]:-1;
+        if(e.type==='rect')return dragged.pt===e.a?pbase[dragged.ei]:dragged.pt===e.b?pbase[dragged.ei]+2:-1;
+        return -1;
+      })();
+      if(start>=0&&tot>0){
+        const adj=new Array(tot); for(let k=0;k<tot;k++)adj[k]=[];
+        const link=(x,y)=>{ if(x>=0&&y>=0&&x<tot&&y<tot&&x!==y){adj[x].push(y);adj[y].push(x);} };
+        const pid=r=>(r&&r.ent!=null&&r.ent>=0&&pbase[r.ent]!=null)?pbase[r.ent]+(r.idx||0):-1;
+        const segIds=r=>{
+          const e=sk.entities[r.ent]; if(!e||e.type!=='poly'||r.seg==null)return [];
+          const n=e.pts.length, b=e.closed?(r.seg+1)%n:r.seg+1;
+          if(r.seg<0||r.seg>=n||b>=n)return [];
+          return [pbase[r.ent]+r.seg, pbase[r.ent]+b];
+        };
+        sk.entities.forEach((e,i)=>{
+          if(e.type==='poly'){ const n=e.pts.length;
+            for(let k=0;k+1<n;k++)link(pbase[i]+k,pbase[i]+k+1);
+            if(e.closed&&n>2)link(pbase[i]+n-1,pbase[i]); }
+          else if(e.type==='rect'){ for(let k=0;k<4;k++)link(pbase[i]+k,pbase[i]+(k+1)%4); }
+        });
+        /* Edges are GEOMETRIC attachments only — shared chain vertices and
+           coincidences. The dims themselves must never be edges: a dim link
+           hands the far side a short-cut distance, the ranking ties, and the
+           two dims go back to fighting over the middle segment. Ranking has
+           to follow how the geometry hangs together, not what's measured. */
+        const allC=(sk.cons||[]).concat(dragJoins||[]);
+        for(const c of allC){
+          if(c.kind==='coinc')link(pid(c.a),pid(c.b));
+        }
+        pdist=new Array(tot).fill(Infinity); pdist[start]=0;
+        const q=[start];
+        while(q.length){const u=q.shift();
+          for(const v2 of adj[u])if(pdist[v2]===Infinity){pdist[v2]=pdist[u]+1;q.push(v2);}}
       }
-      for(const c of sk.cons||[]){
-        if(c.kind==='coinc')link(c.a.ent,c.b.ent);
-        else if(c.kind==='paral'||c.kind==='equal')link(c.a.ent,c.b.ent);
-      }
-      if(dragJoins)for(const c of dragJoins)link(c.a.ent,c.b.ent);
-      const q=[dragged.ei]; dist[dragged.ei]=0;
-      while(q.length){const u=q.shift();
-        for(const v2 of adj[u])if(dist[v2]===Infinity){dist[v2]=dist[u]+1;q.push(v2);}}
     }
+    const dSeg=r=>{
+      if(!pdist||!r||r.ent==null||r.ent<0)return Infinity;
+      const e=sk.entities[r.ent]; if(!e||e.type!=='poly'||r.seg==null)return Infinity;
+      const n=e.pts.length, b=e.closed?(r.seg+1)%n:r.seg+1;
+      if(r.seg<0||r.seg>=n||b>=n)return Infinity;
+      const x=pdist[pbase[r.ent]+r.seg], y=pdist[pbase[r.ent]+b];
+      return Math.min(x==null?Infinity:x, y==null?Infinity:y);
+    };
+    const dPt=r=>{
+      if(!pdist||!r||r.ent==null||r.ent<0||pbase[r.ent]==null)return Infinity;
+      const x=pdist[pbase[r.ent]+(r.idx||0)];
+      return x==null?Infinity:x;
+    };
     const sw=d=>{
       if(d.kind==='angle'&&d.a&&d.b&&d.a.ent>=0&&d.b.ent!=null&&d.b.ent>=0){
         if(hvOn(d.b)&&!hvOn(d.a)) return {kind:'angle',a:d.b,b:d.a};
         if(hvOn(d.a)&&!hvOn(d.b)) return d;
         // change flows away from the hand: rotate the ref that is farther out
-        if(dist&&d.a.ent!==d.b.ent){
-          const da=dist[d.a.ent], db=dist[d.b.ent];
+        if(pdist){
+          const da=dSeg(d.a), db=dSeg(d.b);
           if(db<da) return {kind:'angle',a:d.b,b:d.a};
           if(da<db) return d;
         }
@@ -4291,8 +4333,8 @@ const CSG = (function(){
       }
       if(!dragged||dragged.ei==null)return d;
       if(d.kind==='p2p'&&d.a&&d.b&&d.a.ent>=0&&d.b.ent>=0){
-        if(dist&&d.a.ent!==d.b.ent){
-          const da=dist[d.a.ent], db=dist[d.b.ent];
+        if(pdist){
+          const da=dPt(d.a), db=dPt(d.b);
           if(db<da) return {kind:'p2p',a:d.b,b:d.a};
           if(da<db) return d;
         }
@@ -4307,14 +4349,21 @@ const CSG = (function(){
     for(let i=0;i<(iters||2);i++){
       if(hasD)for(const d of sk.dims){ if(d.v==null)continue;
         try{
-          /* a length whose far end is the hand: hold the hand, move the near
-             end — otherwise the applier drags the point off the cursor and, in
-             a closed loop, the whole ring chases itself and never settles */
-          if(d.kind==='seg'&&dragged&&dragged.ei===d.entIdx){
+          /* a length whose far end is nearer the hand: hold that end, move the
+             other — otherwise the applier pushes change back toward the cursor
+             and a chain (or closed loop) chases itself instead of following */
+          if(d.kind==='seg'&&dragged){
             const e=sk.entities[d.entIdx];
             if(e&&e.type==='poly'){
-              const pi=e.pts.indexOf(dragged.pt), bIdx=(d.seg+1)%e.pts.length;
-              if(pi===bIdx){
+              const bIdx=(d.seg+1)%e.pts.length;
+              let rev=false;
+              if(pdist&&pbase&&pbase[d.entIdx]!=null){
+                const da=pdist[pbase[d.entIdx]+d.seg], db=pdist[pbase[d.entIdx]+bIdx];
+                rev=(db!=null&&da!=null&&db<da);
+              } else if(dragged.ei===d.entIdx){
+                rev=(e.pts.indexOf(dragged.pt)===bIdx);
+              }
+              if(rev){
                 const a=e.pts[d.seg], b=e.pts[bIdx];
                 const dx=a.x-b.x, dy=a.y-b.y, L=Math.hypot(dx,dy)||1;
                 a.x=b.x+dx/L*d.v; a.y=b.y+dy/L*d.v;
