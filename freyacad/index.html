@@ -3864,11 +3864,32 @@ const CSG = (function(){
      sketch lands where the cursor asks *and* every number still holds. An
      angle-dimmed pair rotates as a pair; a length-dimmed line swings at fixed
      length. Dims saved before values were stored backfill from measurement. */
-  function relaxDims(sk,iters){
-    if(!sk||!sk.dims||!sk.dims.length)return;
+  /* Backfill stored values from measurement for dims saved before v existed.
+     Must run at grab time, not lazily mid-drag — a lazy fill captures the
+     geometry after the pointer has already moved it, blessing a broken value. */
+  function ensureDimValues(sk){
+    if(!sk||!sk.dims)return;
     for(const d of sk.dims){ if(d.v==null){ const g=dimResolve(sk,d); if(g)d.v=g.value; } }
+  }
+  function relaxDims(sk,iters,dragged){
+    if(!sk||!sk.dims||!sk.dims.length)return;
+    ensureDimValues(sk);
+    /* dimApply restores a two-ref dim by moving the *b* side. During a drag
+       that's an asymmetry the user can feel: with an angle dim, dragging the
+       a-line swung the pair while dragging the b-line could only stretch,
+       because apply kept rotating it straight back. Both angles and distances
+       are symmetric in their refs, so when the hand is on b, apply a and b
+       swapped and the *other* line does the following — either line drags. */
+    const sw=d=>{
+      if(!dragged||dragged.ei==null)return d;
+      if((d.kind==='angle'||d.kind==='p2p')&&d.a&&d.b
+         &&d.a.ent!=null&&d.b.ent!=null&&d.a.ent>=0&&d.b.ent>=0
+         &&dragged.ei===d.b.ent&&dragged.ei!==d.a.ent)
+        return {kind:d.kind,a:d.b,b:d.a};
+      return d;
+    };
     for(let i=0;i<(iters||2);i++)
-      for(const d of sk.dims){ if(d.v!=null){ try{ dimApply(sk,d,d.v); }catch(_){ } } }
+      for(const d of sk.dims){ if(d.v!=null){ try{ dimApply(sk,sw(d),d.v); }catch(_){ } } }
   }
   function screenOf(anchor){
     const fr=(sketchData[editing.id]&&sketchData[editing.id].frame)||editing.frame;
@@ -4680,6 +4701,7 @@ const CSG = (function(){
             return;
           }
           if(h){ pushUndo('move point'); dragVtx=h; dragSnapPt=null;
+            ensureDimValues(editing);   // capture targets before anything moves
             controls._s=0;              // this gesture is a point drag, not an orbit
             redrawHandles(); } }
       }
@@ -4704,14 +4726,14 @@ const CSG = (function(){
           ent.rot=Math.atan2(dy,dx)-dragVtx.corner/ent.sides*Math.PI*2;
         }
         dragVtx.pt.x=p.x; dragVtx.pt.y=p.y; dragSnapPt=null;
-        relaxDims(editing,2);                 // dims hold their values mid-drag
+        relaxDims(editing,2,dragVtx);         // dims hold their values mid-drag
         liveSketchRedraw();
         return;
       }
       const snap=dragSnap(p,dragVtx);
       if(snap){ dragVtx.pt.x=snap.x; dragVtx.pt.y=snap.y; dragSnapPt=snap; }
       else    { dragVtx.pt.x=p.x;   dragVtx.pt.y=p.y;   dragSnapPt=null; }
-      relaxDims(editing,2);                   // dims hold their values mid-drag
+      relaxDims(editing,2,dragVtx);           // dims hold their values mid-drag
       liveSketchRedraw();
       return;
     }
@@ -4759,7 +4781,7 @@ const CSG = (function(){
         : dragSnapPt.tag==='cross' ? 'Snapped to a plane-trace crossing'
         : dragSnapPt.tag==='trace' ? 'Snapped onto a plane trace'
         : 'Points joined');
-      relaxDims(editing,4);                   // settle exactly before the rebuild
+      relaxDims(editing,4,dragVtx);           // settle exactly before the rebuild
       dragVtx=null; dragSnapPt=null; rebuild(); redrawHandles(); return;
     }
     if(dragLight){ dragLight = null; controls.enableRotate = true; return; }

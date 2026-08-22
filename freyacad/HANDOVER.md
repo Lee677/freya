@@ -84,7 +84,12 @@ the overlay iframe.
     measurement for older files) and `relaxDims` re-applies every dim a few times per
     pointermove, so geometry follows the cursor while the numbers hold. Only fully
     grounded entities (`lockedEnts`) refuse outright. A new dim kind needs a `dimApply`
-    branch and nothing else — relaxation picks it up automatically.
+    branch and nothing else — relaxation picks it up automatically. Two follow-up traps:
+    `dimApply` restores two-ref dims by moving the *b* side, so `relaxDims` swaps a/b
+    when the dragged handle is on b — without that, one of an angle-dimmed pair drags
+    and the other only stretches. And the `d.v` backfill for old files must run at grab
+    time (`ensureDimValues` on pointerdown), not lazily mid-drag — a lazy fill measures
+    geometry the pointer has already moved and blesses a broken value.
 
 ## Biggest thing still missing
 
