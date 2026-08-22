@@ -324,6 +324,12 @@ is left over is the <b>degrees of freedom</b>: the number of independent ways yo
 can still deform.</p>
 <p>When it hits zero the sketch is <b>fully defined</b>. That is the state you want before
 building on it, because nothing can shift underneath a feature later.</p>
+<p><b>Only the origin and the datum planes count as ground.</b> A shape can have every
+side dimensioned and every corner constrained to its neighbours and still slide around
+the plane as a rigid unit — internal relationships alone never fully define anything.
+Until something chains the shape to the origin or a plane (a coincident point, a
+distance to a plane, an angle to a plane), the count floors at the freedoms the whole
+shape retains, and the chip stays honest about it.</p>
 
 <h3>The constraints</h3>
 <p>Six constraints live in the tool dock. Horizontal and vertical work either way round:</p>
@@ -340,6 +346,10 @@ way the line's angle changes again is deleting that badge (click it and press
 lock it to, and from then on they move as one. Lock a point to the <b>origin</b> the same
 way to pin it to ground. Its badge sits by the joined point and deletes like the
 others.</p>
+<p><b>Snaps become constraints by themselves.</b> Draw or drop a point onto the origin
+and a ⊕ appears; onto a plane trace and an ∈ (on-plane) appears — the point can then
+slide along the plane but never off it. Release a dragged point onto another point and
+the join is stored as a coincident. What snapped, holds — until you delete the badge.</p>
 <p><b>Parallel</b> (∥) and <b>equal</b> (=) relate two lines, so they always want a
 reference first: click the icon (or have a line selected when you click it), click the
 line to copy from, then click the line to change. Parallel matches its direction; equal

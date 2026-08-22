@@ -103,6 +103,15 @@ the overlay iframe.
     `segPivot` prefers origin, then a cross-entity shared point, then a chain-interior
     point, then the first end. The a/b swap in `relaxDims` is segment-level, not
     entity-level — two lines drawn as one chain are segs of one entity.
+14. **Only origin/planes are ground; internal rigidity ≠ defined.** `defineState` floors
+    an unanchored entity's DOF at its remaining rigid-body freedoms (translation 2 minus
+    `groundInfo().pos`, +1 rotation for orientable shapes without H/V or angle-to-plane).
+    Without the floor, a fully-dimensioned floating quad read "fully defined" and its
+    corners refused to drag. Snaps auto-store ground constraints (`storeGround` — ⊕
+    coincident-to-origin, ∈ `ontrace`) at draw time (`_g` tags riding through
+    `applyDrawSnap` into draft points), and drag-release stores origin/trace/vertex-join
+    constraints via `refOfHandle`. Plane-name labels are edge-pinned HTML
+    (`.trace-label`, `updateTraceLabels` in the render loop), not sprites.
 
 ## Biggest thing still missing
 

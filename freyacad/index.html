@@ -212,6 +212,10 @@ if(!window.THREE){
     border-radius:3px;cursor:pointer;pointer-events:auto;user-select:none}
   .con-badge:hover{background:rgba(52,168,83,.18)}
   .con-badge.sel{background:rgba(52,168,83,.3);color:#fff}
+  /* plane names: a quiet margin note where the trace leaves the view */
+  .trace-label{position:absolute;z-index:20;transform:translate(-50%,-50%);
+    font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.2em;
+    text-transform:uppercase;opacity:.5;pointer-events:none;user-select:none;white-space:nowrap}
 
   /* props panel */
   .props{position:absolute;top:14px;right:14px;width:260px;background:rgba(13,17,23,.92);backdrop-filter:blur(10px);border:1px solid var(--g-blue);border-radius:11px;padding:0;z-index:10;box-shadow:0 15px 40px -10px rgba(0,0,0,.9),0 0 20px rgba(66,133,244,0.15);overflow:hidden}
@@ -869,16 +873,44 @@ const CSG = (function(){
   const traceGroup=new THREE.Group(); traceGroup.visible=false; scene.add(traceGroup);
   const TRACE_COL={Top:0x5a9e6f, Front:0xc0584f, Right:0x4f86c0};
   let traceSnapUV=[];   // the same traces in sketch UV, kept for hover snapping
-  function traceLabel(text,color){
-    const c=document.createElement('canvas');c.width=192;c.height=48;
-    const g=c.getContext('2d');
-    g.font='600 26px "Fira Code",Consolas,monospace';g.textAlign='center';g.textBaseline='middle';
-    g.fillStyle='#'+color.toString(16).padStart(6,'0');g.fillText(text.toUpperCase()+' PLANE',96,26);
-    const t=new THREE.CanvasTexture(c);t.minFilter=THREE.LinearFilter;
-    const s=new THREE.Sprite(new THREE.SpriteMaterial({map:t,transparent:true,depthTest:false,opacity:0.8}));
-    s.scale.set(3.1,0.78,1); s.renderOrder=4;
-    s.userData.bs=[3.1,0.78];        // rescaled each frame to hold its screen size
-    return s;
+  /* Plane names as small HTML labels pinned where each trace leaves the view —
+     out of the sketch's way, like a drawing-sheet margin note, instead of the
+     old chunky sprites parked in the middle of the work. */
+  const traceLabelEls={};
+  function clearTraceLabels(){ for(const k in traceLabelEls){ traceLabelEls[k].remove(); delete traceLabelEls[k]; } }
+  function updateTraceLabels(){
+    if(mode!=='sketch'||!editing||!traceSnapUV.length){ clearTraceLabels(); return; }
+    const fr=editing.frame; if(!fr){ clearTraceLabels(); return; }
+    const rect=canvas.getBoundingClientRect();
+    const seen={};
+    for(const L of traceSnapUV){
+      seen[L.name]=true;
+      let el=traceLabelEls[L.name];
+      if(!el){
+        el=document.createElement('div'); el.className='trace-label';
+        el.textContent=L.name+' plane';
+        el.style.color='#'+TRACE_COL[L.name].toString(16).padStart(6,'0');
+        viewport.appendChild(el); traceLabelEls[L.name]=el;
+      }
+      const sp=t=>{ const w=worldFromSketch(fr,L.u0+t*L.du,L.v0+t*L.dv).project(camera);
+        return {x:(w.x*0.5+0.5)*rect.width, y:(-w.y*0.5+0.5)*rect.height, behind:w.z>1}; };
+      const A=sp(L.t0), B=sp(L.t1);
+      if(A.behind&&B.behind){ el.style.display='none'; continue; }
+      // clip the screen-space segment to an inset view box and label the exit
+      const PAD=14; let ta=0, tb=1;
+      const dx=B.x-A.x, dy=B.y-A.y;
+      const cl=(p,q)=>{ if(Math.abs(p)<1e-9)return q>=0;
+        const t=q/p; if(p<0){ if(t>tb)return false; if(t>ta)ta=t; }
+        else { if(t<ta)return false; if(t<tb)tb=t; } return true; };
+      if(!(cl(-dx,A.x-PAD)&&cl(dx,rect.width-PAD-A.x)&&cl(-dy,A.y-PAD)&&cl(dy,rect.height-PAD-A.y))
+         ||ta>tb){ el.style.display='none'; continue; }
+      // the far end of the visible run, nudged inward so the text isn't cut
+      const ex=A.x+dx*tb, ey=A.y+dy*tb, len=Math.hypot(dx,dy)||1;
+      el.style.display='block';
+      el.style.left=Math.round(ex-dx/len*30)+'px';
+      el.style.top =Math.round(ey-dy/len*30)+'px';
+    }
+    for(const k in traceLabelEls) if(!seen[k]){ traceLabelEls[k].remove(); delete traceLabelEls[k]; }
   }
   function updatePlaneTraces(){
     while(traceGroup.children.length){
@@ -919,14 +951,6 @@ const CSG = (function(){
       const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints([A,B]),
         new THREE.LineDashedMaterial({color:col,transparent:true,opacity:0.55,dashSize:0.45,gapSize:0.3,depthTest:false}));
       ln.computeLineDistances(); ln.renderOrder=3; traceGroup.add(ln);
-      // the line is effectively endless now, so anchor the label near the
-      // sketch origin instead of at a vanished endpoint
-      const tNear=-(u0*du+v0*dv), tLab=Math.max(t0,Math.min(t1,tNear+7));
-      const lb=traceLabel(name,col);
-      lb.position.copy(worldFromSketch(fr,u0+tLab*du,v0+tLab*dv))
-        .addScaledVector(n,0.004)
-        .addScaledVector(n.clone().cross(dir).normalize(),0.55);
-      traceGroup.add(lb);
     }
     traceGroup.visible=true;
     tickLabelScale();
@@ -1261,11 +1285,39 @@ const CSG = (function(){
     }
     return n;
   }
+  /* How firmly entity i is referenced to ground (the origin and datum planes)
+     by explicit dims/constraints: pos counts independent translation locks
+     (capped at 2), rot says whether its direction is tied to ground. */
+  function groundInfo(sk,i){
+    const traces=new Set(); let near=false, rot=false;
+    for(const d of (sk.dims||[])){
+      if(d.kind==='ptrace'&&d.ref&&d.ref.ent===i&&d.trace)traces.add(d.trace);
+      else if(d.kind==='p2p'&&d.a&&d.b&&
+        ((d.a.ent===-1&&d.b.ent===i)||(d.b.ent===-1&&d.a.ent===i)))near=true;
+      else if(d.kind==='angle'&&d.a&&d.a.ent===i&&d.b&&d.b.trace!=null)rot=true;
+    }
+    for(const c of (sk.cons||[])){
+      if((c.kind==='horiz'||c.kind==='vert')&&c.ent===i)rot=true;
+      else if(c.kind==='ontrace'&&c.ref&&c.ref.ent===i&&c.trace)traces.add(c.trace);
+    }
+    return {pos:Math.min(2,traces.size+(near?1:0)), rot:rot};
+  }
   function defineState(sk){
     const anc=anchoredSet(sk);          // once, not per entity — it's a flood fill
     return sk.entities.map(function(e,i){
-      const dof=Math.max(0, entVarCount(e) - 2*pinsOn(sk,i,anc) - dimsOn(sk,i)
-                            - (typeof consOn==='function'?consOn(sk,i):0));
+      let dof=Math.max(0, entVarCount(e) - 2*pinsOn(sk,i,anc) - dimsOn(sk,i)
+                          - (typeof consOn==='function'?consOn(sk,i):0));
+      if(!anc[i]){
+        /* Only the origin and planes are ground. However rigid a shape is
+           internally — every side dimensioned, H'd and V'd — nothing internal
+           can stop it sliding around the plane as a unit, so the count floors
+           at its remaining rigid-body freedoms. A shape with no ground
+           reference at all can never read "fully defined". */
+        const g=groundInfo(sk,i);
+        const orientable=(e.type==='poly'&&e.pts.length>1)||e.type==='polygon';
+        const floor=(2-g.pos)+((orientable&&!g.rot)?1:0);
+        if(dof<floor)dof=floor;
+      }
       return {dof:dof, defined:dof<=0};
     });
   }
@@ -2979,7 +3031,7 @@ const CSG = (function(){
       t=Math.max(L.t0,Math.min(L.t1,t));
       const qx=L.u0+t*L.du,qy=L.v0+t*L.dv;
       const d=Math.hypot(qx-p.x,qy-p.y);
-      if(d<bld){bld=d;bl={x:qx,y:qy,tag:'trace'};}
+      if(d<bld){bld=d;bl={x:qx,y:qy,tag:'trace',trace:L.name};}
     }
     return bl;
   }
@@ -2991,7 +3043,11 @@ const CSG = (function(){
     const pts=snapCandidates().pts;
     let best=null,bd=tolP;
     for(const c of pts){const d=Math.hypot(c.x-p.x,c.y-p.y);if(d<bd){bd=d;best=c;}}
-    if(best){hoverSnap={x:best.x,y:best.y,kind:'point'};return{x:best.x,y:best.y};}
+    if(best){hoverSnap={x:best.x,y:best.y,kind:'point'};
+      // ground rides along so the click can store a real constraint: origin
+      // and trace crossings (which sit at the origin) pin the point outright
+      const g=(best.tag==='origin'||(best.tag==='cross'&&Math.hypot(best.x,best.y)<1e-6))?'origin':null;
+      return{x:best.x,y:best.y,_g:g};}
     // inference: dashed guides when the cursor lines up H/V with a known point,
     // and the point-to-place slides onto that alignment (SW-style)
     let gx=null,gxd=tolP,gy=null,gyd=tolP;
@@ -3005,11 +3061,19 @@ const CSG = (function(){
       if(gx)hoverGuides.push({from:{x:gx.x,y:gx.y},to:q});
       if(gy)hoverGuides.push({from:{x:gy.x,y:gy.y},to:q});
       hoverSnap={x:q.x,y:q.y,kind:'line'};
-      return q;
+      /* an inference can land the point exactly on ground (aligning with the
+         origin puts you on a trace) — that contact deserves its constraint too */
+      let g=null;
+      if(Math.hypot(q.x,q.y)<1e-9)g='origin';
+      else for(const Lt of traceSnapUV){
+        if(Math.abs((q.x-Lt.u0)*(-Lt.dv)+(q.y-Lt.v0)*Lt.du)<1e-9){g='trace:'+Lt.name;break;}
+      }
+      return {x:q.x,y:q.y,_g:g};
     }
     // line candidates: the plane traces
     const bl=nearestTraceSlide(p,traceSnapUV,tolL);
-    if(bl){hoverSnap={x:bl.x,y:bl.y,kind:'line'};return {x:bl.x,y:bl.y};}
+    if(bl){hoverSnap={x:bl.x,y:bl.y,kind:'line'};
+      return {x:bl.x,y:bl.y,_g:bl.trace?('trace:'+bl.trace):null};}
     return p;
   }
   /* The same net, cast while dragging a point with the Pointer. It used to see
@@ -3028,7 +3092,7 @@ const CSG = (function(){
       const d=Math.hypot(c.x-p.x,c.y-p.y);
       if(d<bd){bd=d;best=c;}
     }
-    if(best)return {x:best.x,y:best.y,tag:best.tag};
+    if(best)return {x:best.x,y:best.y,tag:best.tag,pt:best.pt,ei:best.ei};
     return nearestTraceSlide(p,cand.lines,tolL);
   }
 
@@ -3204,13 +3268,21 @@ const CSG = (function(){
       if(draftPts.length>=3){const f=draftPts[0];if(Math.hypot(p.x-f.x,p.y-f.y)<=Math.max(snapSize,0.6)){commitDraftLine();return;}}
       const last=draftPts[draftPts.length-1];
       if(last&&Math.abs(last.x-p.x)<1e-6&&Math.abs(last.y-p.y)<1e-6)return;
-      draftPts.push({x:p.x,y:p.y}); redrawDraft(null);
+      draftPts.push({x:p.x,y:p.y,g:p._g||undefined}); redrawDraft(null);
     } else if(tool==='rect'){
-      if(draftStage===0){draftA=p;draftStage=1;} else {if(Math.abs(p.x-draftA.x)>1e-4&&Math.abs(p.y-draftA.y)>1e-4){const ent={type:'rect',a:{x:draftA.x,y:draftA.y},b:{x:p.x,y:p.y}};editing.entities.push(ent);flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
+      if(draftStage===0){draftA=p;draftStage=1;} else {if(Math.abs(p.x-draftA.x)>1e-4&&Math.abs(p.y-draftA.y)>1e-4){const ent={type:'rect',a:{x:draftA.x,y:draftA.y},b:{x:p.x,y:p.y}};editing.entities.push(ent);
+        const ei=editing.entities.length-1;
+        if(draftA._g)storeGround({ent:ei,idx:0},draftA._g);
+        if(p._g)storeGround({ent:ei,idx:2},p._g);
+        flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
     } else if(tool==='circle'){
-      if(draftStage===0){draftA=p;draftStage=1;} else {const r=Math.hypot(p.x-draftA.x,p.y-draftA.y);if(r>1e-3){const ent={type:'circle',c:{x:draftA.x,y:draftA.y},r};editing.entities.push(ent);flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
+      if(draftStage===0){draftA=p;draftStage=1;} else {const r=Math.hypot(p.x-draftA.x,p.y-draftA.y);if(r>1e-3){const ent={type:'circle',c:{x:draftA.x,y:draftA.y},r};editing.entities.push(ent);
+        if(draftA._g)storeGround({ent:editing.entities.length-1,idx:0},draftA._g);
+        flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
     } else if(tool==='polygon'){
-      if(draftStage===0){draftA=p;draftStage=1;} else {const r=Math.hypot(p.x-draftA.x,p.y-draftA.y),rot=Math.atan2(p.y-draftA.y,p.x-draftA.x);if(r>1e-3){const ent={type:'polygon',c:{x:draftA.x,y:draftA.y},r,sides:polygonSides,rot};editing.entities.push(ent);flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
+      if(draftStage===0){draftA=p;draftStage=1;} else {const r=Math.hypot(p.x-draftA.x,p.y-draftA.y),rot=Math.atan2(p.y-draftA.y,p.x-draftA.x);if(r>1e-3){const ent={type:'polygon',c:{x:draftA.x,y:draftA.y},r,sides:polygonSides,rot};editing.entities.push(ent);
+        if(draftA._g)storeGround({ent:editing.entities.length-1,idx:0},draftA._g);
+        flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
     } else if(tool==='dim'){
       /* Two clicks, SolidWorks-style. First click arms a point, a line or a
          plane trace and previews; second click decides what the dimension is:
@@ -3320,11 +3392,13 @@ const CSG = (function(){
     if(sk.cons){
       const pair=c=>c.kind==='paral'||c.kind==='equal';
       sk.cons=sk.cons.filter(c=>
-        c.kind==='coinc' ? (!hits(c.a)&&!hits(c.b))
-        : pair(c)        ? (c.a.ent!==ei&&c.b.ent!==ei)
-                         : c.ent!==ei);
+        c.kind==='coinc'   ? (!hits(c.a)&&!hits(c.b))
+        : c.kind==='ontrace' ? !hits(c.ref)
+        : pair(c)          ? (c.a.ent!==ei&&c.b.ent!==ei)
+                           : c.ent!==ei);
       sk.cons.forEach(c=>{
         if(c.kind==='coinc'){ shift(c.a); shift(c.b); }
+        else if(c.kind==='ontrace')shift(c.ref);
         else if(pair(c)){ if(c.a.ent>ei)c.a.ent+=delta; if(c.b.ent>ei)c.b.ent+=delta; }
         else if(c.ent>ei)c.ent+=delta;
       });
@@ -3382,7 +3456,13 @@ const CSG = (function(){
     /* Two points is a real segment — Enter used to silently discard it, which
        made "draw one line from the origin" impossible. Three or more still
        close, matching the hint; a pair stays an open stick. */
-    if(tool==='line'&&draftPts.length>=2){pushUndo('draw polyline');const ent={type:'poly',pts:draftPts.slice(),closed:draftPts.length>=3};editing.entities.push(ent);flashLoop(editing,ent);}
+    if(tool==='line'&&draftPts.length>=2){pushUndo('draw polyline');
+      const ent={type:'poly',pts:draftPts.slice(),closed:draftPts.length>=3};
+      editing.entities.push(ent);
+      // points that were snapped onto ground become constrained to it
+      const ei=editing.entities.length-1;
+      ent.pts.forEach((q,i)=>{ if(q.g){ storeGround({ent:ei,idx:i},q.g); delete q.g; } });
+      flashLoop(editing,ent);}
     draftPts=[];redrawDraft(null);rebuild();
   }
 
@@ -3966,6 +4046,32 @@ const CSG = (function(){
         ((key(c.a)===key(a)&&key(c.b)===key(b))||(key(c.a)===key(b)&&key(c.b)===key(a)))))
       cons.push({kind:'coinc',via:'conc',a:a,b:b});
   }
+  /* Auto-grounding: a point drawn or dropped onto the origin or a plane trace
+     gets a real stored constraint, not a loose coincidence of coordinates.
+     Snap meant something — make it hold, visibly, until its badge is deleted. */
+  function storeGround(ref,g){
+    if(!ref||!g)return;
+    const cons=consOf(editing), key=r=>r.ent+'.'+r.idx;
+    if(g==='origin'){
+      const a={ent:-1,idx:0};
+      if(!cons.some(c=>c.kind==='coinc'&&
+          ((key(c.a)===key(a)&&key(c.b)===key(ref))||(key(c.a)===key(ref)&&key(c.b)===key(a)))))
+        cons.push({kind:'coinc',a:a,b:{ent:ref.ent,idx:ref.idx}});
+    } else if(g.slice(0,6)==='trace:'){
+      const name=g.slice(6);
+      if(!cons.some(c=>c.kind==='ontrace'&&c.trace===name&&key(c.ref)===key(ref)))
+        cons.push({kind:'ontrace',ref:{ent:ref.ent,idx:ref.idx},trace:name});
+    }
+  }
+  // the {ent,idx} ref behind a drag handle, for storing constraints on it
+  function refOfHandle(h){
+    if(!h||h.ei==null)return null;
+    const e=editing&&editing.entities[h.ei]; if(!e)return null;
+    if(e.type==='poly'){ const i=e.pts.indexOf(h.pt); return i<0?null:{ent:h.ei,idx:i}; }
+    if(e.type==='circle'||e.type==='polygon') return h.pt===e.c?{ent:h.ei,idx:0}:null;
+    if(e.type==='rect') return h.pt===e.a?{ent:h.ei,idx:0}:h.pt===e.b?{ent:h.ei,idx:2}:null;
+    return null;
+  }
   function applyCoincident(ra,rb){
     const sk=editing;
     let src=ra,dst=rb;                        // second-picked point moves...
@@ -4017,6 +4123,13 @@ const CSG = (function(){
         else hold=heldEnd({entIdx:c.ent},s);
         if(hold){ const mv=(hold===s.a)?s.b:s.a; mv[k]=hold[k]; }
         else { const m=(s.a[k]+s.b[k])/2; s.a[k]=m; s.b[k]=m; }
+      } else if(c.kind==='ontrace'){
+        // hold the point on the plane: project onto the trace, so a drag can
+        // slide it along the plane but never off it
+        const L=traceUV(c.trace);
+        const Q=liveRef(sk,c.ref)?resolvePt(sk,c.ref):null;
+        if(!L||!Q)continue;
+        const F=traceFoot(L,Q); Q.x=F.x; Q.y=F.y;
       } else if(c.kind==='coinc'){
         // origin is ground; otherwise the dragged (or only-live) side leads
         let src=c.a,dst=c.b;
@@ -4044,6 +4157,8 @@ const CSG = (function(){
       else if((c.kind==='paral'||c.kind==='equal')&&c.b&&c.b.ent===i){
         const s=segPts(sk,{ent:i,seg:c.b.seg}); if(s)n++;
       }
+      // a point held on a plane loses one translation
+      else if(c.kind==='ontrace'&&c.ref&&c.ref.ent===i)n++;
     }
     return n;
   }
@@ -4092,10 +4207,36 @@ const CSG = (function(){
          &&onPt(d.b)&&!onPt(d.a)) return {kind:'p2p',a:d.b,b:d.a};
       return d;
     };
+    // early-out on convergence: closed loops need many passes to settle, most
+    // sketches need two — measure movement and stop when nothing shifts
+    const snap=()=>{const a=[];for(const e of sk.entities)for(const q of entPoints(e)){a.push(q.x,q.y);}return a;};
+    let prev=snap();
     for(let i=0;i<(iters||2);i++){
-      if(hasD)for(const d of sk.dims){ if(d.v!=null){ try{ dimApply(sk,sw(d),d.v); }catch(_){ } } }
+      if(hasD)for(const d of sk.dims){ if(d.v==null)continue;
+        try{
+          /* a length whose far end is the hand: hold the hand, move the near
+             end — otherwise the applier drags the point off the cursor and, in
+             a closed loop, the whole ring chases itself and never settles */
+          if(d.kind==='seg'&&dragged&&dragged.ei===d.entIdx){
+            const e=sk.entities[d.entIdx];
+            if(e&&e.type==='poly'){
+              const pi=e.pts.indexOf(dragged.pt), bIdx=(d.seg+1)%e.pts.length;
+              if(pi===bIdx){
+                const a=e.pts[d.seg], b=e.pts[bIdx];
+                const dx=a.x-b.x, dy=a.y-b.y, L=Math.hypot(dx,dy)||1;
+                a.x=b.x+dx/L*d.v; a.y=b.y+dy/L*d.v;
+                continue;
+              }
+            }
+          }
+          dimApply(sk,sw(d),d.v);
+        }catch(_){ } }
       // constraints go last in each pass, so H/V and coincident win any tie
       try{ applyCons(sk,dragged); }catch(_){ }
+      const cur=snap(); let mx=0;
+      for(let k=0;k<cur.length;k++){ const d2=Math.abs(cur[k]-(prev[k]||0)); if(d2>mx)mx=d2; }
+      prev=cur;
+      if(mx<1e-7)break;
     }
   }
   function screenOf(anchor){
@@ -4148,9 +4289,11 @@ const CSG = (function(){
       el.className='con-badge'+(selCon===c?' sel':'');
       el.textContent=c.kind==='horiz'?'H':c.kind==='vert'?'V'
         :c.kind==='paral'?'∥':c.kind==='equal'?'='
+        :c.kind==='ontrace'?'∈'
         :c.via==='conc'?'◎':'⊕';
       el.title=(c.kind==='horiz'?'Horizontal':c.kind==='vert'?'Vertical'
         :c.kind==='paral'?'Parallel':c.kind==='equal'?'Equal length'
+        :c.kind==='ontrace'?('On the '+c.trace+' plane')
         :c.via==='conc'?'Concentric':'Coincident')+
         ' constraint — click to select, Delete to remove';
       el.addEventListener('pointerdown',ev=>{
@@ -4208,6 +4351,9 @@ const CSG = (function(){
         const c=o.con; let ap=null;
         if(c.kind==='coinc'){
           const P=resolvePt(editing,(c.b&&c.b.ent!==-1)?c.b:c.a);
+          if(P)ap={x:P.x+0.7,y:P.y+0.7};
+        } else if(c.kind==='ontrace'){
+          const P=resolvePt(editing,c.ref);
           if(P)ap={x:P.x+0.7,y:P.y+0.7};
         } else {
           // H/V carry {ent,seg}; parallel/equal badge the following line
@@ -4982,14 +5128,14 @@ const CSG = (function(){
           ent.rot=Math.atan2(dy,dx)-dragVtx.corner/ent.sides*Math.PI*2;
         }
         dragVtx.pt.x=p.x; dragVtx.pt.y=p.y; dragSnapPt=null;
-        relaxDims(editing,2,dragVtx);         // dims hold their values mid-drag
+        relaxDims(editing,4,dragVtx);         // dims hold their values mid-drag
         liveSketchRedraw();
         return;
       }
       const snap=dragSnap(p,dragVtx);
       if(snap){ dragVtx.pt.x=snap.x; dragVtx.pt.y=snap.y; dragSnapPt=snap; }
       else    { dragVtx.pt.x=p.x;   dragVtx.pt.y=p.y;   dragSnapPt=null; }
-      relaxDims(editing,2,dragVtx);           // dims hold their values mid-drag
+      relaxDims(editing,4,dragVtx);           // dims hold their values mid-drag
       liveSketchRedraw();
       return;
     }
@@ -5032,12 +5178,33 @@ const CSG = (function(){
     if(dragVtx){
       // already snapped during the move; just commit + rebuild. Say which of the
       // four it caught — "joined" would be a lie about the origin or a trace.
-      if(dragSnapPt) setHint(
-        dragSnapPt.tag==='origin' ? 'Pinned to the origin'
-        : dragSnapPt.tag==='cross' ? 'Snapped to a plane-trace crossing'
-        : dragSnapPt.tag==='trace' ? 'Snapped onto a plane trace'
-        : 'Points joined');
-      relaxDims(editing,4,dragVtx);           // settle exactly before the rebuild
+      if(dragSnapPt){
+        setHint(
+          dragSnapPt.tag==='origin' ? 'Pinned to the origin'
+          : dragSnapPt.tag==='cross' ? 'Snapped to a plane-trace crossing'
+          : dragSnapPt.tag==='trace' ? 'Snapped onto a plane trace'
+          : 'Points joined');
+        /* a snap that landed is a relationship the user meant — store it as a
+           real constraint so the next drag can't silently break it */
+        const rf=refOfHandle(dragVtx);
+        if(rf){
+          if(dragSnapPt.tag==='origin'||
+             (dragSnapPt.tag==='cross'&&Math.hypot(dragSnapPt.x,dragSnapPt.y)<1e-6))
+            storeGround(rf,'origin');
+          else if(dragSnapPt.tag==='trace'&&dragSnapPt.trace)
+            storeGround(rf,'trace:'+dragSnapPt.trace);
+          else if(dragSnapPt.tag==='vertex'&&dragSnapPt.pt&&dragSnapPt.ei!=null){
+            const tr=refOfHandle({ei:dragSnapPt.ei,pt:dragSnapPt.pt});
+            if(tr&&!(tr.ent===rf.ent&&tr.idx===rf.idx)){
+              const cons=consOf(editing), key=r=>r.ent+'.'+r.idx;
+              if(!cons.some(c=>c.kind==='coinc'&&
+                  ((key(c.a)===key(tr)&&key(c.b)===key(rf))||(key(c.a)===key(rf)&&key(c.b)===key(tr)))))
+                cons.push({kind:'coinc',a:tr,b:rf});
+            }
+          }
+        }
+      }
+      relaxDims(editing,40,dragVtx);          // settle exactly before the rebuild
       dragVtx=null; dragSnapPt=null; rebuild(); redrawHandles(); return;
     }
     if(dragLight){ dragLight = null; controls.enableRotate = true; return; }
@@ -5858,6 +6025,7 @@ const CSG = (function(){
     camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
     updateDimLabels();candyTick(now||0);tickOrigin(now||0);
     if(traceGroup.visible)tickLabelScale();
+    updateTraceLabels();
     if(cubeRenderer){cubeMesh.quaternion.copy(camera.quaternion).invert();cubeRenderer.render(cubeScene,cubeCam);}
     renderer.render(scene,camera);})();
 
@@ -5881,7 +6049,7 @@ const CSG = (function(){
     get asmShapes(){ return asmShapes; },
     get asmMeshes(){ return asmMeshes; },
     addComponent, setDocMode, buildPartShapes, asmTransformedShapes, removeComponent,
-    editSketch, finishSketch, defineState, lockedEnts, sketchHandles,
+    editSketch, finishSketch, defineState, lockedEnts, sketchHandles, updateTraceLabels,
     get editing(){ return editing; }, get tool(){ return tool; }, set tool(v){ tool=v; dockSel(); },
     snap(){ renderer.render(scene, camera); return renderer.domElement.toDataURL('image/jpeg', 0.85); }
   };
