@@ -307,6 +307,13 @@ single diagonal distance leaves it free to swing on a circle.</p>
 <p>Drag any dimension to reposition its leader line; long chains get unreadable fast if
 they all sit on top of each other. Values accept up to four decimal places, and the input
 box grows to fit what you type.</p>
+<h3>Driven dimensions</h3>
+<p>If a new dimension would <b>over-define</b> the sketch — what it measures is already
+fully decided — freyacad warns you and offers to add it as <b>driven</b> instead: a grey
+reference reading shown in parentheses, like <i>(12.5 mm)</i>. A driven dimension follows
+the geometry and never moves it, costs no freedom in the count, and can be erased like
+any other. It's the honest way to keep a measurement visible on a sketch that's already
+fully in charge of itself.</p>
 <div class="note warn">
   <span class="tag">Current limitation</span>
   <p>Dimensions are applied <b>one at a time</b>, not solved together. Each one moves

@@ -205,6 +205,8 @@ if(!window.THREE){
   .dim-label{position:absolute;z-index:55;transform:translate(-50%,-50%);padding:1px 6px;font-family:var(--mono);font-size:11px;
     background:rgba(13,17,23,.86);color:var(--dim);border:1px solid rgba(214,162,245,.45);border-radius:4px;cursor:pointer;pointer-events:auto;white-space:nowrap;user-select:none}
   .dim-label:hover{background:rgba(214,162,245,.2);color:#fff}
+  .dim-label.driven{color:#9aa0a6;border-color:rgba(154,160,166,.4);font-style:italic}
+  .dim-label.driven:hover{background:rgba(154,160,166,.15);color:#c9cdd2}
   /* constraint badges: SW's little green boxes — H, V, ⊕ */
   .con-badge{position:absolute;z-index:54;transform:translate(-50%,-50%);padding:0 3px;
     font-family:var(--mono);font-size:9px;line-height:13px;font-weight:600;
@@ -1260,6 +1262,7 @@ const CSG = (function(){
   function dimsOn(sk,i){
     let n=0;
     for(const d of (sk.dims||[])){
+      if(d.driven)continue;                  // reference only — spends no freedom
       // a plane trace is ground — a dim against it costs the sketch entity's DOF
       // and nothing else, so only the ref that *has* an entity is counted. (b.ent
       // is undefined for a trace ref; the ==null guard is what keeps that honest.)
@@ -1300,6 +1303,7 @@ const CSG = (function(){
   function groundInfo(sk,i){
     const traces=new Set(); let near=false, rot=false;
     for(const d of (sk.dims||[])){
+      if(d.driven)continue;                  // a reference reading grounds nothing
       if(d.kind==='ptrace'&&d.ref&&d.ref.ent===i&&d.trace)traces.add(d.trace);
       else if(d.kind==='p2p'&&d.a&&d.b&&
         ((d.a.ent===-1&&d.b.ent===i)||(d.b.ent===-1&&d.a.ent===i)))near=true;
@@ -3880,11 +3884,14 @@ const CSG = (function(){
     clearDimGeometry();
     if(mode!=='sketch'||!editing)return;
     const fr=(sketchData[editing.id]&&sketchData[editing.id].frame)||editing.frame; if(!fr)return;
-    const segs=[], tris=[];
+    const segs=[], tris=[], dSegs=[], dTris=[];
     for(const d of (editing.dims||[])){
-      const g=dimResolve(editing,d); if(g)buildDimGeom(g,segs,tris);
+      const g=dimResolve(editing,d);
+      if(g)buildDimGeom(g, d.driven?dSegs:segs, d.driven?dTris:tris);
     }
     emitDimGeom(dimGroup,fr,segs,tris,DIM_COL,0.95);
+    // driven dims: grey, quieter — they report, they don't rule
+    if(dSegs.length||dTris.length)emitDimGeom(dimGroup,fr,dSegs,dTris,0x8f98a6,0.8);
     // the one being placed, before its value is typed
     if(pendingDim){
       const g=dimResolve(editing,pendingDim);
@@ -4018,6 +4025,21 @@ const CSG = (function(){
       (traceRefOf(d.b)?('trace.'+d.b.trace):(d.b.ent+'.'+d.b.seg));
     return d.entIdx+':'+d.kind+':'+(d.seg!=null?d.seg:'');
   }
+  /* Would this NEW dimension over-define what it measures? Our proxy for the
+     solver's answer: if every entity the dim touches is already fully defined,
+     another driving dimension has nothing left to decide — only to conflict. */
+  function wouldOverconstrain(sk,d){
+    const ents=new Set();
+    if(d.kind==='p2p'||d.kind==='angle'){
+      if(d.a&&d.a.ent>=0)ents.add(d.a.ent);
+      if(d.b&&d.b.ent!=null&&d.b.ent>=0)ents.add(d.b.ent);
+    } else if(d.kind==='ptrace'){ if(d.ref&&d.ref.ent>=0)ents.add(d.ref.ent); }
+    else if(d.entIdx!=null)ents.add(d.entIdx);
+    if(!ents.size)return false;
+    const st=defineState(sk);
+    for(const i of ents){ if(!st[i]||!st[i].defined)return false; }
+    return true;
+  }
   function ensureDimStored(d){
     editing.dims = editing.dims || [];
     const have=editing.dims.find(x=>dimKey(x)===dimKey(d));
@@ -4041,7 +4063,8 @@ const CSG = (function(){
      geometry after the pointer has already moved it, blessing a broken value. */
   function ensureDimValues(sk){
     if(!sk||!sk.dims)return;
-    for(const d of sk.dims){ if(d.v==null){ const g=dimResolve(sk,d); if(g)d.v=g.value; } }
+    for(const d of sk.dims){ if(d.driven)continue;   // driven dims never hold a target
+      if(d.v==null){ const g=dimResolve(sk,d); if(g)d.v=g.value; } }
   }
   /* ---- stored constraints ------------------------------------------------
      H and V used to be one-shot nudges: they moved the line once and were
@@ -4428,6 +4451,21 @@ const CSG = (function(){
     const apply=()=>{ if(done)return; done=true; let v=parseFloat(inp.value);
       closeDimInput(); pendingDim=null;
       if(!isNaN(v)&&v>0){ v=Math.round(v*1e4)/1e4;      // 4 dp is the cap
+        /* a NEW dimension on already-defined geometry can only conflict —
+           warn, and offer it as driven (reads the sketch, never drives it) */
+        const isNew=!(editing.dims||[]).some(x=>dimKey(x)===dimKey(d));
+        if(isNew&&wouldOverconstrain(editing,d)){
+          askDialog('This would over-define the sketch',
+            'What this dimension measures is already fully defined — a second driving '+
+            'dimension would fight the ones in charge. Add it as a driven reference instead?',
+            [{label:'Add as driven',primary:true,fn:()=>{
+                pushUndo('driven dimension');
+                const s=ensureDimStored(d); s.driven=true; s.v=null;
+                rebuild();
+                setHint('Driven dimension added — it reads the geometry, it never moves it');}},
+             {label:'Cancel'}]);
+          drawDimGeometry(); return;
+        }
         pushUndo('dimension');
         const val=cur.angular?v:fromDisp(v);
         ensureDimStored(d).v=val;                       // the value dragging must preserve
@@ -4480,6 +4518,9 @@ const CSG = (function(){
         ev.stopPropagation(); ev.preventDefault();
         if(tool==='erase'){ const i=editing.dims.indexOf(d);
           if(i>=0){ pushUndo('erase dimension'); editing.dims.splice(i,1); rebuild(); } return; }
+        if(d.driven&&tool!=='select'){
+          setHint('Driven dimension — it only reads the geometry. Erase it if unwanted.');
+          return; }
         if(tool!=='select'){ openDimInput(d); return; }   // repositioning is a Pointer job
         const g0=dimResolve(editing,d); if(!g0)return;
         let moved=false, undone=false;
@@ -4499,7 +4540,9 @@ const CSG = (function(){
           el.removeEventListener('pointermove',onMove);
           el.removeEventListener('pointerup',onUp);
           try{ el.releasePointerCapture(ev2.pointerId); }catch(_){}
-          if(!moved&&!undone){ undone=true; openDimInput(d); }
+          if(!moved&&!undone){ undone=true;
+            if(d.driven)setHint('Driven dimension — it only reads the geometry. Erase it if unwanted.');
+            else openDimInput(d); }
         };
         el.addEventListener('pointermove',onMove);
         el.addEventListener('pointerup',onUp);
@@ -4538,9 +4581,12 @@ const CSG = (function(){
       o.el.style.display = sp.behind ? 'none' : 'block';
       // whole pixels: sub-pixel churn on a translate(-50%,-50%) shimmers
       o.el.style.left=Math.round(sp.x)+'px'; o.el.style.top=Math.round(sp.y)+'px';
-      o.el.textContent = cur.angular
+      const txt = cur.angular
         ? (+cur.value.toFixed(2))+'°'
         : (cur.suffix||'')+(+toDisp(cur.value).toFixed(3))+' '+lenLabel();
+      // driven dims read like SW reference dims: grey, in parentheses
+      o.el.textContent = o.d.driven ? '('+txt+')' : txt;
+      o.el.classList.toggle('driven', !!o.d.driven);
     }
   }
 
