@@ -340,16 +340,20 @@ middle.</p>
 <p>These are cheap and worth using freely. A line pinned horizontal loses a degree of
 freedom that no dimension then has to spend.</p>
 
-<h3>Dimensioned geometry won't drag</h3>
-<p>The rule is simple: <b>a drag must never change a dimension's value</b>. If any
-dimension depends on a point — a length on its line, an angle, a distance to a plane, a
-diameter on its polygon — that point refuses to drag, whether or not the sketch is fully
-defined yet. It flashes red and the status line says which way out you have: edit the
-dimension's number.</p>
-<p>This is not the program being awkward. If a drag could move dimensioned geometry, it
-would silently rewrite a number you set on purpose, and you'd have no way of knowing
-which. Points nothing has measured yet stay free to drag; once you've said what a thing
-measures, only the measurement moves it.</p>
+<h3>Dragging respects your dimensions</h3>
+<p>Only the origin and the datum planes are truly fixed. Everything else is exactly as
+free as its constraints leave it, and dragging honours that:</p>
+<ul>
+  <li><b>Undimensioned geometry</b> drags anywhere.</li>
+  <li><b>Dimensioned geometry still drags — but the numbers hold.</b> While you pull a
+      point, every dimension keeps re-imposing its value. A line with a length dimension
+      swings about its far end at exactly that length; two lines with an angle between
+      them move and rotate <em>as a pair</em>, the angle intact. A drag can never
+      silently rewrite a value you typed.</li>
+  <li><b>Fully defined geometry won't drag at all.</b> Once every freedom is spent
+      against the origin and planes, there is nowhere left to go — the point flashes red
+      and the only way to move it is to edit a dimension.</li>
+</ul>
 
 <div class="note">
   <span class="tag">Why "fully defined" matters</span>

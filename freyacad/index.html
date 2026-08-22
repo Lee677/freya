@@ -1266,40 +1266,6 @@ const CSG = (function(){
      and so do we. Deliberately the *same* count the chip reports, so the two can
      never disagree about what "defined" means. */
   function lockedEnts(sk){ return defineState(sk).map(s=>s.defined); }
-  /* The rule that actually matters at the pointer: a drag must never change a
-     dimension's value — only editing the dimension may. Full-definition locking
-     alone let any entity with one loose DOF drag its dimensioned points and
-     silently rewrite the numbers. So: if any dim depends on this handle's
-     point, the drag is refused, defined or not. */
-  function dragWouldBreakDim(sk,h){
-    const e=sk.entities[h.ei]; if(!e||!(sk.dims&&sk.dims.length))return false;
-    const pi = e.type==='poly' ? e.pts.indexOf(h.pt) : -1;
-    const segTouch=r=>{                       // does this seg-ref span the handle?
-      if(!r||r.ent!==h.ei||r.seg==null)return false;
-      if(e.type!=='poly')return true;
-      if(pi<0)return false;
-      const b=e.closed?(r.seg+1)%e.pts.length:r.seg+1;
-      return pi===r.seg||pi===b;
-    };
-    const ptTouch=r=>{
-      if(!r||r.ent!==h.ei)return false;
-      if(e.type==='poly')return pi>=0&&r.idx===pi;
-      if(e.type==='circle'||e.type==='polygon')return h.kind==='c'; // spin leaves the centre put
-      return true;                            // rect: either handle moves every corner
-    };
-    for(const d of sk.dims){
-      if(d.kind==='seg'){ if(segTouch({ent:d.entIdx,seg:d.seg}))return true; }
-      else if(d.kind==='p2p'){ if(ptTouch(d.a)||ptTouch(d.b))return true; }
-      else if(d.kind==='angle'){ if(segTouch(d.a)||segTouch(d.b))return true; }
-      else if(d.kind==='ptrace'){ if(ptTouch(d.ref))return true; }
-      else if(d.entIdx===h.ei){               // dia / pdia / width / height
-        if(e.type==='circle'){ }              // a centre drag can't change a diameter
-        else if(e.type==='polygon'){ if(h.kind==='pg')return true; } // corner drag resizes
-        else return true;
-      }
-    }
-    return false;
-  }
   function updateAnchorChip(sk){
     const el=$('sk-anchor');if(!el)return;
     if(mode!=='sketch'||!sk){el.style.display='none';return;}
@@ -3882,13 +3848,27 @@ const CSG = (function(){
   }
   function ensureDimStored(d){
     editing.dims = editing.dims || [];
-    if(editing.dims.some(x=>dimKey(x)===dimKey(d))) return;
-    editing.dims.push(
-      d.kind==='ptrace'
+    const have=editing.dims.find(x=>dimKey(x)===dimKey(d));
+    if(have) return have;
+    const s = d.kind==='ptrace'
         ? {kind:'ptrace', ref:Object.assign({},d.ref), trace:d.trace, off:d.off}
       : (d.kind==='p2p'||d.kind==='angle')
         ? {kind:d.kind, a:Object.assign({},d.a), b:Object.assign({},d.b), off:d.off}
-        : {entIdx:d.entIdx, kind:d.kind, seg:d.seg, off:d.off});
+        : {entIdx:d.entIdx, kind:d.kind, seg:d.seg, off:d.off};
+    editing.dims.push(s);
+    return s;
+  }
+  /* Re-impose every dimension's stored value. This is what makes dragging
+     constrained rather than forbidden: the pointer moves a point, then each
+     dim pulls the geometry back onto its value, and after a few passes the
+     sketch lands where the cursor asks *and* every number still holds. An
+     angle-dimmed pair rotates as a pair; a length-dimmed line swings at fixed
+     length. Dims saved before values were stored backfill from measurement. */
+  function relaxDims(sk,iters){
+    if(!sk||!sk.dims||!sk.dims.length)return;
+    for(const d of sk.dims){ if(d.v==null){ const g=dimResolve(sk,d); if(g)d.v=g.value; } }
+    for(let i=0;i<(iters||2);i++)
+      for(const d of sk.dims){ if(d.v!=null){ try{ dimApply(sk,d,d.v); }catch(_){ } } }
   }
   function screenOf(anchor){
     const fr=(sketchData[editing.id]&&sketchData[editing.id].frame)||editing.frame;
@@ -3914,8 +3894,10 @@ const CSG = (function(){
     const apply=()=>{ if(done)return; done=true; let v=parseFloat(inp.value);
       closeDimInput(); pendingDim=null;
       if(!isNaN(v)&&v>0){ v=Math.round(v*1e4)/1e4;      // 4 dp is the cap
-        pushUndo('dimension'); ensureDimStored(d);
-        dimApply(editing,d,cur.angular?v:fromDisp(v)); rebuild(); } };
+        pushUndo('dimension');
+        const val=cur.angular?v:fromDisp(v);
+        ensureDimStored(d).v=val;                       // the value dragging must preserve
+        dimApply(editing,d,val); rebuild(); } };
     inp.addEventListener('keydown',ev=>{ if(ev.key==='Enter'){ev.preventDefault();apply();}
       else if(ev.key==='Escape'){ev.preventDefault();done=true;closeDimInput();
         pendingDim=null;drawDimGeometry();} });
@@ -4669,17 +4651,17 @@ const CSG = (function(){
       if(mode==='sketch'&&editing&&tool==='select'&&e.button===0){
         const p=pointerToSketch(e);
         if(p){ const tol=Math.max(0.6,controls.sph.radius*0.04); const h=nearestHandle(p,tol);
-          if(h&&(lockedEnts(editing)[h.ei]||dragWouldBreakDim(editing,h))){
-            /* Held still: either fully defined, or a dimension depends on this
-               point and a drag would silently rewrite it. Swallow the gesture
-               rather than orbiting instead — a view that spins when you meant
-               to drag reads as a bug, not as a refusal. */
+          if(h&&lockedEnts(editing)[h.ei]){
+            /* Fully grounded: every freedom is spent against the origin and
+               planes, so no drag can move this without breaking something.
+               Anything less than that drags, with relaxDims holding every
+               dimension's value while it moves. Swallow the gesture rather
+               than orbiting instead — a view that spins when you meant to
+               drag reads as a bug, not as a refusal. */
             controls._s=0; lockFlash={x:h.pt.x,y:h.pt.y}; redrawHandles();
             clearTimeout(lockFlashT);
             lockFlashT=setTimeout(()=>{lockFlash=null;redrawHandles();},900);
-            setHint(lockedEnts(editing)[h.ei]
-              ?'Fully defined — change a dimension to move this point'
-              :'A dimension holds this point — edit the dimension value to move it');
+            setHint('Fully defined — change a dimension to move this point');
             return;
           }
           if(h){ pushUndo('move point'); dragVtx=h; dragSnapPt=null;
@@ -4707,12 +4689,14 @@ const CSG = (function(){
           ent.rot=Math.atan2(dy,dx)-dragVtx.corner/ent.sides*Math.PI*2;
         }
         dragVtx.pt.x=p.x; dragVtx.pt.y=p.y; dragSnapPt=null;
+        relaxDims(editing,2);                 // dims hold their values mid-drag
         liveSketchRedraw();
         return;
       }
       const snap=dragSnap(p,dragVtx);
       if(snap){ dragVtx.pt.x=snap.x; dragVtx.pt.y=snap.y; dragSnapPt=snap; }
       else    { dragVtx.pt.x=p.x;   dragVtx.pt.y=p.y;   dragSnapPt=null; }
+      relaxDims(editing,2);                   // dims hold their values mid-drag
       liveSketchRedraw();
       return;
     }
@@ -4760,6 +4744,7 @@ const CSG = (function(){
         : dragSnapPt.tag==='cross' ? 'Snapped to a plane-trace crossing'
         : dragSnapPt.tag==='trace' ? 'Snapped onto a plane trace'
         : 'Points joined');
+      relaxDims(editing,4);                   // settle exactly before the rebuild
       dragVtx=null; dragSnapPt=null; rebuild(); redrawHandles(); return;
     }
     if(dragLight){ dragLight = null; controls.enableRotate = true; return; }

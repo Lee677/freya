@@ -77,10 +77,14 @@ the overlay iframe.
     like "my new click handler is dead" while other new code visibly works. Between an
     edit and a browser test, always `location.reload(true)` — plain reload trusted the
     cache at least once in a way that cost half an hour of phantom debugging.
-11. **Drags must never rewrite a dimension.** `dragWouldBreakDim` refuses the grab of any
-    point a dim depends on, defined or not — full-definition locking alone let a 1-DOF
-    entity drag its dimensioned points and silently change the numbers, which the user
-    rightly called out. If a new dim kind is added, teach `dragWouldBreakDim` about it.
+11. **Drags must never rewrite a dimension — but refusing every dimensioned drag is also
+    wrong.** Both mistakes were made in turn. An angle dim between two floating lines
+    fixes only their *relative* angle: the pair must still drag as a pair. The model is
+    constrained dragging: dims store their typed value (`d.v`, backfilled from
+    measurement for older files) and `relaxDims` re-applies every dim a few times per
+    pointermove, so geometry follows the cursor while the numbers hold. Only fully
+    grounded entities (`lockedEnts`) refuse outright. A new dim kind needs a `dimApply`
+    branch and nothing else — relaxation picks it up automatically.
 
 ## Biggest thing still missing
 
