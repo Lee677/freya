@@ -3115,9 +3115,10 @@ const CSG = (function(){
     if(t!=='horiz'&&t!=='vert'&&t!=='paral'&&t!=='equal')return false;
     const d={entIdx:sketchSel.entIdx,kind:'seg',seg:sketchSel.seg};
     if(t==='horiz'||t==='vert'){
-      pushUndo(t); applyHVConstraint(d,t); storeHV(editing,d,t); relaxDims(editing,3); rebuild();
-      setHint(t==='horiz'?'Line constrained horizontal — delete its badge to free it'
-                         :'Line constrained vertical — delete its badge to free it');
+      if(guardDims(()=>{applyHVConstraint(d,t);storeHV(editing,d,t);return true;},
+           t==='horiz'?'Horizontal':'Vertical'))
+        setHint(t==='horiz'?'Line constrained horizontal — delete its badge to free it'
+                           :'Line constrained vertical — delete its badge to free it');
       return true;
     }
     // parallel / equal need a reference, so seed it from the selection
@@ -3148,6 +3149,26 @@ const CSG = (function(){
     setHint(on?'Now construction geometry — it will not become part of the solid'
               :'Now normal geometry');
     return true;
+  }
+  /* THE RULE: nothing but typing may change a dimension's value. Any sketch
+     operation runs inside this — if the sketch cannot settle with every
+     dimension still reading what you typed, the whole operation is taken back
+     and you are told, rather than the numbers being quietly rewritten. */
+  function guardDims(fn,what){
+    if(!editing)return false;
+    const has=editing.dims&&editing.dims.length;
+    if(!has){ const r0=fn(); relaxDims(editing,400); rebuild(); return r0; }
+    ensureDimValues(editing);
+    const pre=maxDimErr(editing), snap=snapState();
+    const r=fn();
+    relaxDims(editing,400);
+    if(maxDimErr(editing)>pre+1e-3){
+      applyState(snap); refreshUndoUI();
+      setHint((what||'That')+' would change a dimension — the sketch would be over-defined. '+
+              'Edit or delete the dimension first.');
+      return false;
+    }
+    rebuild(); return r;
   }
   function deleteSketchSel(){
     if(!sketchSel||!editing)return false;
@@ -3669,24 +3690,27 @@ const CSG = (function(){
       drawSnapMark(); return;
     } else if(tool==='horiz' || tool==='vert'){
       const d=dimHit(p);
-      if(d && d.kind==='seg'){ applyHVConstraint(d, tool); storeHV(editing,d,tool);
-        relaxDims(editing,3); rebuild();
-        setHint(tool==='horiz'?'Line constrained horizontal — delete its badge to free it'
-                              :'Line constrained vertical — delete its badge to free it'); }
+      if(d && d.kind==='seg'){
+        if(guardDims(()=>{applyHVConstraint(d,tool);storeHV(editing,d,tool);return true;},
+             tool==='horiz'?'Horizontal':'Vertical'))
+          setHint(tool==='horiz'?'Line constrained horizontal — delete its badge to free it'
+                                :'Line constrained vertical — delete its badge to free it'); }
       else setHint('Click on a line segment');
     } else if(tool==='paral'){
       const d=dimHit(p);
       if(d && d.kind==='seg'){
         if(!paralRef){ paralRef=d; redrawDraft(null); setHint('Now click the line to make parallel'); }
-        else { applyParallel(paralRef, d); storeSegPair('paral',paralRef,d); paralRef=null;
-               relaxDims(editing,3); rebuild(); setHint('Lines constrained parallel — delete the ∥ badge to free them'); }
+        else { const rf=paralRef; paralRef=null;
+               if(guardDims(()=>{applyParallel(rf,d);storeSegPair('paral',rf,d);return true;},'Parallel'))
+                 setHint('Lines constrained parallel — delete the ∥ badge to free them'); }
       } else setHint('Click a reference line segment first');
     } else if(tool==='equal'){
       const d=dimHit(p);
       if(d && d.kind==='seg'){
         if(!equalRef){ equalRef=d; redrawDraft(null); setHint('Now click the line to match its length'); }
-        else { applyEqual(equalRef, d); storeSegPair('equal',equalRef,d); equalRef=null;
-               relaxDims(editing,3); rebuild(); setHint('Lines constrained equal — delete the = badge to free them'); }
+        else { const rf=equalRef; equalRef=null;
+               if(guardDims(()=>{applyEqual(rf,d);storeSegPair('equal',rf,d);return true;},'Equal length'))
+                 setHint('Lines constrained equal — delete the = badge to free them'); }
       } else setHint('Click a reference line segment first');
     } else if(tool==='mirror'){
       const d=dimHit(p);
@@ -4601,12 +4625,26 @@ const CSG = (function(){
       }
       if(c.kind==='horiz'||c.kind==='vert'){
         const s=segPts(sk,{ent:c.ent,seg:c.seg}); if(!s)continue;
-        const k=c.kind==='horiz'?'y':'x';
+        /* Swing the line flat about the held end, keeping its length. Setting
+           one coordinate equal to the other's projects the line onto the axis
+           and shortens it — which quietly rewrote any length dimension on it,
+           every relaxation pass. */
+        const horiz=c.kind==='horiz';
         let hold=null;
         if(dragged&&dragged.ei===c.ent&&(dragged.pt===s.a||dragged.pt===s.b))hold=dragged.pt;
         else hold=heldEnd({entIdx:c.ent},s);
-        if(hold){ const mv=(hold===s.a)?s.b:s.a; mv[k]=hold[k]; }
-        else { const m=(s.a[k]+s.b[k])/2; s.a[k]=m; s.b[k]=m; }
+        if(hold){
+          const mv=(hold===s.a)?s.b:s.a, L=Math.hypot(mv.x-hold.x,mv.y-hold.y);
+          if(horiz){ const sg=mv.x>=hold.x?1:-1; mv.x=hold.x+sg*L; mv.y=hold.y; }
+          else     { const sg=mv.y>=hold.y?1:-1; mv.y=hold.y+sg*L; mv.x=hold.x; }
+        } else {
+          const mx=(s.a.x+s.b.x)/2, my=(s.a.y+s.b.y)/2;
+          const H=Math.hypot(s.b.x-s.a.x,s.b.y-s.a.y)/2;
+          if(horiz){ const sg=s.b.x>=s.a.x?1:-1;
+            s.a.x=mx-sg*H; s.b.x=mx+sg*H; s.a.y=my; s.b.y=my; }
+          else     { const sg=s.b.y>=s.a.y?1:-1;
+            s.a.y=my-sg*H; s.b.y=my+sg*H; s.a.x=mx; s.b.x=mx; }
+        }
       } else if(c.kind==='ontrace'){
         // hold the point on the plane: project onto the trace, so a drag can
         // slide it along the plane but never off it
