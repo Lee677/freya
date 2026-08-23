@@ -1763,8 +1763,11 @@ const CSG = (function(){
   /* Sketch entities -> planar faces (outer loops + holes), placed in world.
    * Circles stay REAL circles so extrusions get true cylindrical walls and
    * fillets can run all the way round them. */
-  OCK.facesFromSketch = function(sk, zoff){
-    const oc = OC(); const frame = sk.frame;
+  /* Every closed loop in the sketch, as a polygon plus a maker for its real
+     wire. Split out so the UI can count and label regions without touching the
+     kernel — the contour picker and the face builder must agree exactly. */
+  OCK.sketchLoops = function(sk, zoff){
+    const frame = sk.frame;
     const items = [];
     for(const e of sk.entities){
       if(e.type === 'circle'){
@@ -1786,18 +1789,36 @@ const CSG = (function(){
           mk: (hole)=> OCK.wireFromPts(hole ? cw(L) : ccw(L), frame, zoff) });
       }
     }
-    if(!items.length) throw new Error('sketch has no closed profile');
-    items.sort((a,b)=>b.area-a.area);
-    const used = items.map(()=>false), faces = [];
+    return items;
+  };
+  // outer loop + the loops that sit inside it, biggest first — one entry per
+  // bounded region of the sketch, and the order the contour picker numbers by
+  OCK.regions = function(sk, zoff){
+    const items = OCK.sketchLoops(sk, zoff||0).slice().sort((a,b)=>b.area-a.area);
+    const used = items.map(()=>false), out = [];
     for(let i = 0; i < items.length; i++){
       if(used[i]) continue; used[i] = true;
-      const mf = new oc.BRepBuilderAPI_MakeFace_15(items[i].mk(false), true);
+      const g = {outer:items[i], holes:[]};
       for(let j = i+1; j < items.length; j++){
         if(used[j]) continue;
-        if(pointInPoly(items[j].poly[0], items[i].poly)){ used[j] = true; mf.Add(items[j].mk(true)); }
+        if(pointInPoly(items[j].poly[0], items[i].poly)){ used[j] = true; g.holes.push(items[j]); }
       }
-      faces.push(mf.Face());
+      out.push(g);
     }
+    return out;
+  };
+  OCK.facesFromSketch = function(sk, zoff, pick){
+    const oc = OC();
+    const regs = OCK.regions(sk, zoff);
+    if(!regs.length) throw new Error('sketch has no closed profile');
+    const faces = [];
+    regs.forEach((g,i)=>{
+      if(pick && pick.length && pick.indexOf(i) < 0) return;   // not chosen
+      const mf = new oc.BRepBuilderAPI_MakeFace_15(g.outer.mk(false), true);
+      for(const h of g.holes) mf.Add(h.mk(true));
+      faces.push(mf.Face());
+    });
+    if(!faces.length) throw new Error('no contour selected');
     return faces;
   };
   OCK.fuse = function(a, b){
@@ -1853,7 +1874,7 @@ const CSG = (function(){
     const oc = OC(); opt = opt || {};
     const eps = opt.overhang ? 0.05 : 0;
     let base = 0; if(opt.symmetric) base = -depth/2; else if(opt.flip) base = -depth;
-    const faces = OCK.facesFromSketch(sk, base - eps);
+    const faces = OCK.facesFromSketch(sk, base - eps, opt.contours);
     const n = sk.frame.n, d = depth + 2*eps;
     const vec = new oc.gp_Vec_4(n.x*d, n.y*d, n.z*d);
     let out = null;
@@ -1863,10 +1884,10 @@ const CSG = (function(){
     }
     return out;
   };
-  OCK.revolve = function(sk, angleDeg, axis){
+  OCK.revolve = function(sk, angleDeg, axis, pick){
     const oc = OC();
     const ang = Math.PI*2*Math.min(360, Math.max(1, angleDeg))/360;
-    const faces = OCK.facesFromSketch(sk, 0);
+    const faces = OCK.facesFromSketch(sk, 0, pick);
     let o = sk.frame.o, dir;
     if(axis && typeof axis === 'object' && axis.d){ o = axis.o; dir = axis.d; }
     else dir = axis === 'v' ? sk.frame.v : sk.frame.u;
@@ -2631,12 +2652,12 @@ const CSG = (function(){
       const sd=sketchData[f.sketchId]; if(!sd)throw new Error('needs a sketch');
       const sk={entities:sd.sk.entities,fillet:sd.sk.fillet,chamfer:sd.sk.chamfer,frame:sd.frame};
       if(f.type==='extrude'){
-        const shp=OCK.extrude(sk,f.depth,{symmetric:f.symmetric,flip:f.flip});
+        const shp=OCK.extrude(sk,f.depth,{symmetric:f.symmetric,flip:f.flip,contours:f.contours});
         if(f.merge && resultShapes.length) resultShapes=OCK.unionInto(resultShapes,shp);
         else resultShapes.push(shp);
       } else {
         const depth = f.through ? 1000 : f.depth;
-        const tool=OCK.extrude(sk,depth,{symmetric:f.through, flip:(!f.through&&f.flip), overhang:true});
+        const tool=OCK.extrude(sk,depth,{symmetric:f.through, flip:(!f.through&&f.flip), overhang:true, contours:f.contours});
         if(!resultShapes.length)throw new Error('nothing to cut');
         resultShapes=OCK.subtractFrom(resultShapes,tool);
       }
@@ -2645,7 +2666,7 @@ const CSG = (function(){
     if(f.type==='revolve'){
       const sd=sketchData[f.sketchId]; if(!sd)throw new Error('needs a sketch');
       const sk={entities:sd.sk.entities,fillet:sd.sk.fillet,chamfer:sd.sk.chamfer,frame:sd.frame};
-      const shp=OCK.revolve(sk,f.angle,resolveAxis(f.axis));
+      const shp=OCK.revolve(sk,f.angle,resolveAxis(f.axis),f.contours);
       if(f.operation==='cut'){ if(!resultShapes.length)throw new Error('nothing to cut'); resultShapes=OCK.subtractFrom(resultShapes,shp); }
       else if(f.merge && resultShapes.length) resultShapes=OCK.unionInto(resultShapes,shp);
       else resultShapes.push(shp);
@@ -5231,8 +5252,36 @@ const CSG = (function(){
   }
   function rerun(){rebuild();}
 
+  /* A sketch with more than one bounded region gets a contour picker: tick the
+     ones this feature should use. Nothing ticked means all of them, so parts
+     made before this existed keep behaving exactly as they did. */
+  function addContourPicker(add,f){
+    if(!['extrude','cut','revolve','rcut'].includes(f.type))return;
+    const sd=sketchData[f.sketchId]; if(!sd)return;
+    let regs; try{ regs=OCK.regions({entities:sd.sk.entities,fillet:sd.sk.fillet,
+      chamfer:sd.sk.chamfer,frame:sd.frame},0); }catch(_){ return; }
+    if(!regs||regs.length<2)return;              // one region: nothing to choose
+    const lab=document.createElement('div');
+    lab.className='note'; lab.style.marginBottom='4px';
+    lab.textContent='This sketch has '+regs.length+' contours — tick the ones to use.';
+    add(lab);
+    const cur=Array.isArray(f.contours)&&f.contours.length?f.contours.slice():regs.map((_,i)=>i);
+    regs.forEach((g,i)=>{
+      const area=Math.abs(g.outer.area);
+      const name='Contour '+(i+1)+' · '+(+toDisp(Math.sqrt(area)).toFixed(1))+' '+lenLabel()+' across'+
+        (g.holes.length?(' · '+g.holes.length+' hole'+(g.holes.length===1?'':'s')):'');
+      add(fieldCheck(name,cur.indexOf(i)>=0,v=>{
+        const set=new Set(Array.isArray(f.contours)&&f.contours.length?f.contours:regs.map((_,k)=>k));
+        if(v)set.add(i); else set.delete(i);
+        f.contours=[...set].sort((a,b)=>a-b);
+        if(f.contours.length===regs.length)f.contours=null;   // all = the default
+        rerun();
+      }));
+    });
+  }
   function buildPropsBody(body,f){
     const add=el=>body.appendChild(el);
+    addContourPicker(add,f);
     if(f.type==='import'){
       const p=document.createElement('p');
       p.style.cssText='font-size:12px;color:var(--muted);margin:4px 0 0;line-height:1.5';
