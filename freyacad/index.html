@@ -6289,7 +6289,8 @@ const CSG = (function(){
   }
   const MENUS={
     sketch:{title:'Sketch menu',cmds:CMD, def:DEFAULT_LAYOUT,      key:'fcad-sketch-layout',layout:null,hidden:[]},
-    model :{title:'Model menu', cmds:MCMD,def:DEFAULT_MODEL_LAYOUT,key:'fcad-model-layout', layout:null,hidden:[]}
+    model :{title:'Model menu', cmds:MCMD,def:DEFAULT_MODEL_LAYOUT,key:'fcad-model-layout', layout:null,hidden:[]},
+    asm   :{title:'Assembly menu',cmds:null,def:null,key:'fcad-asm-layout',layout:null,hidden:[]}
   };
   loadMenu(MENUS.sketch); loadMenu(MENUS.model);
   function openCustomise(which){
@@ -6536,21 +6537,89 @@ const CSG = (function(){
     el.querySelector('#pc-close').addEventListener('click',closeProps);
     el.querySelector('#pc-del').addEventListener('click',()=>{closeProps();removeComponent(comp);});
   }
-  function openAsmCompMenu(x,y,comp){
-    buildCtxMenu(x,y,[
-      {sect:comp.name},
-      {ic:'edit',label:'Position…',fn:()=>openCompProps(comp)},
-      {ic:'suppress',label:comp.fixed?'Unfix':'Fix in place',fn:()=>{comp.fixed=!comp.fixed;refreshAsmTree();}},
-      {ic:'del',label:'Remove',fn:()=>removeComponent(comp)}
-    ]);
+  /* ---- mates ---------------------------------------------------------------
+     Applied straight to the component's transform rather than solved as a
+     system: each one answers "put this there" exactly, which is what you want
+     for laying parts out. They are not persistent relations - move a part
+     afterwards and it stays moved. */
+  function compBox(comp){
+    const i=asm.components.indexOf(comp); if(i<0)return null;
+    const ms=asmMeshes[i]; if(!ms||!ms.length)return null;
+    const box=new THREE.Box3();
+    ms.forEach(m=>{ m.updateMatrixWorld(true); box.expandByObject(m); });
+    return box.isEmpty()?null:box;
   }
-  function openAsmMenu(x,y){
-    buildCtxMenu(x,y,[
-      {sect:'Assembly'},
-      {ic:'open',label:'Insert part file…',fn:()=>$('file-insert').click()},
-      {ic:'iso',label:'Insert pillow-block demo',fn:()=>addComponent(DEMO_PART,'pillow-block')}
-    ]);
+  function otherComp(comp){
+    // the mate partner: whatever else is selected, else the one before it
+    const i=asm.components.indexOf(comp);
+    if(asmSel!=null){ const o=asm.components.find(c=>c.id===asmSel&&c!==comp); if(o)return o; }
+    return asm.components[i>0?i-1:1]||null;
   }
+  function mate(comp,kind){
+    if(!comp)return setHint('Select a component first');
+    if(comp.fixed)return setHint(comp.name+' is fixed in place — unfix it to mate it');
+    const A=compBox(comp);
+    if(!A&&kind!=='align')return setHint('That component has no geometry to mate');
+    const t=comp.t;
+    if(kind==='align'){ t.rx=0;t.ry=0;t.rz=0; }
+    else if(kind==='floor'){ t.y-=A.min.y; }
+    else if(kind==='centre'){ const c=A.getCenter(new THREE.Vector3()); t.x-=c.x; t.z-=c.z; }
+    else if(kind==='origin'){ const c=A.getCenter(new THREE.Vector3()); t.x-=c.x;t.y-=c.y;t.z-=c.z; }
+    else {
+      const B=otherComp(comp), Bb=B&&compBox(B);
+      if(!Bb)return setHint('Needs a second component — select the other one first');
+      const ca=A.getCenter(new THREE.Vector3()), cb=Bb.getCenter(new THREE.Vector3());
+      if(kind==='stack'){ t.x+=cb.x-ca.x; t.z+=cb.z-ca.z; t.y+=Bb.max.y-A.min.y; }
+      else if(kind==='concentric'){ t.x+=cb.x-ca.x; t.z+=cb.z-ca.z; }
+      else if(kind==='coincident'){ t.x+=cb.x-ca.x; t.y+=cb.y-ca.y; t.z+=cb.z-ca.z; }
+      else if(kind==='beside'){ t.z+=cb.z-ca.z; t.y+=cb.y-ca.y; t.x+=Bb.max.x-A.min.x; }
+    }
+    applyCompTransform(comp); refreshAsmUI();
+    setHint(comp.name+': '+({align:'rotation zeroed',floor:'sitting on the Top plane',
+      centre:'centred over the origin',origin:'centred on the origin',
+      stack:'stacked on '+((otherComp(comp)||{}).name||'the other part'),
+      concentric:'axes aligned',coincident:'centres coincident',
+      beside:'set alongside'}[kind]||'mated'));
+  }
+  const ACMD={
+    insert  :{ic:'open', label:'Insert part file…',fn:()=>$('file-insert').click()},
+    demo    :{ic:'iso',  label:'Insert pillow-block demo',fn:()=>addComponent(DEMO_PART,'pillow-block')},
+    pos     :{ic:'edit', label:'Position…',   fn:()=>{const c=selComp();if(c)openCompProps(c);}},
+    fix     :{ic:'suppress',label:'Fix / unfix',fn:()=>{const c=selComp();
+                if(c){c.fixed=!c.fixed;refreshAsmTree();setHint(c.name+(c.fixed?' fixed':' free'));}}},
+    remove  :{ic:'del',  label:'Remove',      fn:()=>{const c=selComp();if(c)removeComponent(c);}},
+    m_floor :{ic:'dplane',label:'Sit on the Top plane',fn:()=>mate(selComp(),'floor')},
+    m_centre:{ic:'daxis',label:'Centre over the origin',fn:()=>mate(selComp(),'centre')},
+    m_origin:{ic:'daxis',label:'Centre on the origin',  fn:()=>mate(selComp(),'origin')},
+    m_align :{ic:'normal',label:'Align rotation to world',fn:()=>mate(selComp(),'align')},
+    m_stack :{ic:'lpattern',label:'Stack on the other part',fn:()=>mate(selComp(),'stack')},
+    m_conc  :{ic:'coinc',label:'Align axes with the other part',fn:()=>mate(selComp(),'concentric')},
+    m_coin  :{ic:'coinc',label:'Centres coincident',fn:()=>mate(selComp(),'coincident')},
+    m_side  :{ic:'mirror',label:'Set alongside the other part',fn:()=>mate(selComp(),'beside')}
+  };
+  const DEFAULT_ASM_LAYOUT=[
+    {name:'Assembly',  ids:['insert','demo']},
+    {name:'Component', ids:['pos','fix','remove']},
+    {name:'Mates',     ids:['m_floor','m_centre','m_origin','m_align','m_stack','m_conc','m_coin','m_side']}
+  ];
+  MENUS.asm.cmds=ACMD; MENUS.asm.def=DEFAULT_ASM_LAYOUT; loadMenu(MENUS.asm);
+  function selComp(){ return asm.components.find(c=>c.id===asmSel)||null; }
+  function asmMenuItems(comp){
+    const items=[];
+    if(comp)items.push({sect:comp.name});
+    for(const sec of MENUS.asm.layout){
+      const live=sec.ids.filter(id=>ACMD[id]);
+      if(!live.length)continue;
+      items.push({sect:sec.name});
+      for(const id of live){ const c=ACMD[id];
+        items.push({ic:c.ic,label:c.label,fn:c.fn,
+          disabled:(id!=='insert'&&id!=='demo')&&!comp&&!selComp()}); }
+    }
+    return items;
+  }
+  function openAsmCompMenu2(x,y,comp){ asmSel=comp?comp.id:asmSel; buildCtxMenu(x,y,asmMenuItems(comp),{cols:true}); }
+  function openAsmCompMenu(x,y,comp){ openAsmCompMenu2(x,y,comp); }
+  function openAsmMenu(x,y){ buildCtxMenu(x,y,asmMenuItems(null),{cols:true}); }
   function setDocMode(m2){
     docMode=m2;
     const isA=m2==='asm';
