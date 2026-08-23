@@ -216,8 +216,12 @@ if(!window.THREE){
   .con-badge.sel{background:rgba(52,168,83,.3);color:#fff}
   /* plane names: a quiet margin note where the trace leaves the view */
   .trace-label{position:absolute;z-index:20;transform:translate(-50%,-50%);
+    display:flex;align-items:center;gap:5px;
     font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.2em;
     text-transform:uppercase;opacity:.5;pointer-events:none;user-select:none;white-space:nowrap}
+  /* a steep trace would run straight through horizontal text, so the two words
+     part company and the line passes down the gap between them */
+  .trace-label.split{gap:20px}
 
   /* props panel */
   .props{position:absolute;top:14px;right:14px;width:260px;background:rgba(13,17,23,.92);backdrop-filter:blur(10px);border:1px solid var(--g-blue);border-radius:11px;padding:0;z-index:10;box-shadow:0 15px 40px -10px rgba(0,0,0,.9),0 0 20px rgba(66,133,244,0.15);overflow:hidden}
@@ -896,7 +900,8 @@ const CSG = (function(){
       let el=traceLabelEls[L.name];
       if(!el){
         el=document.createElement('div'); el.className='trace-label';
-        el.textContent=L.name+' plane';
+        el.innerHTML='<span></span><span>plane</span>';
+        el.firstChild.textContent=L.name;
         el.style.color='#'+TRACE_COL[L.name].toString(16).padStart(6,'0');
         viewport.appendChild(el); traceLabelEls[L.name]=el;
       }
@@ -916,10 +921,17 @@ const CSG = (function(){
       if(!(cl(-dx,A.x-PADX)&&cl(dx,rect.width-PADX-A.x)&&cl(-dy,A.y-PADT)&&cl(dy,rect.height-PADB-A.y))
          ||ta>tb){ el.style.display='none'; continue; }
       const ex=A.x+dx*tb, ey=A.y+dy*tb, len=Math.hypot(dx,dy)||1;
-      let px=-dy/len, py=dx/len; if(py>0){px=-px;py=-py;}   // lift to the screen-up side
-      el.style.display='block';
-      el.style.left=Math.round(ex-dx/len*30+px*10)+'px';
-      el.style.top =Math.round(ey-dy/len*30+py*10)+'px';
+      const ux=dx/len, uy=dy/len;
+      /* Steep on screen: horizontal text lies across the line, so straddle it —
+         the words sit either side and the trace runs down the gap. Shallow: the
+         text runs alongside the line anyway, so just lift it clear. */
+      const steep=Math.abs(uy)>Math.abs(ux);
+      el.classList.toggle('split',steep);
+      let lx=ex-ux*30, ly=ey-uy*30;
+      if(!steep){ let px=-uy, py=ux; if(py>0){px=-px;py=-py;} lx+=px*10; ly+=py*10; }
+      el.style.display='flex';
+      el.style.left=Math.round(lx)+'px';
+      el.style.top =Math.round(ly)+'px';
     }
     for(const k in traceLabelEls) if(!seen[k]){ traceLabelEls[k].remove(); delete traceLabelEls[k]; }
   }
