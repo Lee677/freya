@@ -2796,7 +2796,13 @@ const CSG = (function(){
   /* ============================ SKETCH EDITING ============================ */
   let editing=null;        
   let tool='line';
-  let draftPts=[];         
+  /* The live line run. Every click COMMITS — the first click floats, the
+     second creates a real entity, and every further click pushes a point into
+     it. The
+     run ends with Esc (or Enter), or closes by clicking the first point.
+     Nothing is held back to be lost: what you clicked is already sketch. */
+  let chain=null;          // {ei, start:{x,y,g,gv}} — ei null until the first segment lands
+  let draftPts=[];
   let draftStage=0;        
   let draftA=null;
   let snapOn=false, snapSize=1;
@@ -3213,7 +3219,7 @@ const CSG = (function(){
     setTimeout(()=>{ if(mode==='sketch'&&start===null)finish(); },dur+150);
   }
   function startSketch(feature){
-    editing=feature; selId=feature.id; tool='line'; draftPts=[]; draftStage=0; draftA=null;
+    editing=feature; selId=feature.id; tool='line'; chain=null; draftPts=[]; draftStage=0; draftA=null;
     selectedEdges=[]; hoveredEdge=null; closeEdgeMenu();
     setMode('sketch');
     // rebuild BEFORE the camera move: OCCT is synchronous and with a real part
@@ -3233,7 +3239,7 @@ const CSG = (function(){
     if(editing && editing._isNew && editing.entities.length===0){ features=features.filter(x=>x!==editing); rollbackIndex=features.length; }
     editing=null;setMode('model');controls.unlock();clearDraft();rebuild();
   }
-  function clearDraft(){while(draftGroup.children.length){const c=draftGroup.children.pop();if(c.geometry)c.geometry.dispose();}draftPts=[];draftStage=0;draftA=null;}
+  function clearDraft(){while(draftGroup.children.length){const c=draftGroup.children.pop();if(c.geometry)c.geometry.dispose();}chain=null;draftPts=[];draftStage=0;draftA=null;}
 
   function pointerToSketch(e){
     const fr=editing.frame; const r=canvas.getBoundingClientRect();
@@ -3256,11 +3262,17 @@ const CSG = (function(){
     // the handle it becomes made the same vertex look like two different things
     const vmesh=(p,c)=>{const m=new THREE.Mesh(new THREE.SphereGeometry(0.06,12,10),new THREE.MeshBasicMaterial({color:c,depthTest:false}));m.position.copy(worldFromSketch(fr,p.x,p.y));m.renderOrder=6;draftGroup.add(m);};
     if(tool==='line'){
-      if(draftPts.length){
-        const pts=draftPts.map(p=>worldFromSketch(fr,p.x,p.y));
-        const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),lineMat);ln.renderOrder=5;draftGroup.add(ln);
-        draftPts.forEach((p,i)=>vmesh(p,i===0?0xEA4335:0x4285F4));
-        if(cur){const a=worldFromSketch(fr,draftPts[draftPts.length-1].x,draftPts[draftPts.length-1].y);const b=worldFromSketch(fr,cur.x,cur.y);const r=new THREE.Line(new THREE.BufferGeometry().setFromPoints([a,b]),dashMat);r.computeLineDistances();r.renderOrder=5;draftGroup.add(r);}
+      if(chain){
+        // committed segments draw themselves; this is just the rubber band
+        const ent=chain.ei!=null?editing.entities[chain.ei]:null;
+        const last=(ent&&ent.pts.length)?ent.pts[ent.pts.length-1]:chain.start;
+        const first=(ent&&ent.pts.length)?ent.pts[0]:chain.start;
+        vmesh(first,0xEA4335);                 // the close target stays marked
+        if(cur&&last){
+          const a=worldFromSketch(fr,last.x,last.y), b=worldFromSketch(fr,cur.x,cur.y);
+          const rb=new THREE.Line(new THREE.BufferGeometry().setFromPoints([a,b]),dashMat);
+          rb.computeLineDistances();rb.renderOrder=5;draftGroup.add(rb);
+        }
       }
     } else if(tool==='rect' && draftStage===1 && draftA && cur){
       const a=draftA,b=cur;const L=[{x:a.x,y:a.y},{x:b.x,y:a.y},{x:b.x,y:b.y},{x:a.x,y:b.y},{x:a.x,y:a.y}];
@@ -3288,10 +3300,43 @@ const CSG = (function(){
     if(tool==='rect'||tool==='circle'||tool==='polygon'){ if(draftStage===1)pushUndo('draw '+tool); }
     else if(tool==='erase'||tool==='horiz'||tool==='vert'||tool==='paral'||tool==='equal'||tool==='conc'||tool==='coinc'){ pushUndo(tool); }
     if(tool==='line'){
-      if(draftPts.length>=3){const f=draftPts[0];if(Math.hypot(p.x-f.x,p.y-f.y)<=Math.max(snapSize,0.6)){commitDraftLine();return;}}
-      const last=draftPts[draftPts.length-1];
-      if(last&&Math.abs(last.x-p.x)<1e-6&&Math.abs(last.y-p.y)<1e-6)return;
-      draftPts.push({x:p.x,y:p.y,g:p._g||undefined,gv:p._gv||undefined}); redrawDraft(null);
+      if(chain&&chain.ei!=null){
+        const ent=editing.entities[chain.ei];
+        if(ent&&ent.type==='poly'&&!ent.closed){
+          // clicking the first point seals the loop — the ONLY way to close
+          const f=ent.pts[0];
+          if(ent.pts.length>=3&&Math.hypot(p.x-f.x,p.y-f.y)<=Math.max(snapSize,0.6)){
+            pushUndo('close loop'); ent.closed=true;
+            const done=ent; chain=null; redrawDraft(null); rebuild();
+            flashLoop(editing,done); setHint('Loop closed'); return;
+          }
+          const last=ent.pts[ent.pts.length-1];
+          if(Math.abs(last.x-p.x)<1e-6&&Math.abs(last.y-p.y)<1e-6)return;
+          pushUndo('draw line');
+          ent.pts.push({x:p.x,y:p.y});
+          const idx=ent.pts.length-1;
+          if(p._g)storeGround({ent:chain.ei,idx:idx},p._g);
+          else if(p._gv)storeCoincRef(p._gv,{ent:chain.ei,idx:idx});
+          redrawDraft(null); rebuild(); return;
+        }
+        chain=null;                             // entity gone (undo, erase) — start over
+      }
+      if(!chain){                               // first click of a run: floats, costs nothing
+        chain={ei:null,start:{x:p.x,y:p.y,g:p._g||null,gv:p._gv||null}};
+        redrawDraft(null); return;
+      }
+      // second click: the segment lands as a real entity, immediately
+      if(Math.abs(chain.start.x-p.x)<1e-6&&Math.abs(chain.start.y-p.y)<1e-6)return;
+      pushUndo('draw line');
+      const ent={type:'poly',pts:[{x:chain.start.x,y:chain.start.y},{x:p.x,y:p.y}],closed:false};
+      editing.entities.push(ent);
+      const ei=editing.entities.length-1;
+      if(chain.start.g)storeGround({ent:ei,idx:0},chain.start.g);
+      else if(chain.start.gv)storeCoincRef(chain.start.gv,{ent:ei,idx:0});
+      if(p._g)storeGround({ent:ei,idx:1},p._g);
+      else if(p._gv)storeCoincRef(p._gv,{ent:ei,idx:1});
+      chain.ei=ei;
+      redrawDraft(null); rebuild();
     } else if(tool==='rect'){
       if(draftStage===0){draftA=p;draftStage=1;} else {if(Math.abs(p.x-draftA.x)>1e-4&&Math.abs(p.y-draftA.y)>1e-4){const ent={type:'rect',a:{x:draftA.x,y:draftA.y},b:{x:p.x,y:p.y}};editing.entities.push(ent);
         const ei=editing.entities.length-1;
@@ -3479,23 +3524,10 @@ const CSG = (function(){
     /* Two points is a real segment — Enter used to silently discard it, which
        made "draw one line from the origin" impossible. Three or more still
        close, matching the hint; a pair stays an open stick. */
-    if(tool==='line'&&draftPts.length>=2){pushUndo('draw polyline');
-      const ent={type:'poly',pts:draftPts.slice(),closed:draftPts.length>=3};
-      editing.entities.push(ent);
-      // points that were snapped onto ground become constrained to it
-      const ei=editing.entities.length-1;
-      ent.pts.forEach((q,i)=>{
-        if(q.g)storeGround({ent:ei,idx:i},q.g);
-        else if(q.gv){                       // drawn onto an existing point: joined
-          const cons=consOf(editing), key=r=>r.ent+'.'+r.idx, me={ent:ei,idx:i};
-          if(!cons.some(c=>c.kind==='coinc'&&
-              ((key(c.a)===key(q.gv)&&key(c.b)===key(me))||(key(c.a)===key(me)&&key(c.b)===key(q.gv)))))
-            cons.push({kind:'coinc',a:{ent:q.gv.ent,idx:q.gv.idx},b:me});
-        }
-        delete q.g; delete q.gv;
-      });
-      flashLoop(editing,ent);}
-    draftPts=[];redrawDraft(null);rebuild();
+    /* Every segment is already committed the moment it was clicked, so ending
+       a run discards nothing — it just puts the rubber band away. Closing a
+       loop is the first point's job, never this one's. */
+    if(chain){ chain=null; redrawDraft(null); setHint('Line run ended'); }
   }
 
   /* ===================== SKETCH CONSTRAINTS =====================
@@ -4156,6 +4188,14 @@ const CSG = (function(){
     }
     return m;
   }
+  // record a coincidence between two point refs, once
+  function storeCoincRef(other,me){
+    if(!other||!me)return;
+    const cons=consOf(editing), key=r=>r.ent+'.'+r.idx;
+    if(!cons.some(c=>c.kind==='coinc'&&
+        ((key(c.a)===key(other)&&key(c.b)===key(me))||(key(c.a)===key(me)&&key(c.b)===key(other)))))
+      cons.push({kind:'coinc',a:{ent:other.ent,idx:other.idx},b:{ent:me.ent,idx:me.idx}});
+  }
   // the {ent,idx} ref behind a drag handle, for storing constraints on it
   function refOfHandle(h){
     if(!h||h.ei==null)return null;
@@ -4630,7 +4670,7 @@ const CSG = (function(){
       const f=features.find(x=>x.id===wasEditing&&x.type==='sketch');
       if(f){
         editing=f; selId=f.id; tool=keepTool;
-        draftPts=[]; draftStage=0; draftA=null;
+        chain=null; draftPts=[]; draftStage=0; draftA=null;
         setMode('sketch');
         try{ controls.lockToFrame(f.frame||planeFrame(f.plane)); controls.sph.radius=18; controls.update(); }catch(_){}
         rebuild(); dockSel();
@@ -5274,7 +5314,7 @@ const CSG = (function(){
   function updateHint(){
     const h=$('hint');
     if(mode==='sketch'){h.classList.add('show');
-      if(tool==='line')h.innerHTML='<span class="pip"></span> Click to place points · click the white point or <kbd>Enter</kbd> to close a loop';
+      if(tool==='line')h.innerHTML='<span class="pip"></span> Line: every click lands a segment · click the first point to close the loop · <kbd>Esc</kbd> ends the run';
       else if(tool==='select')h.innerHTML='<span class="pip"></span> Pointer: drag to rotate · drag a point (it snaps to the origin, plane traces and other points) · drag a dimension to reposition · click a line then <kbd>Del</kbd>';
       else if(tool==='dim')h.innerHTML='<span class="pip"></span> Dim: click a circle, polygon, rectangle edge, line, point or plane trace — then type a value to drive it';
       else if(tool==='erase')h.innerHTML='<span class="pip"></span> Erase: click a shape to delete it';
@@ -5644,7 +5684,7 @@ const CSG = (function(){
     buildCtxMenu(x,y,items,{cols:true});
   }
   function openSketchMenu(x,y){
-    const setTool=t=>()=>{tool=t;draftStage=0;draftA=null;paralRef=null;equalRef=null;concRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();redrawHandles();dockSel();};
+    const setTool=t=>()=>{tool=t;chain=null;draftStage=0;draftA=null;paralRef=null;equalRef=null;concRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();redrawHandles();dockSel();};
     buildCtxMenu(x,y,[
       {sect:'Sketch tools'},
       {ic:'move',label:'Pointer — select & rotate',fn:setTool('select')},
@@ -6052,7 +6092,7 @@ const CSG = (function(){
     else addFeature(a);
   }));
   $('dock').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
-    tool=b.dataset.tool;draftStage=0;draftA=null;paralRef=null;equalRef=null;concRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();
+    tool=b.dataset.tool;chain=null;draftStage=0;draftA=null;paralRef=null;equalRef=null;concRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();
     $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));
     // a line already picked with the Pointer? apply the constraint to it now,
     // rather than making the user click the icon and then the line
@@ -6212,17 +6252,30 @@ const CSG = (function(){
       return;
     }
     if(mode==='sketch'){
-      if(e.key==='Enter'){e.preventDefault();if(tool==='line')commitDraftLine();else finishSketch();}
+      if(e.key==='Enter'){e.preventDefault();
+        if(tool==='line'&&chain)commitDraftLine(); else finishSketch();}
       else if(e.key==='Escape'){e.preventDefault();
         if(dimPick){dimPick=null;drawSnapMark();setHint('Dimension cancelled');}
-        else if(draftPts.length){draftPts.pop();redrawDraft(null);}else cancelSketch();}
+        else if(chain){commitDraftLine();}
+        else cancelSketch();}
       else if(e.key==='Delete'){e.preventDefault();
         if(selCon&&editing&&editing.cons&&editing.cons.indexOf(selCon)>=0){
           pushUndo('delete constraint');
           editing.cons.splice(editing.cons.indexOf(selCon),1);selCon=null;rebuild();
         } else if(!deleteSketchSel())setHint('Nothing selected — use the Pointer to click a line or a constraint badge first');}
       else if(e.key==='Backspace'){e.preventDefault();
-        if(draftPts.length){draftPts.pop();redrawDraft(null);} else deleteSketchSel();}
+        if(tool==='line'&&chain&&chain.ei!=null){
+          // step back one committed point of the live run
+          const ent=editing.entities[chain.ei];
+          if(ent&&ent.pts.length>2){ pushUndo('remove point'); ent.pts.pop(); redrawDraft(null); rebuild(); }
+          else if(ent){ pushUndo('remove line');
+            const st={x:ent.pts[0].x,y:ent.pts[0].y};
+            editing.entities.splice(chain.ei,1); dropDimsFor(editing,chain.ei);
+            chain={ei:null,start:{x:st.x,y:st.y,g:null,gv:null}};
+            redrawDraft(null); rebuild(); }
+        }
+        else if(tool==='line'&&chain){ chain=null; redrawDraft(null); }
+        else deleteSketchSel();}
       else if(e.key==='1'){tool='line';dockSel();}else if(e.key==='2'){tool='rect';dockSel();}
       else if(e.key==='3'){tool='circle';dockSel();}else if(e.key==='4'){tool='polygon';dockSel();}
       else if(e.key.toLowerCase()==='d'){e.preventDefault();tool='dim';dockSel();setHint('Dimension: click a line, circle or rectangle edge, then type a value');}
@@ -6236,6 +6289,9 @@ const CSG = (function(){
     }
   });
   function dockSel(){$('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.tool===tool));
+    // every tool change lands here (dock, menus, keyboard) — a live line run
+    // must not survive into another tool and quietly extend an old entity
+    if(tool!=='line'&&chain){chain=null;}
     syncRotateGate(); if(tool!=='select')clearSketchSel(); redrawDraft(null);updateHint();
     if(mode==='sketch')ensureSketchProps();   // the panel follows the tool in hand
   }
