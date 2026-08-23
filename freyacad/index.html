@@ -560,6 +560,7 @@ if(!window.THREE){
       <button data-tool="rect">Rect</button>
       <button data-tool="circle">Circle</button>
       <button data-tool="polygon">Polygon</button>
+      <button data-tool="spline" title="Spline: click through the points it should pass through; click the first point to close">&#8767; Spline</button>
       <button data-tool="cline" title="Construction line: reference geometry, never part of the solid">&#8901;&#8901; Constr</button>
       <button data-tool="mirror" title="Mirror: pick a line, then click shapes to mirror">&#8646; Mirror</button>
       <button data-tool="dynmirror" title="Dynamic mirror: pick a line, then everything you draw appears both sides">&#8644; Dyn</button>
@@ -1442,6 +1443,9 @@ const CSG = (function(){
      must not take the whole entity off screen with it. */
   function entityDisplayPath(sk,e){
     try{
+      // a spline is drawn as its curve; corner treatment is for corners, and a
+      // spline hasn't got any
+      if(isSpline(e))return {pts:splinePts(e),closed:!!e.closed};
       if(e.type==='poly'){
         const pts=applyCorner(sk,e.pts,!!e.closed);
         if(pts&&pts.length>=2)return {pts:pts,closed:!!e.closed};
@@ -1574,11 +1578,85 @@ const CSG = (function(){
       } else if(e.type==='rect'){
         const L=[{x:e.a.x,y:e.a.y},{x:e.b.x,y:e.a.y},{x:e.b.x,y:e.b.y},{x:e.a.x,y:e.b.y}];
         loops.push(applyCorner(sk,L,true));
+      } else if(isSpline(e) && e.closed && e.pts.length>=3){
+        loops.push(splinePts(e));            // the curve itself is the profile
       } else if(e.type==='poly' && e.closed && e.pts.length>=3){
         loops.push(applyCorner(sk,e.pts,true));
       }
     }
     return loops;
+  }
+  /* ---- splines ---------------------------------------------------------------
+     A spline is a poly with `spline` set: the same points, dimensions,
+     constraints, snapping, drag rules and DOF accounting as any other run of
+     geometry, drawn as a curve through those points instead of straight lines.
+     Everything downstream — loops, extrude, revolve, mirror, construction —
+     takes the tessellated path, so the kernel never has to know.
+
+     The curve is a centripetal Catmull-Rom converted span by span to a cubic
+     Bezier. Centripetal (α=0.5) and not uniform, because uniform overshoots
+     and can loop back on itself where the points are unevenly spaced, which
+     reads as the spline kinking for no reason. A point may carry its own
+     tangent in `tan[i]` — a spline handle — and that replaces the computed one
+     on both sides, so the curve stays smooth through the point it belongs to
+     however hard the handle is pulled. */
+  const SPLINE_ALPHA=0.5, SPLINE_STEPS=16;
+  function isSpline(e){ return !!(e&&e.type==='poly'&&e.spline&&e.pts&&e.pts.length>=2); }
+  function splineSpans(e){
+    const P=e.pts, n=P.length, closed=!!e.closed;
+    if(n<2)return [];
+    /* Open ends get a reflected phantom point, which is the usual natural end
+       condition: the curve leaves the first point heading at the second. */
+    const at=i=>{
+      if(closed)return P[((i%n)+n)%n];
+      if(i<0)   return {x:2*P[0].x-P[1].x, y:2*P[0].y-P[1].y};
+      if(i>n-1) return {x:2*P[n-1].x-P[n-2].x, y:2*P[n-1].y-P[n-2].y};
+      return P[i];
+    };
+    const tanAt=i=>{ if(!e.tan)return null;
+      const k=closed?((i%n)+n)%n:i; return (k>=0&&k<n&&e.tan[k])?e.tan[k]:null; };
+    const dist=(a,b)=>Math.max(1e-6,Math.pow(Math.hypot(b.x-a.x,b.y-a.y),SPLINE_ALPHA));
+    const spans=[], last=closed?n:n-1;
+    for(let i=0;i<last;i++){
+      const p0=at(i-1),p1=at(i),p2=at(i+1),p3=at(i+2);
+      const d1=dist(p0,p1),d2=dist(p1,p2),d3=dist(p2,p3);
+      let b1={x:(d1*d1*p2.x-d2*d2*p0.x+(2*d1*d1+3*d1*d2+d2*d2)*p1.x)/(3*d1*(d1+d2)),
+              y:(d1*d1*p2.y-d2*d2*p0.y+(2*d1*d1+3*d1*d2+d2*d2)*p1.y)/(3*d1*(d1+d2))};
+      let b2={x:(d3*d3*p1.x-d2*d2*p3.x+(2*d3*d3+3*d3*d2+d2*d2)*p2.x)/(3*d3*(d3+d2)),
+              y:(d3*d3*p1.y-d2*d2*p3.y+(2*d3*d3+3*d3*d2+d2*d2)*p2.y)/(3*d3*(d3+d2))};
+      const ta=tanAt(i), tb=tanAt(i+1);
+      if(ta)b1={x:p1.x+ta.x/3,y:p1.y+ta.y/3};       // a handle overrides the fit
+      if(tb)b2={x:p2.x-tb.x/3,y:p2.y-tb.y/3};
+      spans.push([p1,b1,b2,p2]);
+    }
+    return spans;
+  }
+  function bezAt(s,t){
+    const u=1-t,a=u*u*u,b=3*u*u*t,c=3*u*t*t,d=t*t*t;
+    return {x:a*s[0].x+b*s[1].x+c*s[2].x+d*s[3].x,
+            y:a*s[0].y+b*s[1].y+c*s[2].y+d*s[3].y};
+  }
+  /* The drawn path, plus which span each piece came from so a click on the
+     curve can be traced back to the two points that own it. */
+  function splinePath(e){
+    const spans=splineSpans(e);
+    if(!spans.length)return {pts:(e.pts||[]).slice(),span:[]};
+    const pts=[],span=[];
+    spans.forEach((s,i)=>{ for(let k=0;k<SPLINE_STEPS;k++){ pts.push(bezAt(s,k/SPLINE_STEPS)); span.push(i); } });
+    if(!e.closed){ pts.push({x:e.pts[e.pts.length-1].x,y:e.pts[e.pts.length-1].y}); span.push(spans.length-1); }
+    return {pts,span};
+  }
+  function splinePts(e){ return splinePath(e).pts; }
+  /* The tangent the curve actually has at a point — the stored handle if there
+     is one, otherwise whatever the fit chose. Both read the same way, which is
+     what lets a handle be grabbed before it exists. */
+  function splineTangent(e,i){
+    if(e.tan&&e.tan[i])return {x:e.tan[i].x,y:e.tan[i].y};
+    const spans=splineSpans(e); if(!spans.length)return {x:1,y:0};
+    if(e.closed||i<spans.length){ const s=spans[i%spans.length];
+      return {x:3*(s[1].x-s[0].x),y:3*(s[1].y-s[0].y)}; }
+    const s=spans[spans.length-1];                 // the last point of an open run
+    return {x:3*(s[3].x-s[2].x),y:3*(s[3].y-s[2].y)};
   }
   function applyCorner(sk,L,closed){
     if(sk.fillet>0)return filletPoly(L,sk.fillet,closed);
@@ -1825,16 +1903,18 @@ const CSG = (function(){
         for(let i = 0; i < segs; i++){ const a = i/segs*2*Math.PI; poly.push({x: e.c.x + e.r*Math.cos(a), y: e.c.y + e.r*Math.sin(a)}); }
         items.push({ poly, area: Math.PI*e.r*e.r, mk: (hole)=>{ const w = OCK.circleWire(e.c, e.r, frame, zoff); if(hole) w.Reverse(); return w; } });
       } else {
-        let L = null;
+        let L = null, curved = false;
         if(e.type === 'polygon'){
           L = []; for(let i = 0; i < e.sides; i++){ const a = e.rot + i/e.sides*Math.PI*2; L.push({x: e.c.x + e.r*Math.cos(a), y: e.c.y + e.r*Math.sin(a)}); }
         } else if(e.type === 'rect'){
           L = [{x:e.a.x,y:e.a.y},{x:e.b.x,y:e.a.y},{x:e.b.x,y:e.b.y},{x:e.a.x,y:e.b.y}];
+        } else if(isSpline(e) && e.closed && e.pts.length >= 3){
+          L = splinePts(e); curved = true;    // the tessellated curve IS the profile
         } else if(e.type === 'poly' && e.closed && e.pts.length >= 3){
           L = e.pts;
         }
         if(!L) continue;
-        L = applyCorner(sk, L, true);
+        if(!curved) L = applyCorner(sk, L, true);
         items.push({ poly: L, area: Math.abs(polyArea(L)),
           mk: (hole)=> OCK.wireFromPts(hole ? cw(L) : ccw(L), frame, zoff) });
       }
@@ -2995,6 +3075,47 @@ const CSG = (function(){
   function nearestHandle(p,maxd){
     let best=null,bd=maxd; for(const h of sketchHandles()){ const d=Math.hypot(h.pt.x-p.x,h.pt.y-p.y); if(d<bd){bd=d;best=h;} } return best;
   }
+  /* The tangency handles of the selected spline: a bar through each point with
+     a grab at either end, as SolidWorks draws them. They are deliberately NOT
+     part of sketchHandles — those are the sketch's real points, and letting a
+     handle into that list would have it snapped to, dimensioned and counted
+     against the degrees of freedom, none of which it is. */
+  function splineHandles(){
+    if(!editing||tool!=='select'||!sketchSel||sketchSel.entIdx==null)return [];
+    const ei=sketchSel.entIdx, e=editing.entities[ei];
+    if(!isSpline(e))return [];
+    const out=[];
+    e.pts.forEach((pt,i)=>{
+      const t=splineTangent(e,i);
+      for(const side of [1,-1])
+        out.push({kind:'st',ei,idx:i,side,ent:e,
+          pt:{x:pt.x+side*t.x/3, y:pt.y+side*t.y/3}});
+    });
+    return out;
+  }
+  /* What the right-click menu needs to know: which spline the cursor is on,
+     which span, and whether it is close enough to a point for the point-level
+     commands to make sense. */
+  function splineUnder(p){
+    if(!editing)return null;
+    const tol=Math.max(0.6,controls.sph.radius*0.04);
+    const hit=dimHit(p);
+    let ei=(hit&&hit.entIdx!=null&&isSpline(editing.entities[hit.entIdx]))?hit.entIdx:null;
+    if(ei==null&&sketchSel&&isSpline(editing.entities[sketchSel.entIdx]))ei=sketchSel.entIdx;
+    if(ei==null)return null;
+    const e=editing.entities[ei];
+    let near=null,nd=tol;
+    e.pts.forEach((q,i)=>{ const d=Math.hypot(q.x-p.x,q.y-p.y); if(d<nd){nd=d;near=i;} });
+    let seg=(hit&&hit.entIdx===ei&&hit.seg!=null)?hit.seg:(near!=null?Math.min(near,e.pts.length-2):0);
+    if(seg<0)seg=0;
+    return {ei,seg,near,at:{x:p.x,y:p.y}};
+  }
+  function nearestSplineHandle(p,maxd){
+    let best=null,bd=maxd;
+    for(const h of splineHandles()){ const d=Math.hypot(h.pt.x-p.x,h.pt.y-p.y);
+      if(d<bd){bd=d;best=h;} }
+    return best;
+  }
   function polyCorners(e){
     const cor=[]; for(let i=0;i<e.sides;i++){ const a=e.rot+i/e.sides*Math.PI*2;
       cor.push({x:e.c.x+e.r*Math.cos(a),y:e.c.y+e.r*Math.sin(a)}); }
@@ -3036,6 +3157,7 @@ const CSG = (function(){
   let dimPick=null;                          // first half of a two-click dimension
   let sketchCursor=null;                     // last cursor position in sketch UV
   let sketchSel=null;                        // {entIdx,seg?} picked with the Pointer
+  let splineRig=true;                        // show a selected spline's control polygon
   let pendingDim=null;                       // dimension awaiting its value, drawn greyed
 
   /* The Pointer is the only tool that manipulates rather than draws, so it —
@@ -3182,6 +3304,36 @@ const CSG = (function(){
     const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(w),
       new THREE.LineBasicMaterial({color:0x35d4e6,depthTest:false,transparent:true,opacity:1}));
     ln.renderOrder=10; selGroupSk.add(ln);
+    drawSplineRig(e);
+  }
+  /* A selected spline shows its workings: the control polygon it was fitted
+     through, and a tangency handle at every point. Both only while it is
+     selected — permanently on, they would bury the sketch. */
+  function drawSplineRig(e){
+    if(!isSpline(e)||!editing)return;
+    const fr=editing.frame, W=(q)=>worldFromSketch(fr,q.x,q.y);
+    if(splineRig){
+      const poly=e.pts.map(W); if(e.closed&&poly.length)poly.push(poly[0]);
+      const cp=new THREE.Line(new THREE.BufferGeometry().setFromPoints(poly),
+        new THREE.LineDashedMaterial({color:0x7f8ea3,depthTest:false,transparent:true,
+          opacity:0.7,dashSize:0.35,gapSize:0.25}));
+      cp.computeLineDistances(); cp.renderOrder=9; selGroupSk.add(cp);
+    }
+    const R=Math.max(0.5,controls.sph.radius/22);
+    e.pts.forEach((pt,i)=>{
+      const t=splineTangent(e,i);
+      const a={x:pt.x-t.x/3,y:pt.y-t.y/3}, b={x:pt.x+t.x/3,y:pt.y+t.y/3};
+      const set=!!(e.tan&&e.tan[i]);
+      const col=set?0xFBBC05:0x6f7f93;         // amber once you have set it yourself
+      const bar=new THREE.Line(new THREE.BufferGeometry().setFromPoints([W(a),W(pt),W(b)]),
+        new THREE.LineBasicMaterial({color:col,depthTest:false,transparent:true,opacity:set?1:0.6}));
+      bar.renderOrder=10; selGroupSk.add(bar);
+      for(const q of [a,b]){
+        const d=new THREE.Mesh(new THREE.SphereGeometry(0.055*R,10,8),
+          new THREE.MeshBasicMaterial({color:col,depthTest:false,transparent:true,opacity:set?1:0.75}));
+        d.position.copy(W(q)); d.renderOrder=11; selGroupSk.add(d);
+      }
+    });
   }
   /* Constraints work either way round: pick the tool then the line, or select a
      line with the Pointer and press the tool. Returns true if it acted. */
@@ -3250,7 +3402,8 @@ const CSG = (function(){
     if(!sketchSel||!editing)return false;
     const e=editing.entities[sketchSel.entIdx]; if(!e){sketchSel=null;return false;}
     pushUndo('delete sketch geometry');
-    if(e.type==='poly'&&sketchSel.seg!=null) removePolySegment(editing,sketchSel.entIdx,sketchSel.seg);
+    // a spline is one curve: deleting a span of it means deleting the spline
+    if(e.type==='poly'&&!e.spline&&sketchSel.seg!=null) removePolySegment(editing,sketchSel.entIdx,sketchSel.seg);
     else { editing.entities.splice(sketchSel.entIdx,1); dropDimsFor(editing,sketchSel.entIdx); }
     sketchSel=null; drawSketchSel(); rebuild();
     return true;
@@ -3269,7 +3422,7 @@ const CSG = (function(){
     return best;
   }
   const snapMarkGroup=new THREE.Group(); scene.add(snapMarkGroup);
-  const DRAW_TOOLS=['line','cline','rect','circle','polygon'];
+  const DRAW_TOOLS=['line','cline','rect','circle','polygon','spline'];
   function drawSnapMark(){
     while(snapMarkGroup.children.length){const c=snapMarkGroup.children.pop();if(c.geometry)c.geometry.dispose();}
     if(mode!=='sketch'||!editing||!editing.frame)return;
@@ -3504,6 +3657,7 @@ const CSG = (function(){
     rect:'<svg viewBox="0 0 16 16"><rect x="3" y="4.5" width="10" height="7.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
     circle:'<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4.8" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
     polygon:'<svg viewBox="0 0 16 16"><path d="M8 2.8 12.5 5.4 12.5 10.6 8 13.2 3.5 10.6 3.5 5.4Z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+    spline:'<svg viewBox="0 0 16 16"><path d="M2.5 11.5c2.5 0 2.5-7 5.5-7s3 7 5.5 7" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
     dim:'<span>&#10231;</span>', horiz:'<span>&#8866;</span>', vert:'<span>&#8869;</span>',
     paral:'<span>&#8741;</span>', equal:'<span>=</span>',
     coinc:'<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2" fill="currentColor"/><path d="M8 2v3.4M8 10.6V14M2 8h3.4M10.6 8H14" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
@@ -3632,7 +3786,7 @@ const CSG = (function(){
     // 0.06 to match the Pointer's handles — a draft point that reads bigger than
     // the handle it becomes made the same vertex look like two different things
     const vmesh=(p,c)=>{const m=new THREE.Mesh(new THREE.SphereGeometry(0.06,12,10),new THREE.MeshBasicMaterial({color:c,depthTest:false}));m.position.copy(worldFromSketch(fr,p.x,p.y));m.renderOrder=6;draftGroup.add(m);};
-    if(tool==='line'||tool==='cline'){
+    if(tool==='line'||tool==='cline'||tool==='spline'){
       if(chain){
         // committed segments draw themselves; this is just the rubber band
         const ent=chain.ei!=null?editing.entities[chain.ei]:null;
@@ -3640,9 +3794,20 @@ const CSG = (function(){
         const first=(ent&&ent.pts.length)?ent.pts[0]:chain.start;
         vmesh(first,0xEA4335);                 // the close target stays marked
         if(cur&&last){
-          const a=worldFromSketch(fr,last.x,last.y), b=worldFromSketch(fr,cur.x,cur.y);
-          const rb=new THREE.Line(new THREE.BufferGeometry().setFromPoints([a,b]),dashMat);
-          rb.computeLineDistances();rb.renderOrder=5;draftGroup.add(rb);
+          /* A spline's rubber band has to be the curve the click would make,
+             not a straight line to the cursor — with a straight band the shape
+             jumps the moment you commit, and you end up placing points twice. */
+          if(tool==='spline'&&ent&&ent.pts.length>=1){
+            const probe={type:'poly',spline:true,closed:false,tan:ent.tan,
+              pts:ent.pts.concat([{x:cur.x,y:cur.y}])};
+            const w=splinePts(probe).map(q=>worldFromSketch(fr,q.x,q.y));
+            const rb=new THREE.Line(new THREE.BufferGeometry().setFromPoints(w),dashMat);
+            rb.computeLineDistances();rb.renderOrder=5;draftGroup.add(rb);
+          } else {
+            const a=worldFromSketch(fr,last.x,last.y), b=worldFromSketch(fr,cur.x,cur.y);
+            const rb=new THREE.Line(new THREE.BufferGeometry().setFromPoints([a,b]),dashMat);
+            rb.computeLineDistances();rb.renderOrder=5;draftGroup.add(rb);
+          }
         }
       }
     } else if(tool==='rect' && draftStage===1 && draftA && cur){
@@ -3670,7 +3835,7 @@ const CSG = (function(){
     // Backspace/Escape, so only the commit is worth an undo step
     if(tool==='rect'||tool==='circle'||tool==='polygon'){ if(draftStage===1)pushUndo('draw '+tool); }
     else if(tool==='erase'||tool==='horiz'||tool==='vert'||tool==='paral'||tool==='equal'||tool==='coinc'){ pushUndo(tool); }
-    if(tool==='line'||tool==='cline'){
+    if(tool==='line'||tool==='cline'||tool==='spline'){
       if(chain&&chain.ei!=null){
         const ent=editing.entities[chain.ei];
         if(ent&&ent.type==='poly'&&!ent.closed){
@@ -3684,7 +3849,7 @@ const CSG = (function(){
           }
           const last=ent.pts[ent.pts.length-1];
           if(Math.abs(last.x-p.x)<1e-6&&Math.abs(last.y-p.y)<1e-6)return;
-          pushUndo('draw line');
+          pushUndo(ent.spline?'draw spline':'draw line');
           ent.pts.push({x:p.x,y:p.y});
           const idx=ent.pts.length-1;
           if(p._g)storeGround({ent:chain.ei,idx:idx},p._g);
@@ -3699,9 +3864,10 @@ const CSG = (function(){
       }
       // second click: the segment lands as a real entity, immediately
       if(Math.abs(chain.start.x-p.x)<1e-6&&Math.abs(chain.start.y-p.y)<1e-6)return;
-      pushUndo('draw line');
+      pushUndo(tool==='spline'?'draw spline':'draw line');
       const ent={type:'poly',pts:[{x:chain.start.x,y:chain.start.y},{x:p.x,y:p.y}],closed:false};
       if(tool==='cline')ent.construction=true;
+      if(tool==='spline'){ ent.spline=true; ent.tan=[]; }
       editing.entities.push(ent);
       const ei=editing.entities.length-1;
       if(chain.start.g)storeGround({ent:ei,idx:0},chain.start.g);
@@ -3918,6 +4084,59 @@ const CSG = (function(){
     dropDimsFor(sk,ei, gone?-1 : split?1 : 0);
     if(gone) sk.entities.splice(ei,1);
   }
+  /* Inserting or removing a spline point renumbers every point after it, so
+     every dimension and constraint that names one has to move with it — the
+     same bookkeeping dropDimsFor does across entities, done within one. */
+  function shiftPointRefs(sk,ei,from,delta){
+    const bump=r=>{ if(r&&r.ent===ei&&typeof r.idx==='number'&&r.idx>=from)r.idx+=delta; };
+    for(const d of sk.dims||[]){
+      bump(d.a); bump(d.b); bump(d.ref);
+      if(d.entIdx===ei&&d.kind==='seg'&&d.seg>=from)d.seg+=delta;
+    }
+    for(const c of sk.cons||[]){ bump(c.a); bump(c.b);
+      if(c.entIdx===ei&&c.seg>=from)c.seg+=delta; }
+  }
+  /* The handle array has to be exactly as long as the point list before any
+     splice: a sparse array splices at its END when the index is past it, which
+     silently hands one point's handle to another. */
+  function tanFit(e){
+    if(!e.tan)e.tan=[];
+    while(e.tan.length<e.pts.length)e.tan.push(null);
+    e.tan.length=e.pts.length;
+    return e.tan;
+  }
+  function splineInsertPoint(ei,seg,p){
+    const e=editing.entities[ei]; if(!isSpline(e))return false;
+    const k=seg+1;
+    pushUndo('insert spline point');
+    tanFit(e);
+    e.pts.splice(k,0,{x:p.x,y:p.y});
+    e.tan.splice(k,0,null);                 // the new point fits itself
+    shiftPointRefs(editing,ei,k,1);
+    rebuild(); return true;
+  }
+  function splineDeletePoint(ei,idx){
+    const e=editing.entities[ei]; if(!isSpline(e))return false;
+    const min=e.closed?3:2;
+    if(e.pts.length<=min)return setHint('A spline needs at least '+min+' points — delete the whole spline instead'),false;
+    pushUndo('delete spline point');
+    tanFit(e);
+    e.pts.splice(idx,1);
+    e.tan.splice(idx,1);
+    /* Anything pinned to the point that just went has nothing left to hold, so
+       it goes too; everything after it slides down one. */
+    const dead=r=>r&&r.ent===ei&&r.idx===idx;
+    editing.dims=(editing.dims||[]).filter(d=>!(dead(d.a)||dead(d.b)||dead(d.ref)));
+    editing.cons=(editing.cons||[]).filter(c=>!(dead(c.a)||dead(c.b)));
+    shiftPointRefs(editing,ei,idx+1,-1);
+    rebuild(); return true;
+  }
+  function splineResetHandles(ei,idx){
+    const e=editing.entities[ei]; if(!isSpline(e)||!e.tan)return false;
+    pushUndo('reset spline handles');
+    if(idx==null)e.tan=[]; else e.tan[idx]=null;
+    rebuild(); return true;
+  }
   function eraseAt(p){
     if(!editing)return false;
     const di=dimNear(p);
@@ -3925,7 +4144,7 @@ const CSG = (function(){
     const d=dimHit(p); if(!d)return false;
     const e=editing.entities[d.entIdx]; if(!e)return false;
     pushUndo('erase');
-    if(e.type==='poly'&&d.kind==='seg') removePolySegment(editing,d.entIdx,d.seg);
+    if(e.type==='poly'&&!e.spline&&d.kind==='seg') removePolySegment(editing,d.entIdx,d.seg);
     else { editing.entities.splice(d.entIdx,1); dropDimsFor(editing,d.entIdx); }
     return true;
   }
@@ -3939,7 +4158,7 @@ const CSG = (function(){
        loop is the first point's job, never this one's. */
     if(chain){ const dei=chain.ei; chain=null;
       if(dei!=null){ dynMirrorAdd(dei); rebuild(); }
-      redrawDraft(null); setHint('Line run ended'); }
+      redrawDraft(null); setHint(tool==='spline'?'Spline ended':'Line run ended'); }
   }
 
   /* ===================== SKETCH CONSTRAINTS =====================
@@ -4388,6 +4607,13 @@ const CSG = (function(){
         const vd=Math.min(seg2Dist(p,{x:x0,y:y0},{x:x0,y:y1}), seg2Dist(p,{x:x1,y:y0},{x:x1,y:y1})); // vert edges -> height
         if(hd<=vd){ if(hd<bd){bd=hd; best={entIdx:ei,kind:'width'};} }
         else      { if(vd<bd){bd=vd; best={entIdx:ei,kind:'height'};} }
+      } else if(isSpline(e)){
+        /* Measure to the curve, not to the chords — on a bowed span the chord
+           can be a long way from where the line visibly is. Each tessellated
+           piece remembers its span, so the pick still names two real points. */
+        const P=splinePath(e), n=P.pts.length, lim=e.closed?n:n-1;
+        for(let i=0;i<lim;i++){ const d=seg2Dist(p,P.pts[i],P.pts[(i+1)%n]);
+          if(d<bd){bd=d; best={entIdx:ei,kind:'seg',seg:P.span[i]};} }
       } else if(e.type==='poly'){
         const n=e.pts.length, lim=e.closed?n:n-1;
         for(let i=0;i<lim;i++){ const a=e.pts[i], b=e.pts[(i+1)%n]; const d=seg2Dist(p,a,b);
@@ -5265,6 +5491,7 @@ const CSG = (function(){
     rect:_sw(`<rect x="4" y="6" width="16" height="12" stroke="${_B}"/><circle cx="4" cy="6" r="1.7" fill="${_Y}"/><circle cx="20" cy="18" r="1.7" fill="${_Y}"/>`),
     circle:_sw(`<circle cx="12" cy="12" r="8" stroke="${_B}"/><circle cx="12" cy="12" r="1.6" fill="${_Y}"/>`),
     polygon:_sw(`<path d="M12 4.5l6.5 3.75v7.5L12 19.5l-6.5-3.75v-7.5z" stroke="${_B}"/><circle cx="12" cy="12" r="1.6" fill="${_Y}"/>`),
+    spline:_sw(`<path d="M3.5 17.5c3.5 0 3.5-11 8.5-11s5 11 8.5 11" stroke="${_B}"/><circle cx="3.5" cy="17.5" r="1.6" fill="${_Y}"/><circle cx="12" cy="6.5" r="1.6" fill="${_Y}"/><circle cx="20.5" cy="17.5" r="1.6" fill="${_Y}"/>`),
     dim:_sw(`<path d="M4 5v14M20 5v14" stroke="${_B}"/><path d="M4 12h16M7 9.5 4 12l3 2.5M17 9.5 20 12l-3 2.5" stroke="${_Y}"/>`),
     horiz:_sw(`<path d="M4 16h16" stroke="${_B}" stroke-width="2.2"/><text x="12" y="10" text-anchor="middle" font-size="10" font-weight="700" font-family="monospace" fill="${_G}" stroke="none">H</text>`),
     vert:_sw(`<path d="M12 4v16" stroke="${_B}" stroke-width="2.2"/><text x="6" y="15" text-anchor="middle" font-size="10" font-weight="700" font-family="monospace" fill="${_G}" stroke="none">V</text>`),
@@ -5917,6 +6144,12 @@ const CSG = (function(){
       if(mode==='sketch'&&editing&&tool==='select'&&e.button===0){
         const p=pointerToSketch(e);
         if(p){ const tol=Math.max(0.6,controls.sph.radius*0.04);
+          /* A spline handle beats everything: it only exists while its spline
+             is selected, it sits away from the curve, and it is the one thing
+             there you cannot get at any other way. */
+          const sh=nearestSplineHandle(p,tol);
+          if(sh){ pushUndo('spline handle'); dragVtx=sh; dragSnapPt=null;
+            controls._s=0; redrawHandles(); return; }
           // a point beats the outline it sits on — the corner handle spins a
           // polygon, the edge between corners only resizes it
           const h=nearestHandle(p,tol)||perimeterHit(p,tol);
@@ -5991,6 +6224,17 @@ const CSG = (function(){
         liveSketchRedraw();
         return;
       }
+      if(dragVtx.kind==='st'&&dragVtx.ent){     // a spline's tangency handle
+        const e2=dragVtx.ent, base=e2.pts[dragVtx.idx];
+        if(base){
+          const vx=3*(p.x-base.x)*dragVtx.side, vy=3*(p.y-base.y)*dragVtx.side;
+          if(Math.hypot(vx,vy)>1e-4){
+            tanFit(e2)[dragVtx.idx]={x:vx,y:vy}; // both ends stay collinear: one tangent
+          }
+          dragVtx.pt.x=p.x; dragVtx.pt.y=p.y;
+        }
+        dragSnapPt=null; liveSketchRedraw(); drawSketchSel(); return;
+      }
       if(dragVtx.kind==='rim'&&dragVtx.ent){    // anywhere on a circle/polygon outline
         const e2=dragVtx.ent, rr=Math.hypot(p.x-e2.c.x,p.y-e2.c.y)*dragVtx.ratio;
         if(rr>1e-3)e2.r=rr;
@@ -6054,6 +6298,12 @@ const CSG = (function(){
     }
     // a real box consumes the gesture; a click falls through to selection
     if(boxDrag){ if(applyBoxSel())return; }
+    // a tangency handle moves no point, so none of the dimension bookkeeping
+    // below applies to it
+    if(dragVtx&&dragVtx.kind==='st'){
+      dragVtx=null; dragSnapPt=null; rebuild(); drawSketchSel();
+      setHint('Spline handle set — right-click the spline to reset it'); return;
+    }
     /* Grabbing the outline arms a resize, but a tap that never moved is a
        selection — otherwise clicking a circle to delete it or make it
        construction would silently do nothing. */
@@ -6159,7 +6409,7 @@ const CSG = (function(){
       return;
     }
     if(mode==='sketch') {
-        openSketchMenu(e.clientX, e.clientY);
+        openSketchMenu(e.clientX, e.clientY, pointerToSketch(e));
         return;
     }
     const e2=pickEdge(e);
@@ -6359,6 +6609,7 @@ const CSG = (function(){
     rect     :{ic:'rect',   label:'Rectangle',  tool:'rect'},
     circle   :{ic:'circle', label:'Circle',     tool:'circle'},
     polygon  :{ic:'polygon',label:'Polygon',    tool:'polygon'},
+    spline   :{ic:'spline', label:'Spline',     tool:'spline'},
     mirror   :{ic:'mirror', label:'Mirror',     tool:'mirror'},
     dynmirror:{ic:'dynmirror',label:'Dynamic mirror',tool:'dynmirror'},
     cline    :{ic:'cline',  label:'Construction line', tool:'cline'},
@@ -6379,7 +6630,7 @@ const CSG = (function(){
   };
   const DEFAULT_LAYOUT=[
     {name:'Sketch',          ids:['finish','finishext','cancel']},
-    {name:'Sketch entities', ids:['select','line','cline','rect','circle','polygon','mirror','dynmirror','dim','erase','corners']},
+    {name:'Sketch entities', ids:['select','line','cline','rect','circle','polygon','spline','mirror','dynmirror','dim','erase','corners']},
     {name:'Relations',       ids:['horiz','vert','paral','equal','coinc']},
     {name:'View',            ids:['normal','iso','fit','proj']}
   ];
@@ -6488,8 +6739,29 @@ const CSG = (function(){
     document.addEventListener('keydown',function esc(e){
       if(e.key==='Escape'){ close(); document.removeEventListener('keydown',esc); } });
   }
-  function openSketchMenu(x,y){
+  function openSketchMenu(x,y,p){
     const items=[];
+    /* Spline editing is contextual by nature — insert a point *here*, reset
+       *this* handle — so it heads the menu when the cursor is on a spline,
+       above the fixed sections rather than buried in them. */
+    const sp=p?splineUnder(p):null;
+    if(sp){
+      const e=editing.entities[sp.ei];
+      items.push({sect:'Spline'});
+      items.push({ic:'spline',label:'Insert a point here',
+        fn:()=>{ splineInsertPoint(sp.ei,sp.seg,sp.at); sketchSel={entIdx:sp.ei,seg:null}; drawSketchSel(); }});
+      if(sp.near!=null)items.push({ic:'del',label:'Delete this point',
+        fn:()=>{ splineDeletePoint(sp.ei,sp.near); drawSketchSel(); }});
+      if(sp.near!=null&&e.tan&&e.tan[sp.near])items.push({ic:'edit',label:'Reset this handle',
+        fn:()=>{ splineResetHandles(sp.ei,sp.near); drawSketchSel(); }});
+      if(e.tan&&e.tan.some(Boolean))items.push({ic:'edit',label:'Reset every handle',
+        fn:()=>{ splineResetHandles(sp.ei,null); drawSketchSel(); }});
+      items.push({ic:'cline',label:e.closed?'Open the spline':'Close the spline',
+        fn:()=>{ if(!e.closed&&e.pts.length<3)return setHint('A closed spline needs three points');
+          pushUndo(e.closed?'open spline':'close spline'); e.closed=!e.closed; rebuild(); }});
+      items.push({ic:'dplane',label:splineRig?'Hide control polygons':'Show control polygons',
+        fn:()=>{ splineRig=!splineRig; drawSketchSel(); }});
+    }
     for(const sec of MENUS.sketch.layout){
       const live=sec.ids.filter(id=>CMD[id]);
       if(!live.length)continue;
@@ -7574,7 +7846,7 @@ const CSG = (function(){
     }
     if(mode==='sketch'){
       if(e.key==='Enter'){e.preventDefault();
-        if(tool==='line'&&chain)commitDraftLine(); else finishSketch();}
+        if((tool==='line'||tool==='cline'||tool==='spline')&&chain)commitDraftLine(); else finishSketch();}
       else if(e.key==='Escape'){e.preventDefault();
         if(dimPick){dimPick=null;drawSnapMark();setHint('Dimension cancelled');}
         else if(chain){commitDraftLine();}
@@ -7586,7 +7858,7 @@ const CSG = (function(){
         } else if(boxSel){ deleteBoxSel(); }
         else if(!deleteSketchSel())setHint('Nothing selected — use the Pointer to click a line, box-select, or click a constraint badge');}
       else if(e.key==='Backspace'){e.preventDefault();
-        if(tool==='line'&&chain&&chain.ei!=null){
+        if((tool==='line'||tool==='cline'||tool==='spline')&&chain&&chain.ei!=null){
           // step back one committed point of the live run
           const ent=editing.entities[chain.ei];
           if(ent&&ent.pts.length>2){ pushUndo('remove point'); ent.pts.pop(); redrawDraft(null); rebuild(); }
@@ -7596,10 +7868,11 @@ const CSG = (function(){
             chain={ei:null,start:{x:st.x,y:st.y,g:null,gv:null}};
             redrawDraft(null); rebuild(); }
         }
-        else if(tool==='line'&&chain){ chain=null; redrawDraft(null); }
+        else if((tool==='line'||tool==='cline'||tool==='spline')&&chain){ chain=null; redrawDraft(null); }
         else deleteSketchSel();}
       else if(e.key==='1'){tool='line';dockSel();}else if(e.key==='2'){tool='rect';dockSel();}
       else if(e.key==='3'){tool='circle';dockSel();}else if(e.key==='4'){tool='polygon';dockSel();}
+      else if(e.key==='5'){tool='spline';dockSel();}
       else if(e.key.toLowerCase()==='d'){e.preventDefault();tool='dim';dockSel();setHint('Dimension: click a line, circle or rectangle edge, then type a value');}
     } else if(docMode==='asm'){
       if((e.key==='Delete'||e.key==='Backspace')&&asmSel){const c2=asm.components.find(x=>x.id===asmSel);if(c2)removeComponent(c2);}
@@ -7619,7 +7892,7 @@ const CSG = (function(){
       x.dataset.tool===tool||(x.dataset.tool==='dynmirror'&&!!(editing&&editing.dynMirror))));
     // every tool change lands here (dock, menus, keyboard) — a live line run
     // must not survive into another tool and quietly extend an old entity
-    if(tool!=='line'&&chain){chain=null;}
+    if(tool!=='line'&&tool!=='cline'&&tool!=='spline'&&chain){chain=null;}
     syncRotateGate(); syncCursor(); if(tool!=='select')clearSketchSel(); redrawDraft(null);updateHint();
     if(mode==='sketch')ensureSketchProps();   // the panel follows the tool in hand
   }
@@ -7663,6 +7936,9 @@ const CSG = (function(){
     addComponent, setDocMode, buildPartShapes, asmTransformedShapes, removeComponent,
     startMate, cancelMate, fitFace, faceRegion, applyMate, applyCompTransform,
     get mateSel(){ return mateSel; }, perimeterHit, datumAt, mateEndAt, updateDatumVis,
+    isSpline, splinePath, splinePts, splineTangent, splineHandles, splineInsertPoint,
+    splineDeletePoint, splineResetHandles, splineUnder, openSketchMenu,
+    get sketchSel(){ return sketchSel; }, set sketchSel(v){ sketchSel=v; drawSketchSel(); },
     solveMates, mateError, removeMate, endWorld, mateLabel, openCompProps,
     editSketch, finishSketch, defineState, lockedEnts, sketchHandles, updateTraceLabels,
     get editing(){ return editing; }, get tool(){ return tool; }, set tool(v){ tool=v; dockSel(); },

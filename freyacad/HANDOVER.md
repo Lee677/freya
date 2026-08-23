@@ -156,6 +156,19 @@ the overlay iframe.
     by ray distance, because "a part always beats a plane" would put the Right plane out
     of reach the moment anything sat on it.
 
+19. **A spline is a `poly` with `spline` set, not a new entity type.** That one decision is
+    why spline points take dimensions, constraints, snapping, the drag-holds-dimensions
+    rule, DOF accounting, box select, mirror and construction for free — roughly thirty
+    `e.type==='poly'` sites needed no change at all. Only four things care: rendering and
+    `entityLoops`/`OCK.sketchLoops` take the tessellated curve (and skip `applyCorner` —
+    a spline has no corners to round), `dimHit` measures to the curve and maps the hit
+    back to its span, and Delete removes the whole curve rather than a span. The fit is
+    centripetal Catmull-Rom (α=0.5) converted per span to a Bezier; uniform overshoots and
+    self-intersects on unevenly spaced points. `e.tan[i]` overrides the fitted tangent on
+    both sides of a point — that's the SolidWorks handle. **`tanFit` before any splice**:
+    a sparse `tan` array splices at its end when the index is past its length, which
+    silently moves one point's handle onto another.
+
 ## Biggest thing still missing
 
 **A real constraint solver *for sketches*.** Dimensions are applied one at a time, so

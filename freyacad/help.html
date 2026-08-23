@@ -95,6 +95,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line-soft);
   <a href="#dims">Dimensions</a>
   <a href="#constrain">Constraints &amp; DOF</a>
   <a href="#colours">Reading the colours</a>
+  <a href="#splines">Splines</a>
   <a href="#editsk">Editing a sketch</a>
   <div class="grp">Modelling</div>
   <a href="#features">Features</a>
@@ -261,6 +262,9 @@ whatever you're mid-way through, and again to leave the sketch.</p>
   <tr><td><b>Polygon</b></td><td><kbd>4</kbd></td><td>Regular n-sided polygon: centre
     first, then a corner, which sets both size and rotation. A side-count field appears
     while this tool is in hand.</td></tr>
+  <tr><td><b>Spline</b></td><td><kbd>5</kbd></td><td>A smooth curve <em>through</em> the points
+    you click, each one landing as you click it. Click the first point again to close it;
+    <kbd>Esc</kbd> ends an open one. See <a href="#splines">Splines</a>.</td></tr>
   <tr><td><b>Construction line</b></td><td>—</td><td>Draws like a line, but dashed and never part
     of the solid. Mirror lines, centre lines, references — geometry for you, invisible to the
     kernel.</td></tr>
@@ -449,6 +453,45 @@ corner and everything meeting there moves together.</p>
 <p>Points follow the same rule as the lines they belong to, so a blue dot can be dragged
 and an amber one can't. Dimensions keep a hue of their own precisely so they can never be
 mistaken for geometry in any state.</p>
+
+<h2 id="splines">Splines</h2>
+<p>The spline tool draws a smooth curve <b>through</b> the points you click — click each point
+in turn, and each one lands as you click it. Click the first point again to close the curve;
+<kbd>Esc</kbd> or <kbd>Enter</kbd> ends an open one, and <kbd>Backspace</kbd> steps back a
+point while you're drawing. A closed spline is a profile like any other: extrude it, cut with
+it, revolve it.</p>
+<p>The curve is a <b>centripetal</b> fit, which is the one that doesn't overshoot or loop back
+on itself when your points are unevenly spaced. It passes exactly through every point, so what
+you clicked is where the curve goes.</p>
+<h3>Editing one</h3>
+<p>Spline points are ordinary sketch points. They drag, they snap, they take dimensions and
+constraints, they count against the degrees of freedom, and a dimension on one holds through a
+drag exactly like anywhere else. Select the spline with the pointer and it shows its workings:
+the <b>control polygon</b> it was fitted through, dashed, and a <b>handle</b> at every point.</p>
+<ul>
+  <li><b>Move a point</b> — drag it.</li>
+  <li><b>Change the curve at a point</b> — drag either end of that point's handle. The bar
+      sets both the direction the curve leaves in and how hard it pulls; both ends stay in
+      line, so the curve is always smooth through the point. A handle you have set yourself
+      goes amber; the grey ones are the fit's own.</li>
+  <li><b>Insert a point</b> — right-click on the curve where you want it.</li>
+  <li><b>Delete a point</b> — right-click near it. A spline keeps a floor of two points
+      (three if closed); below that, delete the whole spline.</li>
+  <li><b>Reset a handle</b>, or all of them, from the same menu — the fit takes over again.</li>
+  <li><b>Open or close it</b>, and <b>hide the control polygons</b>, from that menu too.</li>
+  <li><b>Delete</b> with the spline selected removes the whole curve — unlike a chain of
+      lines, a spline is one thing.</li>
+</ul>
+<p>Splines mirror, take part in dynamic mirror, and can be construction geometry like anything
+else.</p>
+<div class="note">
+  <span class="tag">Where this stops</span>
+  <p>Not everything SolidWorks does with splines is here. These are <b>through-point</b>
+  splines — SolidWorks' plain Spline tool. There are no control-point (style) splines, no
+  equation-driven curves, no fitting a spline onto existing geometry, no curvature combs, and
+  no tangent or curvature <em>relations</em> between a spline end and a neighbouring line: the
+  handle is set by hand, not constrained to anything.</p>
+</div>
 
 <h2 id="editsk">Editing a sketch</h2>
 <p>All of this needs the <b>pointer</b> tool active.</p>
@@ -671,7 +714,7 @@ positions from them, so a mated assembly comes back mated.</p>
 <h2 id="keys">Keyboard</h2>
 <table>
   <tr><th>Key</th><th>Does</th></tr>
-  <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></td><td>Line, rectangle, circle, polygon</td></tr>
+  <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> <kbd>5</kbd></td><td>Line, rectangle, circle, polygon, spline</td></tr>
   <tr><td><kbd>D</kbd></td><td>Dimension</td></tr>
   <tr><td><kbd>Enter</kbd></td><td>End the current line run; otherwise finish the sketch</td></tr>
   <tr><td><kbd>Esc</kbd></td><td>End the line run (keeping it); again to leave the sketch</td></tr>
