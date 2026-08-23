@@ -222,6 +222,25 @@ if(!window.THREE){
   /* a steep trace would run straight through horizontal text, so the two words
      part company and the line passes down the gap between them */
   .trace-label.split{gap:20px}
+  /* customise dialog: drag chips between groups */
+  .cust-ov{position:fixed;inset:0;z-index:500;background:rgba(3,5,8,.72);
+    display:flex;align-items:center;justify-content:center;padding:20px}
+  .cust{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    padding:16px 18px;width:min(900px,95vw);max-height:88vh;overflow:auto}
+  .cust h3{margin:0 0 4px;font-size:15px}
+  .cust-hint{margin:0 0 12px;font-size:12px;color:var(--muted)}
+  .cust-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:10px}
+  .cust-col{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:8px;padding:8px}
+  .cust-col.over{border-color:var(--g-blue);background:rgba(66,133,244,.09)}
+  .cust-col.hide .cust-h{color:var(--danger)}
+  .cust-h{font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--muted-2);margin-bottom:7px}
+  .cust-list{display:flex;flex-direction:column;gap:5px;min-height:64px}
+  .cust-chip{background:var(--panel);border:1px solid var(--line);border-radius:6px;
+    padding:4px 8px;font-size:12px;cursor:grab;user-select:none}
+  .cust-chip:hover{border-color:var(--g-blue)}
+  .cust-chip.drag{opacity:.35}
+  .cust-foot{display:flex;gap:8px;align-items:center;margin-top:14px}
   #boxsel{position:absolute;z-index:30;display:none;pointer-events:none;
     border:1px dashed var(--cyan);background:rgba(66,133,244,.09);border-radius:2px}
 
@@ -539,6 +558,8 @@ if(!window.THREE){
       <button data-tool="rect">Rect</button>
       <button data-tool="circle">Circle</button>
       <button data-tool="polygon">Polygon</button>
+      <button data-tool="mirror" title="Mirror: pick a line, then click shapes to mirror">&#8646; Mirror</button>
+      <button data-tool="dynmirror" title="Dynamic mirror: pick a line, then everything you draw appears both sides">&#8644; Dyn</button>
       <button data-tool="dim">Dim</button>
       <button data-tool="horiz" title="Make a line horizontal">⊢ Horiz</button>
       <button data-tool="vert" title="Make a line vertical">⊥ Vert</button>
@@ -2925,6 +2946,7 @@ const CSG = (function(){
      once, then Delete (or pick the eraser) to remove the lot. Window select,
      as in SolidWorks: only what is wholly inside comes with you. Shift+drag
      still orbits, so the view is never out of reach. */
+  let mirrorAxis=null;  // the line the Mirror tool reflects about, once picked
   let boxSel=null;      // {ents:[i], dims:[i]} — what the last box caught
   let boxDrag=null;     // {x0,y0,x1,y1} in client px while the box is live
   function drawBox(){
@@ -3456,7 +3478,8 @@ const CSG = (function(){
           const f=ent.pts[0];
           if(ent.pts.length>=3&&Math.hypot(p.x-f.x,p.y-f.y)<=Math.max(snapSize,0.6)){
             pushUndo('close loop'); ent.closed=true;
-            const done=ent; chain=null; redrawDraft(null); rebuild();
+            const done=ent, dei=chain.ei; chain=null; dynMirrorAdd(dei);
+            redrawDraft(null); rebuild();
             flashLoop(editing,done); setHint('Loop closed'); return;
           }
           const last=ent.pts[ent.pts.length-1];
@@ -3491,15 +3514,17 @@ const CSG = (function(){
         const ei=editing.entities.length-1;
         if(draftA._g)storeGround({ent:ei,idx:0},draftA._g);
         if(p._g)storeGround({ent:ei,idx:2},p._g);
-        flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
+        dynMirrorAdd(ei); flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
     } else if(tool==='circle'){
       if(draftStage===0){draftA=p;draftStage=1;} else {const r=Math.hypot(p.x-draftA.x,p.y-draftA.y);if(r>1e-3){const ent={type:'circle',c:{x:draftA.x,y:draftA.y},r};editing.entities.push(ent);
-        if(draftA._g)storeGround({ent:editing.entities.length-1,idx:0},draftA._g);
-        flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
+        const ei=editing.entities.length-1;
+        if(draftA._g)storeGround({ent:ei,idx:0},draftA._g);
+        dynMirrorAdd(ei); flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
     } else if(tool==='polygon'){
       if(draftStage===0){draftA=p;draftStage=1;} else {const r=Math.hypot(p.x-draftA.x,p.y-draftA.y),rot=Math.atan2(p.y-draftA.y,p.x-draftA.x);if(r>1e-3){const ent={type:'polygon',c:{x:draftA.x,y:draftA.y},r,sides:polygonSides,rot};editing.entities.push(ent);
-        if(draftA._g)storeGround({ent:editing.entities.length-1,idx:0},draftA._g);
-        flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
+        const ei=editing.entities.length-1;
+        if(draftA._g)storeGround({ent:ei,idx:0},draftA._g);
+        dynMirrorAdd(ei); flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
     } else if(tool==='dim'){
       /* Two clicks, SolidWorks-style. First click arms a point, a line or a
          plane trace and previews; second click decides what the dimension is:
@@ -3559,6 +3584,36 @@ const CSG = (function(){
         else { applyEqual(equalRef, d); storeSegPair('equal',equalRef,d); equalRef=null;
                relaxDims(editing,3); rebuild(); setHint('Lines constrained equal — delete the = badge to free them'); }
       } else setHint('Click a reference line segment first');
+    } else if(tool==='mirror'){
+      const d=dimHit(p);
+      if(!d||d.entIdx==null) setHint(mirrorAxis?'Click a shape to mirror':'Click the line to mirror about');
+      else if(!mirrorAxis){
+        if(d.kind!=='seg') setHint('Pick a straight line to mirror about');
+        else { mirrorAxis={ent:d.entIdx,seg:d.seg}; drawSketchSel();
+          setHint('Mirror line set — now click each shape to mirror'); }
+      } else {
+        const s=segPts(editing,mirrorAxis);
+        if(!s){ mirrorAxis=null; setHint('That mirror line is gone — pick another'); }
+        else if(d.entIdx===mirrorAxis.ent) setHint('That is the mirror line itself');
+        else {
+          const m=mirrorEntity(editing.entities[d.entIdx],s.a,s.b);
+          if(m){ pushUndo('mirror'); editing.entities.push(m); rebuild(); setHint('Mirrored'); }
+          else setHint('That shape cannot be mirrored');
+        }
+      }
+    } else if(tool==='dynmirror'){
+      const d=dimHit(p);
+      if(d&&d.kind==='seg'){
+        const cur=editing.dynMirror;
+        if(cur&&cur.ent===d.entIdx&&cur.seg===d.seg){
+          pushUndo('dynamic mirror off'); editing.dynMirror=null;
+          setHint('Dynamic mirror off');
+        } else {
+          pushUndo('dynamic mirror'); editing.dynMirror={ent:d.entIdx,seg:d.seg};
+          setHint('Dynamic mirror on — everything you draw now appears both sides');
+        }
+        rebuild();
+      } else setHint('Click a straight line to mirror about');
     } else if(tool==='coinc'){
       /* a click on a circle or polygon means its centre — the rim is a far
          easier target than the centre dot, which is what the old separate
@@ -3678,7 +3733,9 @@ const CSG = (function(){
     /* Every segment is already committed the moment it was clicked, so ending
        a run discards nothing — it just puts the rubber band away. Closing a
        loop is the first point's job, never this one's. */
-    if(chain){ chain=null; redrawDraft(null); setHint('Line run ended'); }
+    if(chain){ const dei=chain.ei; chain=null;
+      if(dei!=null){ dynMirrorAdd(dei); rebuild(); }
+      redrawDraft(null); setHint('Line run ended'); }
   }
 
   /* ===================== SKETCH CONSTRAINTS =====================
@@ -3741,6 +3798,45 @@ const CSG = (function(){
     const sgn=((t.b.x-t.a.x)*dx + (t.b.y-t.a.y)*dy) < 0 ? -1 : 1;  // keep closest orientation
     t.a.x=mx - sgn*dx*tl/2; t.a.y=my - sgn*dy*tl/2;
     t.b.x=mx + sgn*dx*tl/2; t.b.y=my + sgn*dy*tl/2;
+  }
+  /* ---- mirror ------------------------------------------------------------
+     Reflect a point about the line through a and b. Everything else here is
+     that one operation applied to whichever shape you point at. */
+  function reflectPt(q,a,b){
+    const dx=b.x-a.x, dy=b.y-a.y, L2=dx*dx+dy*dy||1;
+    const t=((q.x-a.x)*dx+(q.y-a.y)*dy)/L2;
+    const px=a.x+dx*t, py=a.y+dy*t;
+    return {x:2*px-q.x, y:2*py-q.y};
+  }
+  function mirrorEntity(e,a,b){
+    if(e.type==='circle') return {type:'circle',c:reflectPt(e.c,a,b),r:e.r};
+    if(e.type==='polygon'){
+      const ax=Math.atan2(b.y-a.y,b.x-a.x);
+      return {type:'polygon',c:reflectPt(e.c,a,b),r:e.r,sides:e.sides,rot:2*ax-e.rot};
+    }
+    // a reflected rectangle is no longer axis-aligned, so it becomes a poly
+    if(e.type==='rect'){
+      const P=[{x:e.a.x,y:e.a.y},{x:e.b.x,y:e.a.y},{x:e.b.x,y:e.b.y},{x:e.a.x,y:e.b.y}];
+      return {type:'poly',closed:true,pts:P.map(q=>reflectPt(q,a,b)).reverse()};
+    }
+    if(e.type==='poly')
+      return {type:'poly',closed:!!e.closed,pts:e.pts.map(q=>reflectPt(q,a,b)).reverse()};
+    return null;
+  }
+  function mirrorAxisPts(){
+    if(!editing||!editing.mirrorAxis)return null;
+    const s=segPts(editing,{ent:editing.mirrorAxis.ent,seg:editing.mirrorAxis.seg});
+    return s?[s.a,s.b]:null;
+  }
+  // draw a shape while dynamic mirror is armed and its reflection appears too
+  function dynMirrorAdd(ei){
+    if(!editing||!editing.dynMirror)return;
+    const ax=(()=>{const s=segPts(editing,{ent:editing.dynMirror.ent,seg:editing.dynMirror.seg});
+      return s?[s.a,s.b]:null;})();
+    if(!ax)return;
+    if(ei===editing.dynMirror.ent)return;         // never mirror the mirror line
+    const m=mirrorEntity(editing.entities[ei],ax[0],ax[1]);
+    if(m)editing.entities.push(m);
   }
   function applyEqual(refD, tgtD){
     const r=polySeg(refD), t=polySeg(tgtD); if(!r||!t) return;
@@ -4976,6 +5072,8 @@ const CSG = (function(){
     edit:_sw(`<path d="M4 20l1.2-4.2L16.5 4.5l3 3L8.2 18.8z" stroke="${_B}"/><path d="M14.5 6.5l3 3" stroke="${_B}"/>`),
     iso:_sw(`<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" stroke="${_B}"/><path d="M12 12l8-4.5M12 12 4 7.5M12 12v9" stroke="${_B}" opacity=".7"/>`),
     fit:_sw(`<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" stroke="${_B}"/><rect x="9.5" y="9.5" width="5" height="5" stroke="${_Y}"/>`),
+    mirror:_sw(`<path d="M12 2.5v19" stroke="${_Y}" stroke-dasharray="2.5 2.5"/><path d="M9.2 6.5 4.5 12l4.7 5.5z" stroke="${_B}"/><path d="M14.8 6.5 19.5 12l-4.7 5.5z" stroke="${_B}"/>`),
+    dynmirror:_sw(`<path d="M12 2.5v19" stroke="${_Y}" stroke-dasharray="2.5 2.5"/><path d="M9.2 6.5 4.5 12l4.7 5.5z" stroke="${_B}"/><path d="M14.8 6.5 19.5 12l-4.7 5.5z" stroke="${_G}"/>`),
     proj:_sw(`<path d="M3.5 5h17L17.5 19h-11z" stroke="${_B}"/><path d="M6.5 19 3.5 5M17.5 19l3-14" stroke="${_Y}"/>`),
     stl:_sw(`<path d="M12 4l8 16H4z" stroke="${_B}"/><path d="M12 4 9.5 20M12 4l3 16M7.2 13.6h9.6" stroke="${_B}" opacity=".55"/>`),
     step:_sw(`<ellipse cx="12" cy="6.5" rx="7" ry="2.7" stroke="${_B}"/><path d="M5 6.5v11M19 6.5v11" stroke="${_B}"/><path d="M5 17.5c0 1.5 3.1 2.7 7 2.7s7-1.2 7-2.7" stroke="${_B}"/>`),
@@ -5527,6 +5625,8 @@ const CSG = (function(){
       else if(tool==='horiz')h.innerHTML='<span class="pip"></span> Horizontal: click a line segment to lay it flat';
       else if(tool==='vert')h.innerHTML='<span class="pip"></span> Vertical: click a line segment to stand it upright';
       else if(tool==='paral')h.innerHTML='<span class="pip"></span> Parallel: click the reference line, then the line to align to it';
+      else if(tool==='mirror')h.innerHTML='<span class="pip"></span> Mirror: click the line to mirror about, then click each shape to mirror';
+      else if(tool==='dynmirror')h.innerHTML='<span class="pip"></span> Dynamic mirror: click a line to arm it — what you draw then appears both sides. Click it again to stop';
       else if(tool==='coinc')h.innerHTML='<span class="pip"></span> Coincident: click a point, then the point to lock it to — the pair then moves as one';
       else if(tool==='equal')h.innerHTML='<span class="pip"></span> Equal: click the reference line, then the line to match its length';
       else h.innerHTML=`<span class="pip"></span> ${tool}: click two points`;
@@ -5895,35 +5995,146 @@ const CSG = (function(){
     );
     buildCtxMenu(x,y,items,{cols:true});
   }
+  /* ---- the sketch command registry ---------------------------------------
+     One entry per command, and a layout that says which section each lives in
+     and in what order. The right-click menu is built from this, the dock hides
+     what the layout hides, and the Customise dialog rearranges it by drag. */
+  const setTool=t=>()=>{tool=t;chain=null;mirrorAxis=null;draftStage=0;draftA=null;
+    paralRef=null;equalRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;
+    hoverSnap=null;dimPick=null;drawSnapMark();redrawHandles();dockSel();};
+  const CMD={
+    finish   :{ic:'finish', label:'Finish sketch',    fn:()=>finishSketch()},
+    finishext:{ic:'extrude',label:'Finish + extrude', fn:()=>{finishSketch();addFeature('extrude');}},
+    cancel   :{ic:'cancel', label:'Cancel sketch',    fn:()=>cancelSketch()},
+    select   :{ic:'move',   label:'Pointer',    tool:'select'},
+    line     :{ic:'line',   label:'Line',       tool:'line'},
+    rect     :{ic:'rect',   label:'Rectangle',  tool:'rect'},
+    circle   :{ic:'circle', label:'Circle',     tool:'circle'},
+    polygon  :{ic:'polygon',label:'Polygon',    tool:'polygon'},
+    mirror   :{ic:'mirror', label:'Mirror',     tool:'mirror'},
+    dynmirror:{ic:'dynmirror',label:'Dynamic mirror',tool:'dynmirror'},
+    dim      :{ic:'dim',    label:'Dimension',  tool:'dim'},
+    erase    :{ic:'erase',  label:'Erase',      tool:'erase'},
+    corners  :{ic:'fillet', label:'Sketch corners…',fn:()=>{cornerUI=true;ensureSketchProps();
+                 setHint('Corner treatment: round or bevel every corner of the sketch profile');}},
+    horiz    :{ic:'horiz',  label:'Horizontal', tool:'horiz'},
+    vert     :{ic:'vert',   label:'Vertical',   tool:'vert'},
+    paral    :{ic:'paral',  label:'Parallel',   tool:'paral'},
+    equal    :{ic:'equal',  label:'Equal length',tool:'equal'},
+    coinc    :{ic:'coinc',  label:'Coincident', tool:'coinc'},
+    normal   :{ic:'normal', label:'Normal to',  fn:()=>viewNormalTo()},
+    iso      :{ic:'iso',    label:'Isometric',  fn:()=>viewIso()},
+    fit      :{ic:'fit',    label:'Fit all',    fn:()=>fitAll()},
+    proj     :{ic:'proj',   label:'Projection', fn:()=>setProjection(!orthoOn),
+                 dyn:()=>orthoOn?'Perspective':'Orthographic'}
+  };
+  const DEFAULT_LAYOUT=[
+    {name:'Sketch',          ids:['finish','finishext','cancel']},
+    {name:'Sketch entities', ids:['select','line','rect','circle','polygon','mirror','dynmirror','dim','erase','corners']},
+    {name:'Relations',       ids:['horiz','vert','paral','equal','coinc']},
+    {name:'View',            ids:['normal','iso','fit','proj']}
+  ];
+  const LAYOUT_KEY='fcad-sketch-layout';
+  function cloneLayout(L){ return L.map(s=>({name:s.name,ids:s.ids.slice()})); }
+  let sketchLayout=(function(){
+    try{ const raw=localStorage.getItem(LAYOUT_KEY);
+      if(raw){ const L=JSON.parse(raw);
+        if(Array.isArray(L)&&L.length&&L.every(s=>s&&Array.isArray(s.ids)))return L; }
+    }catch(_){ }
+    return cloneLayout(DEFAULT_LAYOUT);
+  })();
+  let hiddenCmds=(function(){
+    // anything the layout no longer lists is hidden, worked out fresh each save
+    const seen=new Set(); sketchLayout.forEach(s=>s.ids.forEach(i=>seen.add(i)));
+    return Object.keys(CMD).filter(k=>!seen.has(k));
+  })();
+  function saveLayout(){
+    try{ localStorage.setItem(LAYOUT_KEY,JSON.stringify(sketchLayout)); }catch(_){ }
+    const seen=new Set(); sketchLayout.forEach(s=>s.ids.forEach(i=>seen.add(i)));
+    hiddenCmds=Object.keys(CMD).filter(k=>!seen.has(k));
+    syncDockVisibility();
+  }
+  function syncDockVisibility(){
+    const d=$('dock'); if(!d)return;
+    d.querySelectorAll('button[data-tool]').forEach(b=>{
+      const id=Object.keys(CMD).find(k=>CMD[k].tool===b.dataset.tool);
+      b.style.display=(id&&hiddenCmds.indexOf(id)>=0)?'none':'';
+    });
+  }
+  function openCustomise(){
+    if(document.querySelector('.cust-ov'))return;
+    const ov=document.createElement('div'); ov.className='cust-ov';
+    const secs=cloneLayout(sketchLayout), hidden=hiddenCmds.slice();
+    ov.innerHTML='<div class="cust"><h3>Customise sketch tools</h3>'+
+      '<p class="cust-hint">Drag a tool into another group to move it, or into Hidden to take it off '+
+      'the menu and the dock. Order within a group is the order it appears.</p>'+
+      '<div class="cust-cols" id="cust-cols"></div>'+
+      '<div class="cust-foot"><button class="btn-ghost" id="cust-reset">Reset to default</button>'+
+      '<span style="flex:1"></span><button class="btn-ghost" id="cust-cancel">Cancel</button>'+
+      '<button class="btn-primary" id="cust-ok">Done</button></div></div>';
+    document.body.appendChild(ov);
+    const cols=ov.querySelector('#cust-cols');
+    let dragId=null;
+    function render(){
+      cols.innerHTML='';
+      secs.concat([{name:'Hidden',ids:hidden,hide:true}]).forEach(g=>{
+        const col=document.createElement('div'); col.className='cust-col'+(g.hide?' hide':'');
+        const h=document.createElement('div'); h.className='cust-h'; h.textContent=g.name;
+        const list=document.createElement('div'); list.className='cust-list';
+        g.ids.forEach(id=>{
+          if(!CMD[id])return;
+          const chip=document.createElement('div');
+          chip.className='cust-chip'; chip.draggable=true; chip.textContent=CMD[id].label;
+          chip.addEventListener('dragstart',e=>{dragId=id;chip.classList.add('drag');
+            try{e.dataTransfer.setData('text/plain',id);}catch(_){}});
+          chip.addEventListener('dragend',()=>{dragId=null;chip.classList.remove('drag');});
+          list.appendChild(chip);
+        });
+        const over=e=>{e.preventDefault();col.classList.add('over');};
+        col.addEventListener('dragover',over); list.addEventListener('dragover',over);
+        col.addEventListener('dragleave',()=>col.classList.remove('over'));
+        col.addEventListener('drop',e=>{
+          e.preventDefault(); col.classList.remove('over');
+          const id=dragId||(()=>{try{return e.dataTransfer.getData('text/plain');}catch(_){return null;}})();
+          if(!id||!CMD[id])return;
+          secs.forEach(sx=>{const i=sx.ids.indexOf(id); if(i>=0)sx.ids.splice(i,1);});
+          const hi=hidden.indexOf(id); if(hi>=0)hidden.splice(hi,1);
+          if(g.hide)hidden.push(id); else g.ids.push(id);
+          render();
+        });
+        col.appendChild(h); col.appendChild(list); cols.appendChild(col);
+      });
+    }
+    render();
+    const close=()=>ov.remove();
+    ov.querySelector('#cust-cancel').addEventListener('click',close);
+    ov.querySelector('#cust-ok').addEventListener('click',()=>{
+      sketchLayout=cloneLayout(secs); saveLayout(); close();
+      setHint('Tool layout saved');
+    });
+    ov.querySelector('#cust-reset').addEventListener('click',()=>{
+      sketchLayout=cloneLayout(DEFAULT_LAYOUT); saveLayout(); close();
+      setHint('Tool layout reset');
+    });
+    ov.addEventListener('click',e=>{ if(e.target===ov)close(); });
+    document.addEventListener('keydown',function esc(e){
+      if(e.key==='Escape'){ close(); document.removeEventListener('keydown',esc); } });
+  }
   function openSketchMenu(x,y){
-    const setTool=t=>()=>{tool=t;chain=null;draftStage=0;draftA=null;paralRef=null;equalRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();redrawHandles();dockSel();};
-    buildCtxMenu(x,y,[
-      {sect:'Sketch tools'},
-      {ic:'move',label:'Pointer — select & rotate',fn:setTool('select')},
-      {ic:'line',label:'Line',fn:setTool('line')},
-      {ic:'rect',label:'Rectangle',fn:setTool('rect')},
-      {ic:'circle',label:'Circle',fn:setTool('circle')},
-      {ic:'polygon',label:'Polygon',fn:setTool('polygon')},
-      {ic:'dim',label:'Dimension',fn:setTool('dim')},
-      {ic:'erase',label:'Erase',fn:setTool('erase')},
-      {sect:'Constraints'},
-      {ic:'horiz',label:'Horizontal',fn:setTool('horiz')},
-      {ic:'vert',label:'Vertical',fn:setTool('vert')},
-      {ic:'paral',label:'Parallel',fn:setTool('paral')},
-      {ic:'equal',label:'Equal length',fn:setTool('equal')},
-      {ic:'coinc',label:'Coincident',fn:setTool('coinc')},
-      {sect:'View'},
-      {ic:'normal',label:'Normal to',fn:viewNormalTo},
-      {ic:'iso',label:'Isometric',fn:viewIso},
-      {ic:'fit',label:'Fit all',fn:fitAll},
-      {ic:'proj',label:orthoOn?'Perspective':'Orthographic',fn:()=>setProjection(!orthoOn)},
-      {sect:'Sketch'},
-      {ic:'fillet',label:'Sketch corners…',fn:()=>{cornerUI=true;ensureSketchProps();
-        setHint('Corner treatment: round or bevel every corner of the sketch profile');}},
-      {ic:'finish',label:'Finish sketch',fn:finishSketch},
-      {ic:'extrude',label:'Finish + extrude',fn:()=>{finishSketch();addFeature('extrude');}},
-      {ic:'cancel',label:'Cancel sketch',fn:cancelSketch}
-    ],{cols:true});
+    const items=[];
+    for(const sec of sketchLayout){
+      const live=sec.ids.filter(id=>CMD[id]);
+      if(!live.length)continue;
+      items.push({sect:sec.name});
+      for(const id of live){
+        const c=CMD[id];
+        items.push({ic:c.ic, label:c.dyn?c.dyn():c.label,
+          fn:c.tool?setTool(c.tool):c.fn});
+      }
+    }
+    items.push({sect:'—'});
+    items.push({ic:'edit',label:'Customise tools…',fn:openCustomise});
+    buildCtxMenu(x,y,items,{cols:true});
   }
   /* right-click on a feature-tree row */
   function openTreeMenu(x,y,f){
@@ -6186,7 +6397,7 @@ const CSG = (function(){
   /* decorate every button with its pictogram; original text becomes a .lbl */
   (function decorate(){
     menu.querySelectorAll('[data-ic]').forEach(b=>{ b.innerHTML=icHTML(b.dataset.ic)+'<span class="lbl">'+b.textContent+'</span>'; });
-    const dockLbl={select:'Pointer',line:'Line',move:'Move',rect:'Rect',circle:'Circle',polygon:'Polygon',dim:'Dim',horiz:'Horiz',vert:'Vert',paral:'Parallel',equal:'Equal',coinc:'Coinc',erase:'Erase'};
+    const dockLbl={select:'Pointer',line:'Line',move:'Move',rect:'Rect',circle:'Circle',polygon:'Polygon',mirror:'Mirror',dynmirror:'Dyn mirror',dim:'Dim',horiz:'Horiz',vert:'Vert',paral:'Parallel',equal:'Equal',coinc:'Coinc',erase:'Erase'};
     $('dock').querySelectorAll('button').forEach(b=>{ const t=b.dataset.tool; b.innerHTML=icHTML(t)+'<span class="lbl">'+(dockLbl[t]||t)+'</span>'; });
     const tb={'btn-save':'save','btn-load':'open','btn-export':'stl','btn-step':'step','btn-new':'newpart','btn-new-asm':'asm','btn-insert':'add','btn-finish':'finish','btn-cancel-sk':'cancel'};
     for(const id in tb){ const b=$(id); b.innerHTML=icHTML(tb[id])+'<span class="lbl">'+b.textContent+'</span>'; }
@@ -6303,13 +6514,13 @@ const CSG = (function(){
     else addFeature(a);
   }));
   $('dock').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
-    tool=b.dataset.tool;chain=null;draftStage=0;draftA=null;paralRef=null;equalRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();
+    tool=b.dataset.tool;chain=null;mirrorAxis=null;draftStage=0;draftA=null;paralRef=null;equalRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();
     $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));
     // a line already picked with the Pointer? apply the constraint to it now,
     // rather than making the user click the icon and then the line
     if(applyConstraintToSelection(tool)){ tool='select'; }
     if(tool==='erase'&&boxSel&&editing){ deleteBoxSel(); tool='select'; }
-    syncRotateGate(); syncCursor(); if(tool!=='select')clearSketchSel();
+    syncRotateGate(); syncCursor(); syncDockVisibility(); if(tool!=='select')clearSketchSel();
     $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.tool===tool));
     redrawDraft(null);redrawHandles();updateHint();
   }));
