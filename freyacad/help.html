@@ -713,37 +713,15 @@ and nothing moves, rather than half-applied.</p>
 positions from them, so a mated assembly comes back mated.</p>
 
 <h2 id="drawings">Drawings</h2>
-<p><b>New drawing</b> makes an engineering drawing of whatever you have modelled — a part or a
-whole assembly. It opens a sheet of paper in place of the 3D view, with a front view of the
-model already on it. The same button takes you back to the model, and back to the drawing
-again; the drawing keeps its layout, and every view is <b>re-projected from the model as it
-now stands</b> each time you return to it. Change a dimension, come back, and the drawing has
-changed with it.</p>
-<h3>Views</h3>
-<p><b>Add view</b> offers front, top, right, left, bottom, back and isometric. Each one is a
-real orthographic projection of the model's edges, not a picture of the screen: edges you can
-see are drawn solid, edges the solid is in front of are drawn dashed as hidden detail, and
-<b>Hidden</b> turns that detail off. Drag a view to place it anywhere on the sheet; the tree
-lists them with an × to remove one.</p>
-<p>A view added after the front view lands square with it, on the side the sheet's convention
-puts it: <b>third angle</b> puts the top view above and the right view to the right,
-<b>first angle</b> puts them the other way about. The title block carries the matching
-projection symbol, so a printed sheet says which it is without anyone having to ask.</p>
-<h3>Sheet, scale and output</h3>
-<p>Sheet sizes run A4 to A0, portrait or landscape. The scale is either one you pick from the
-usual series or <b>fit</b>, which chooses the largest standard scale that still gets everything
-on the page — a drawing is read at a stated scale, so it will pick 1:2 rather than invent
-1:1.83. Whatever it lands on is printed in the title block.</p>
-<p><b>Print</b> opens the sheet at its true paper size — print it, or use your browser's
-"Save as PDF". <b>Export SVG</b> saves it as vectors, at real millimetre dimensions, which
-opens in Illustrator, Inkscape, or any laser cutter's software.</p>
-<div class="note">
-  <span class="tag">Where this stops</span>
-  <p>This is the drawing half of SolidWorks' drawing mode, not all of it. There are
-  <b>no dimensions or annotations on the sheet yet</b> — no dimensioning a view, no notes,
-  centre marks, centrelines, balloons or a bill of materials. Nor are there section views,
-  detail views, broken-out sections, or auxiliary views on a chosen face. Drawings are not
-  saved with the part: the sheet lasts as long as the tab.</p>
+<div class="note warn">
+  <span class="tag">Not open yet</span>
+  <p><b>New drawing</b> says "coming soon" if you press it, and that is deliberate. The
+  machinery is built and working — sheets from A4 to A0, orthographic views in first or third
+  angle, genuine hidden-line removal, fit-to-page scaling from the standard series, print at
+  true paper size and SVG export. What is missing is the part that makes a drawing worth
+  issuing: <b>dimensions and annotations on the sheet</b>, and section and detail views.</p>
+  <p>A drawing you cannot dimension is a picture, not a drawing, so the door stays shut until
+  it is done rather than shipping half of one.</p>
 </div>
 
 <h2 id="keys">Keyboard</h2>
@@ -775,8 +753,9 @@ opens in Illustrator, Inkscape, or any laser cutter's software.</p>
   <li><b>The parameter panel is outside undo.</b></li>
   <li><b>Desktop only</b>, by design.</li>
   <li><b>No autosave.</b> The tab is the only copy until you save.</li>
-  <li><b>Drawings are views only.</b> No dimensions or annotations on the sheet, no section
-      or detail views, and the drawing isn't saved with the part.</li>
+  <li><b>No drawings yet.</b> The sheet, the projected views and hidden-line removal all
+      work, but dimensioning them does not, so the mode is closed. See
+      <a href="#drawings">Drawings</a>.</li>
   <li><b>Only two assembly mates.</b> Concentric and coincident hold as real relations and
       are solved together, but distance, angle, parallel and the rest aren't there yet, and
       neither are joints or sub-assemblies.</li>

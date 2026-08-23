@@ -553,7 +553,7 @@ if(!window.THREE){
     <div class="tb-group">
       <button id="btn-new" class="btn-ghost">New part</button>
       <button id="btn-new-asm" class="btn-ghost">New assembly</button>
-      <button id="btn-new-draw" class="btn-ghost" title="Make an engineering drawing of what's on screen">New drawing</button>
+      <button id="btn-new-draw" class="btn-ghost" title="Engineering drawings — in progress, not open yet">New drawing</button>
       <button id="btn-load" class="btn-ghost">Open</button>
       <input type="file" id="file-load" style="display:none" accept=".json,.sketchcad,.asmcad,.step,.stp,.stl">
       <input type="file" id="file-insert" style="display:none" accept=".json,.sketchcad">
@@ -8087,7 +8087,21 @@ const CSG = (function(){
     } else start();
   });
   /* Drawings ---------------------------------------------------------------- */
+  /* The projection, hidden-line removal and sheet all work, but a drawing you
+     cannot dimension is not a drawing anyone can issue, so the door stays shut
+     until it is. Everything below is live code behind this one flag — flip it
+     back to true and the mode returns exactly as it was. */
+  const DRAWINGS_ENABLED=false;
   $('btn-new-draw').addEventListener('click',()=>{
+    if(!DRAWINGS_ENABLED&&docMode!=='draw'){
+      askDialog('Drawings — coming soon',
+        'Sheets, projected views and hidden-line removal are built and working. '+
+        'What is missing is the part that makes a drawing worth printing: dimensions '+
+        'and annotations on the sheet, and section and detail views. Rather than ship '+
+        'a drawing you cannot dimension, this stays closed until it is done.',
+        [{label:'Righto',primary:true}]);
+      return;
+    }
     if(docMode==='draw'){ setDocMode(drawReturn); setHint('Back to the model'); return; }
     if(mode==='sketch'){ setHint('Finish the sketch first, then make a drawing of the part'); return; }
     const has=(docMode==='asm')?asmMeshes.flat().length:resultMeshes.length;
