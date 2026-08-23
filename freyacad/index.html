@@ -2664,12 +2664,43 @@ const CSG = (function(){
   const AXDIR={X:{x:1,y:0,z:0},Y:{x:0,y:1,z:0},Z:{x:0,y:0,z:1}};
   /* 'X'|'Y'|'Z' stays a world axis through the origin; 'ax:<id>' resolves an
      axis feature to {o,d}. */
+  /* Every way of defining an axis boils down to a point and a direction.
+     Two planes give the line they share; a plane and a direction give the
+     normal through a point; and the plain XYZ form is still there. */
+  function planeOf(name){
+    if(DATUM[name])return {o:new THREE.Vector3(0,0,0),n:new THREE.Vector3(
+      DATUM[name].n.x,DATUM[name].n.y,DATUM[name].n.z).normalize()};
+    const pf=features.find(x=>x.type==='dplane'&&(x.name===name||('dp:'+x.id)===name));
+    if(pf){ try{ const fr=planeFrame({kind:'dplane',refId:pf.id});
+      return {o:fr.o.clone(),n:fr.n.clone().normalize()}; }catch(_){ } }
+    return null;
+  }
+  function axisGeom(af){
+    const M=af.method||'dir';
+    if(M==='planes'){
+      const A=planeOf(af.pa||'Top'), B=planeOf(af.pb||'Front');
+      if(!A||!B) throw new Error('needs two planes');
+      const d=A.n.clone().cross(B.n);
+      if(d.lengthSq()<1e-12) throw new Error('those planes are parallel — they never meet');
+      d.normalize();
+      // a point on both planes: solve the 2x2 in the plane normals
+      const d1=A.n.dot(A.o), d2=B.n.dot(B.o), dot=A.n.dot(B.n), det=1-dot*dot;
+      const o=A.n.clone().multiplyScalar((d1-d2*dot)/det)
+        .addScaledVector(B.n,(d2-d1*dot)/det);
+      return {o:{x:o.x,y:o.y,z:o.z}, d:{x:d.x,y:d.y,z:d.z}};
+    }
+    if(M==='normal'){
+      const A=planeOf(af.pa||'Top'); if(!A) throw new Error('needs a plane');
+      return {o:{x:af.px,y:af.py,z:af.pz}, d:{x:A.n.x,y:A.n.y,z:A.n.z}};
+    }
+    return {o:{x:af.px,y:af.py,z:af.pz}, d:AXDIR[af.dir]};
+  }
   function resolveAxis(spec){
     if(typeof spec==='string'&&spec.startsWith('ax:')){
       const af=features.find(x=>x.id===+spec.slice(3)&&x.type==='daxis');
       if(!af) throw new Error('its axis was deleted');
       if(af.suppressed) throw new Error('its axis is suppressed');
-      return {o:{x:af.px,y:af.py,z:af.pz}, d:AXDIR[af.dir]};
+      return axisGeom(af);
     }
     return spec;
   }
@@ -2879,7 +2910,9 @@ const CSG = (function(){
         border.renderOrder=2;
         refOverlay.add(fill); refOverlay.add(border);
       } else if(f.type==='daxis'){
-        const d=AXDIR[f.dir], o=new THREE.Vector3(f.px,f.py,f.pz), dv=new THREE.Vector3(d.x,d.y,d.z);
+        let g; try{ g=axisGeom(f); }catch(_){ g=null; }
+        if(!g)continue;
+        const o=new THREE.Vector3(g.o.x,g.o.y,g.o.z), dv=new THREE.Vector3(g.d.x,g.d.y,g.d.z);
         const L=14;
         const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints([
           o.clone().addScaledVector(dv,-L), o.clone().addScaledVector(dv,L)]),
@@ -5079,7 +5112,7 @@ const CSG = (function(){
     if(type==='chamfer')return {id:nextId(),type:'fillet',name:'Chamfer'+cnt('fillet'),kind:'chamfer',r:0.5,propagate:true,seeds:selectedEdges.map(s=>({mid:s.mid.slice(),dir:s.dir.slice()})),suppressed:false};
     if(type==='rcut'){const f={id:nextId(),type:'revolve',name:'RevolveCut'+cnt('revolve'),sketchId:sid,angle:360,axis:'v',operation:'cut',merge:true,segments:48,suppressed:false};return f;}
     if(type==='dplane')return {id:nextId(),type:'dplane',name:'Plane'+cnt('dplane'),base:'Top',offset:5,suppressed:false};
-    if(type==='daxis')return {id:nextId(),type:'daxis',name:'Axis'+cnt('daxis'),dir:'Y',px:0,py:0,pz:0,suppressed:false};
+    if(type==='daxis')return {id:nextId(),type:'daxis',name:'Axis'+cnt('daxis'),method:'planes',pa:'Top',pb:'Front',dir:'Y',px:0,py:0,pz:0,suppressed:false};
     if(type==='mirror')return {id:nextId(),type:'mirror',name:'Mirror'+cnt('mirror'),plane:'Right',merge:true,suppressed:false};
     if(type==='lpattern')return {id:nextId(),type:'lpattern',name:'LPattern'+cnt('lpattern'),dir:'X',count:3,spacing:4,merge:false,suppressed:false};
     if(type==='cpattern')return {id:nextId(),type:'cpattern',name:'CPattern'+cnt('cpattern'),axis:'Y',count:6,angle:360,equal:true,merge:false,suppressed:false};
@@ -5515,10 +5548,27 @@ const CSG = (function(){
       add(fieldNumber('Offset along normal',f.offset,0.5,null,null,'units',v=>{f.offset=v;rerun();}));
       const nt=document.createElement('div');nt.className='note';nt.textContent='Right-click the plane in the feature tree to start a sketch on it.';add(nt);
     } else if(f.type==='daxis'){
-      add(fieldSeg('Direction',[{l:'X',v:'X'},{l:'Y',v:'Y'},{l:'Z',v:'Z'}],f.dir,v=>{f.dir=v;rerun();}));
-      add(fieldNumber('Position X',f.px,0.5,null,null,'units',v=>{f.px=v;rerun();}));
-      add(fieldNumber('Position Y',f.py,0.5,null,null,'units',v=>{f.py=v;rerun();}));
-      add(fieldNumber('Position Z',f.pz,0.5,null,null,'units',v=>{f.pz=v;rerun();}));
+      const planes=['Top','Front','Right']
+        .concat(features.filter(x=>x.type==='dplane').map(x=>x.name))
+        .map(n=>({l:n,v:n}));
+      add(fieldSeg('Defined by',[{l:'Two planes',v:'planes'},{l:'Normal to a plane',v:'normal'},
+        {l:'Position + direction',v:'dir'}],f.method||'dir',v=>{f.method=v;rerun();openProps(f);}));
+      if((f.method||'dir')==='planes'){
+        add(fieldSeg('First plane',planes,f.pa||'Top',v=>{f.pa=v;rerun();}));
+        add(fieldSeg('Second plane',planes,f.pb||'Front',v=>{f.pb=v;rerun();}));
+        const n2=document.createElement('div');n2.className='note';
+        n2.textContent='The axis runs along the line where the two planes meet.';add(n2);
+      } else if((f.method||'dir')==='normal'){
+        add(fieldSeg('Plane',planes,f.pa||'Top',v=>{f.pa=v;rerun();}));
+        add(fieldNumber('Through X',f.px,0.5,null,null,'units',v=>{f.px=v;rerun();}));
+        add(fieldNumber('Through Y',f.py,0.5,null,null,'units',v=>{f.py=v;rerun();}));
+        add(fieldNumber('Through Z',f.pz,0.5,null,null,'units',v=>{f.pz=v;rerun();}));
+      } else {
+        add(fieldSeg('Direction',[{l:'X',v:'X'},{l:'Y',v:'Y'},{l:'Z',v:'Z'}],f.dir,v=>{f.dir=v;rerun();}));
+        add(fieldNumber('Position X',f.px,0.5,null,null,'units',v=>{f.px=v;rerun();}));
+        add(fieldNumber('Position Y',f.py,0.5,null,null,'units',v=>{f.py=v;rerun();}));
+        add(fieldNumber('Position Z',f.pz,0.5,null,null,'units',v=>{f.pz=v;rerun();}));
+      }
       const nt=document.createElement('div');nt.className='note';nt.textContent='Revolves and circular patterns can pick this axis in their Axis field.';add(nt);
     }
     const supp=fieldCheck('Suppress feature',f.suppressed,v=>{f.suppressed=v;rerun();});
