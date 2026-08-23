@@ -376,19 +376,15 @@ if(!window.THREE){
   /* sketch anchor chip — SW-style defined/under-defined status */
   /* top-left of the drawing area: the dock is centred, so centring these put
      them straight underneath it */
-  #sk-anchor{position:fixed;top:117px;left:238px;z-index:24;display:none;
-    font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
-    padding:4px 12px;border-radius:20px;border:1px solid var(--line);background:var(--panel);
-    pointer-events:none}
+  #sk-anchor{display:none;align-items:center;gap:5px;font-family:var(--mono);font-size:10.5px;
+    padding:3px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted);
+    white-space:nowrap;margin-right:2px}
   #sk-anchor.ok{color:var(--g-green);border-color:rgba(52,168,83,.5);text-shadow:0 0 6px rgba(52,168,83,.5)}
   #sk-anchor.no{color:#8ab4f8;border-color:rgba(66,133,244,.45)}
   /* which build is this tab actually running — ends every "did the refresh
      take?" debate in one glance */
   #build-tag{position:fixed;right:8px;bottom:4px;z-index:21;font-family:var(--mono);
     font-size:9px;color:var(--muted-2);opacity:.65;pointer-events:none;user-select:none}
-  #sk-plane{position:fixed;top:143px;left:238px;z-index:24;display:none;pointer-events:none;
-    font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;
-    color:var(--muted);text-shadow:0 0 6px rgba(0,0,0,.8)}
 
   #tree-collapse{margin-left:auto;padding:1px 6px;font-size:11px;line-height:1.2;border-radius:5px}
   .tree-sect{font-family:var(--mono);font-size:9px;letter-spacing:.16em;text-transform:uppercase;
@@ -478,8 +474,6 @@ if(!window.THREE){
 <div id="tool-cursor" aria-hidden="true"></div>
 <div id="boot" aria-hidden="true"></div>
 <canvas id="navcube" width="208" height="208" title="Drag to orbit · click a face for that view"></canvas>
-<div id="sk-anchor" aria-hidden="true"></div>
-<div id="sk-plane" aria-hidden="true"></div>
 <div id="dim-preview" class="dim-label" style="display:none;pointer-events:none"></div>
 <div id="app">
   <header class="toolbar">
@@ -534,6 +528,8 @@ if(!window.THREE){
       <button id="btn-redo" class="btn-ghost" title="Redo (Ctrl+Y)" disabled>↷</button>
       <button id="btn-labels" class="btn-ghost" title="Show or hide button and menu labels — icons only">Aa</button>
       <button id="btn-help" class="btn-ghost" title="Live help — tips that follow what you're doing">?</button>
+      <button id="btn-customise" class="btn-ghost" title="Customise the right-click menus"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 4.5h7M12 4.5h2M2 11.5h2M7 11.5h7"/><circle cx="10.5" cy="4.5" r="1.6"/><circle cx="5.5" cy="11.5" r="1.6"/></svg><span class="lbl">Tools</span></button>
+      <span id="sk-anchor" aria-hidden="true"></span>
       <button id="btn-manual" class="btn-ghost" title="The manual — every tool, explained (F1)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.2 2.6h4.2c.9 0 1.6.7 1.6 1.6v9.2c0-.7-.6-1.3-1.3-1.3H2.2z"/><path d="M13.8 2.6H9.6c-.9 0-1.6.7-1.6 1.6v9.2c0-.7.6-1.3 1.3-1.3h4.5z"/></svg><span class="lbl">Manual</span></button>
       <button id="btn-demo-tgl" class="btn-ghost" title="Show or hide the pillow-block demo part (also controls whether it loads on startup)">Demo</button>
     </div>
@@ -911,15 +907,24 @@ const CSG = (function(){
     const auto=(docMode==='part')&&(mode==='model')&&features.length===0;
     const anyPinned=datumShow.Top||datumShow.Front||datumShow.Right;
     datumGroup.visible=(docMode==='part')&&(auto||anyPinned);
+    const hov=treeHover?treeHover.split(':'):null;
+    const hovPlane=(hov&&hov[0]==='plane')?hov[1]:null;
+    const hovAxis =(hov&&hov[0]==='axis') ?hov[1]:null;
+    if(hovPlane||hovAxis)datumGroup.visible=(docMode==='part');
     for(const m of datumPlanes){
-      const on=auto||!!datumShow[m.userData.plane];
+      const lit=hovPlane===m.userData.plane;          // hovered in the tree
+      const on=auto||!!datumShow[m.userData.plane]||lit;
+      if(m.material)m.material.opacity=lit?0.34:0.12;
       m.visible=on;
       if(m.userData.border)m.userData.border.visible=on;
       if(m.userData.label)m.userData.label.visible=on;
     }
     // axes are opt-in only — they'd clutter the empty-part plane picker
-    for(const ln of originAxes)
-      ln.visible=(docMode==='part')&&!!axisShow[ln.userData.axis];
+    for(const ln of originAxes){
+      const lit=hovAxis===ln.userData.axis;
+      ln.visible=(docMode==='part')&&(!!axisShow[ln.userData.axis]||lit);
+      if(ln.material){ln.material.opacity=lit?1:0.75;ln.material.linewidth=lit?2:1;}
+    }
     if(!auto)setDatumHover(null);          // only clickable as the empty-part picker
     const db=$('btn-demo'); if(db)db.style.display=auto?'':'none';
   }
@@ -1026,8 +1031,8 @@ const CSG = (function(){
     traceGroup.visible=true;
     tickLabelScale();
     drawOrigin(fr,n);
-    const pl=$('sk-plane');
-    if(pl){ pl.textContent=planeLabelOf(editing); pl.style.display=pl.textContent?'block':'none'; }
+    // the plane name used to sit in the top-left of the viewport; the tree
+    // and the view already say which plane you are on, so it has gone
   }
   function planeLabelOf(f){
     if(!f||!f.plane)return '';
@@ -1403,7 +1408,7 @@ const CSG = (function(){
   function updateAnchorChip(sk){
     const el=$('sk-anchor');if(!el)return;
     if(mode!=='sketch'||!sk){el.style.display='none';return;}
-    el.style.display='block';
+    el.style.display='inline-flex';
     const st=defineState(sk),total=st.length;
     if(!total){el.className='';el.textContent='sketch empty — start at the origin marker';return;}
     const dof=st.reduce((a,s)=>a+s.dof,0);
@@ -3018,6 +3023,32 @@ const CSG = (function(){
         bl.renderOrder=10; selGroupSk.add(bl);
       }
     }
+    /* SolidWorks marks a mirror line with little ticks; ours does the same
+       while Mirror is picking or Dynamic mirror is armed, so the axis in force
+       is never in doubt. */
+    const axRef=(tool==='mirror'&&mirrorAxis)?mirrorAxis
+      :(editing.dynMirror?editing.dynMirror:null);
+    if(axRef){
+      const s2=segPts(editing,axRef);
+      if(s2){
+        const dx=s2.b.x-s2.a.x, dy=s2.b.y-s2.a.y, L=Math.hypot(dx,dy)||1;
+        const ux=dx/L, uy=dy/L, nx=-uy, ny=ux, T=0.5;
+        const col=editing.dynMirror?0x34A853:0xFBBC05;
+        const put=(p1,p2)=>{
+          const w=[worldFromSketch(editing.frame,p1.x,p1.y),worldFromSketch(editing.frame,p2.x,p2.y)];
+          const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(w),
+            new THREE.LineBasicMaterial({color:col,depthTest:false,transparent:true,opacity:0.95}));
+          ln.renderOrder=11; selGroupSk.add(ln);
+        };
+        for(const t of [0.22,0.5,0.78]){            // three pairs of ticks
+          const cx=s2.a.x+dx*t, cy=s2.a.y+dy*t;
+          for(const off of [-0.35,0.35]){
+            const bx=cx+ux*off, by=cy+uy*off;
+            put({x:bx-nx*T,y:by-ny*T},{x:bx+nx*T,y:by+ny*T});
+          }
+        }
+      }
+    }
     if(!sketchSel)return;
     const e=editing.entities[sketchSel.entIdx]; if(!e)return;
     let pts=null;
@@ -3351,7 +3382,7 @@ const CSG = (function(){
     while(sketchOverlay.children.length){const c=sketchOverlay.children.pop();if(c.geometry)c.geometry.dispose();}
     const sd=sketchData[editing.id];
     if(sd)drawEntityLoopsColored(sketchOverlay,editing,sd.frame);
-    redrawHandles();
+    redrawHandles(); drawSketchSel();
   }
   // (the old blue dot that trailed the pointer is gone — the tool badge and
   // the snap markers do that job now)
@@ -3619,7 +3650,7 @@ const CSG = (function(){
           pushUndo('dynamic mirror'); editing.dynMirror={ent:d.entIdx,seg:d.seg};
           setHint('Dynamic mirror on — everything you draw now appears both sides');
         }
-        rebuild();
+        rebuild(); drawSketchSel(); dockSel();
       } else setHint('Click a straight line to mirror about');
     } else if(tool==='coinc'){
       /* a click on a circle or polygon means its centre — the rim is a far
@@ -5115,6 +5146,12 @@ const CSG = (function(){
     ' 18.4 18.6 12 18.6 1.8 12 1.8 12Z"/><circle cx="12" cy="12" r="3.1"/></svg>';
   const datumShow={Top:false,Front:false,Right:false};
   const axisShow={X:false,Y:false,Z:false};
+  let treeHover=null;            // {kind:'plane'|'axis', name} under the cursor in the tree
+  function setTreeHover(kind,name){
+    const k=name?(kind+':'+name):null;
+    if(k===treeHover)return;
+    treeHover=k; updateDatumVis();
+  }
   function sketchConsumedBy(f){ return features.find(x=>x.sketchId===f.id)||null; }
   function sketchVisible(f){
     if(editing&&editing.id===f.id) return true;      // open for editing
@@ -5168,6 +5205,8 @@ const CSG = (function(){
         (datumShow[nm]?`<span class="fshow" title="visible">${EYE_SVG}</span>`:'');
       const toggle=()=>{ datumShow[nm]=!datumShow[nm]; updateDatumVis(); refreshTree(); };
       el.addEventListener('click',toggle);
+      el.addEventListener('mouseenter',()=>setTreeHover('plane',nm));
+      el.addEventListener('mouseleave',()=>setTreeHover(null,null));
       el.addEventListener('contextmenu',e=>{
         e.preventDefault(); e.stopPropagation();
         buildCtxMenu(e.clientX,e.clientY,[
@@ -5188,6 +5227,8 @@ const CSG = (function(){
         (axisShow[ax]?`<span class="fshow" title="visible">${EYE_SVG}</span>`:'');
       const tg=()=>{ axisShow[ax]=!axisShow[ax]; updateDatumVis(); refreshTree(); };
       el.addEventListener('click',tg);
+      el.addEventListener('mouseenter',()=>setTreeHover('axis',ax));
+      el.addEventListener('mouseleave',()=>setTreeHover(null,null));
       el.addEventListener('contextmenu',ev=>{
         ev.preventDefault(); ev.stopPropagation();
         buildCtxMenu(ev.clientX,ev.clientY,[
@@ -6008,7 +6049,13 @@ const CSG = (function(){
      One entry per command, and a layout that says which section each lives in
      and in what order. The right-click menu is built from this, the dock hides
      what the layout hides, and the Customise dialog rearranges it by drag. */
-  const setTool=t=>()=>{tool=t;chain=null;mirrorAxis=null;draftStage=0;draftA=null;
+  const setTool=t=>()=>{
+    // arming Dynamic mirror twice turns it off, like the SW toggle
+    if(t==='dynmirror'&&editing&&editing.dynMirror){
+      pushUndo('dynamic mirror off'); editing.dynMirror=null; tool='select';
+      rebuild(); drawSketchSel(); dockSel(); setHint('Dynamic mirror off'); return;
+    }
+    tool=t;chain=null;mirrorAxis=null;draftStage=0;draftA=null;
     paralRef=null;equalRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;
     hoverSnap=null;dimPick=null;drawSnapMark();redrawHandles();dockSel();};
   const CMD={
@@ -6142,8 +6189,6 @@ const CSG = (function(){
           fn:c.tool?setTool(c.tool):c.fn});
       }
     }
-    items.push({sect:'—'});
-    items.push({ic:'edit',label:'Customise tools…',fn:openCustomise});
     buildCtxMenu(x,y,items,{cols:true});
   }
   /* right-click on a feature-tree row */
@@ -6423,6 +6468,7 @@ const CSG = (function(){
   $('btn-iso').addEventListener('click',viewIso);
   $('btn-fitall').addEventListener('click',fitAll);
   $('btn-proj').addEventListener('click',()=>setProjection(!orthoOn));
+  $('btn-customise').addEventListener('click',openCustomise);
   $('btn-manual').addEventListener('click',openManual);
   function openManual(){
     if($('manual-ov'))return;
@@ -6524,13 +6570,19 @@ const CSG = (function(){
     else addFeature(a);
   }));
   $('dock').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+    // the dock duplicates the tool switch, so the Dynamic mirror toggle has
+    // to live here as well as in setTool
+    if(b.dataset.tool==='dynmirror'&&editing&&editing.dynMirror){
+      pushUndo('dynamic mirror off'); editing.dynMirror=null; tool='select';
+      rebuild(); drawSketchSel(); dockSel(); setHint('Dynamic mirror off'); return;
+    }
     tool=b.dataset.tool;chain=null;mirrorAxis=null;draftStage=0;draftA=null;paralRef=null;equalRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();
     $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));
     // a line already picked with the Pointer? apply the constraint to it now,
     // rather than making the user click the icon and then the line
     if(applyConstraintToSelection(tool)){ tool='select'; }
     if(tool==='erase'&&boxSel&&editing){ deleteBoxSel(); tool='select'; }
-    syncRotateGate(); syncCursor(); syncDockVisibility(); if(tool!=='select')clearSketchSel();
+    syncRotateGate(); syncCursor(); syncDockVisibility(); drawSketchSel(); if(tool!=='select')clearSketchSel();
     $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.tool===tool));
     redrawDraft(null);redrawHandles();updateHint();
   }));
@@ -6727,7 +6779,8 @@ const CSG = (function(){
   function dockSel(){
     // picking the eraser with a box selection live is a delete instruction
     if(tool==='erase'&&boxSel&&editing){ deleteBoxSel(); tool='select'; }
-    $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.tool===tool));
+    $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',
+      x.dataset.tool===tool||(x.dataset.tool==='dynmirror'&&!!(editing&&editing.dynMirror))));
     // every tool change lands here (dock, menus, keyboard) — a live line run
     // must not survive into another tool and quietly extend an old entity
     if(tool!=='line'&&chain){chain=null;}
