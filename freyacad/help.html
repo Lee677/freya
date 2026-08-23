@@ -615,30 +615,47 @@ mates. A component that is <b>fixed</b> won't move, and nothing mated to it can 
 first part you insert is fixed automatically, so everything else lands relative to it. Unfix
 a part and any mate that had nowhere to give settles straight away.</p>
 
+<h3>The origin</h3>
+<p>An assembly has the same <b>origin</b> a part does: Top, Front and Right planes and the X,
+Y and Z axes, at the head of the tree, click to show or hide. They are fixed — nothing moves
+them — which makes them the natural thing to build an assembly around. <b>Parts can be mated
+to them</b>, so you can sit a part on the Top plane or run it down the Y axis without needing
+another part to reference.</p>
+
 <h3>Mates</h3>
 <p>Both mates work by <b>picking faces</b>, one on each part. Choose the mate, click the face
 on the part you want to move, then click the face it should meet. Faces light up as the
 cursor passes over them, the first pick stays highlighted in amber, and <kbd>Esc</kbd>
 cancels. If a face is the wrong sort for the mate you chose, the pick is refused and says so
 rather than doing something surprising.</p>
+<p>The <b>second</b> pick can be the origin instead of another part: an origin plane for a
+coincident mate, an origin axis for a concentric one. Whichever sort the mate needs appears
+on its own as soon as you start it, so there's nothing to turn on first. The first pick is
+always a face on the part you want to move — the origin can't travel, so it can't be the
+thing that moves.</p>
 <table>
   <tr><th>Mate</th><th>Pick</th><th>Does</th></tr>
-  <tr><td><b>Concentric</b></td><td>Two round faces</td><td>Puts the two on a common axis —
-    a pin into a hole, a boss into a counterbore. The part is free to slide along that axis
-    and to spin about it afterwards.</td></tr>
-  <tr><td><b>Coincident</b></td><td>Two flat faces</td><td>Sets the faces against each other,
-    face to face. The part is free to slide about on that plane afterwards.</td></tr>
+  <tr><td><b>Concentric</b></td><td>Two round faces, or a round face and an <b>origin
+    axis</b></td><td>Puts the two on a common axis — a pin into a hole, a boss into a
+    counterbore, a shaft onto Y. The part stays free to slide along that axis and spin about
+    it.</td></tr>
+  <tr><td><b>Coincident</b></td><td>Two flat faces, or a flat face and an <b>origin
+    plane</b></td><td>Sets the faces against each other, face to face. The part stays free to
+    slide about on that plane.</td></tr>
 </table>
 <p>Faces are recovered from the part's own geometry, so a hole reads as a hole and its
 diameter is reported back when the mate lands. If both parts are fixed, nothing can move and
-the mate says so; otherwise the part whose face you picked first is the one that travels.</p>
+the mate says so — and since the origin never moves, mating a <em>fixed</em> part to it is
+refused the same way. Otherwise the part whose face you picked first is the one that
+travels.</p>
 
 <h3>Mates hold</h3>
 <p>A mate is a <b>relation, not a one-off move</b>. Once it's on, it stays true: drag the part
 afterwards and it slides within whatever freedoms the mate leaves it, rather than coming
 loose. A pin mated concentric into a hole runs up and down that hole and spins in it, but
 will not come out sideways. Add a coincident mate on its end face as well and it's located
-outright, with only the spin left.</p>
+outright, with only the spin left. Mates to the origin hold in exactly the same way — a part
+run down the Y axis stays on it however you drag.</p>
 <p>Dragging a part <b>tows its neighbours</b>. The part under the cursor keeps its ground and
 anything mated to it that isn't fixed follows along, so a stack moves as a stack. Typing a
 position into the panel works the same way, and the boxes are corrected to where the part

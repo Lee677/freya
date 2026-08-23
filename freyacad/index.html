@@ -860,6 +860,10 @@ const CSG = (function(){
     }
   })();
   let hoveredDatum=null;
+  /* Declared up here with the datum geometry it drives: an assembly mate that
+     is waiting for a pick has to make the origin planes and axes visible, and
+     updateDatumVis runs long before the assembly code is reached. */
+  let mateSel=null, mateHi=[];        // mate in progress: {kind,a,hover} + its highlight meshes
   (function buildDatumPlanes(){
     const SZ=9;
     function label(text){
@@ -909,18 +913,26 @@ const CSG = (function(){
     return h?h.object:null;
   }
   function updateDatumVis(){
-    // shown automatically on an empty part, or individually from the tree
+    /* Shown automatically on an empty part, individually from the tree, and —
+       in an assembly — for as long as a mate is waiting for a pick, because
+       you cannot click what isn't drawn. The origin is ground in an assembly
+       just as it is in a part, so parts mate to it. */
+    const isA=docMode==='asm', live=isA||docMode==='part';
     const auto=(docMode==='part')&&(mode==='model')&&features.length===0;
+    const matePick=isA&&!!mateSel;
     const anyPinned=datumShow.Top||datumShow.Front||datumShow.Right;
-    datumGroup.visible=(docMode==='part')&&(auto||anyPinned);
+    datumGroup.visible=live&&(auto||anyPinned||matePick);
     const hov=treeHover?treeHover.split(':'):null;
     const hovPlane=(hov&&hov[0]==='plane')?hov[1]:null;
     const hovAxis =(hov&&hov[0]==='axis') ?hov[1]:null;
-    if(hovPlane||hovAxis)datumGroup.visible=(docMode==='part');
+    if(hovPlane||hovAxis)datumGroup.visible=live;
+    // while picking, only show the sort of datum the mate can actually use
+    const wantP=!matePick||mateSel.kind==='coincident';
+    const wantA=!matePick||mateSel.kind==='concentric';
     for(const m of datumPlanes){
       const lit=hovPlane===m.userData.plane;          // hovered in the tree
-      const on=auto||!!datumShow[m.userData.plane]||lit;
-      if(m.material)m.material.opacity=lit?0.34:0.12;
+      const on=(auto||(matePick&&wantP)||!!datumShow[m.userData.plane]||lit);
+      if(m.material)m.material.opacity=lit?0.34:(matePick&&wantP?0.2:0.12);
       m.visible=on;
       if(m.userData.border)m.userData.border.visible=on;
       if(m.userData.label)m.userData.label.visible=on;
@@ -928,10 +940,10 @@ const CSG = (function(){
     // axes are opt-in only — they'd clutter the empty-part plane picker
     for(const ln of originAxes){
       const lit=hovAxis===ln.userData.axis;
-      ln.visible=(docMode==='part')&&(!!axisShow[ln.userData.axis]||lit);
+      ln.visible=live&&(!!axisShow[ln.userData.axis]||lit||(matePick&&wantA));
       if(ln.material){ln.material.opacity=lit?1:0.75;ln.material.linewidth=lit?2:1;}
     }
-    if(!auto)setDatumHover(null);          // only clickable as the empty-part picker
+    if(!auto&&!matePick)setDatumHover(null);   // clickable as the plane picker, or for a mate
     const db=$('btn-demo'); if(db)db.style.display=auto?'':'none';
   }
 
@@ -5777,12 +5789,16 @@ const CSG = (function(){
                       const was=comp.id; comp.id=cuid++; idMap.set(was,comp.id);
                       asm.components.push(comp); buildComponent(comp);
                   }
+                  const remap=end=>{           // origin ends carry no id to remap
+                      if(!end)return false;
+                      if(end.datum)return true;
+                      const n=idMap.get(end.comp);
+                      if(n==null)return false;
+                      end.comp=n; return true;
+                  };
                   for(const m of (data.mates||[])){
-                      if(!m||!m.a||!m.b)continue;
-                      const a=idMap.get(m.a.comp), b=idMap.get(m.b.comp);
-                      if(a==null||b==null)continue;
-                      m.a.comp=a; m.b.comp=b; m.id=mateUid++;
-                      asm.mates.push(m);
+                      if(!m||!remap(m.a)||!remap(m.b))continue;
+                      m.id=mateUid++; asm.mates.push(m);
                   }
                   reportSolve(solveMates({}));   // the file records the relations; the positions follow
                   refreshAsmUI(); fitAll();
@@ -5936,15 +5952,18 @@ const CSG = (function(){
     if(docMode==='asm'){
       if(asmDrag){ asmPointerMove(e); return; }
       if(mateSel){
-        // preview the face the click would take — the pick is the hard part of
+        // preview the end the click would take — the pick is the hard part of
         // a mate, so never make the user guess what the cursor is over
-        const f=faceAt(e), want=wantKind(mateSel.kind);
-        const key=f?(f.mesh.id+':'+f.seed):null;
+        const f=mateEndAt(e), want=wantKind(mateSel.kind);
+        const key=f?(f.datum?'d:'+f.datum:f.mesh.id+':'+f.seed):null;
         if(key!==mateSel.hover){
           mateSel.hover=key;
           while(mateHi.length>(mateSel.a?1:0)){ const m=mateHi.pop();
             if(m.parent)m.parent.remove(m); m.geometry.dispose(); m.material.dispose(); }
-          if(f&&f.kind===want&&(!mateSel.a||f.compId!==mateSel.a.compId))faceHilite(f,0x35d4e6);
+          const usable=f&&f.kind===want&&
+            (f.datum ? !!mateSel.a          // the origin is only ever the second pick
+                     : (!mateSel.a||f.compId!==mateSel.a.compId));
+          if(usable)faceHilite(f,0x35d4e6);
         }
         canvas.style.cursor='crosshair';
         return;
@@ -6517,7 +6536,6 @@ const CSG = (function(){
   let asm={components:[],mates:[]};   // component: {id,name,features,t:{x,y,z,rx,ry,rz},fixed}
   let asmSel=null, cuid=1;
   let asmMeshes=[], asmShapes=[];     // parallel to asm.components; shapes are untransformed
-  let mateSel=null, mateHi=[];        // mate in progress: {kind,a,hover} + its highlight meshes
   const D2R=Math.PI/180;
 
   /* run a feature list through the engine without touching the open part */
@@ -6601,6 +6619,36 @@ const CSG = (function(){
   }
   function refreshAsmTree(){
     tree.innerHTML='';
+    /* The origin is ground in an assembly exactly as it is in a part: three
+       planes and three axes that never move and that parts can be mated to.
+       Same section, same toggles, so it reads the same in both documents. */
+    const osect=document.createElement('div'); osect.className='tree-sect fold';
+    osect.innerHTML='<span class="twist">'+(originCollapsed?'+':'−')+'</span>Origin';
+    osect.title=originCollapsed?'Show the origin planes and axes':'Hide the origin planes and axes';
+    osect.addEventListener('click',()=>{ originCollapsed=!originCollapsed; refreshAsmTree(); });
+    tree.appendChild(osect);
+    if(!originCollapsed){
+      const row=(kind,nm,ic,shown,toggle)=>{
+        const el=document.createElement('div');
+        el.className='feat datum'+(shown?' shown':'');
+        el.title=nm+' — click to show or hide; parts can be mated to it';
+        el.innerHTML='<span class="twist"></span>'+icHTML(ic)+
+          `<span class="fname">${nm}</span>`+
+          (shown?`<span class="fshow" title="visible">${EYE_SVG}</span>`:'');
+        el.addEventListener('click',toggle);
+        el.addEventListener('mouseenter',()=>setTreeHover(kind,nm.split(' ')[0]));
+        el.addEventListener('mouseleave',()=>setTreeHover(null,null));
+        tree.appendChild(el);
+      };
+      for(const nm of ['Top','Front','Right'])
+        row('plane',nm+' plane','dplane',datumShow[nm],
+          ()=>{ datumShow[nm]=!datumShow[nm]; updateDatumVis(); refreshAsmTree(); });
+      for(const ax of ['X','Y','Z'])
+        row('axis',ax+' axis','daxis',axisShow[ax],
+          ()=>{ axisShow[ax]=!axisShow[ax]; updateDatumVis(); refreshAsmTree(); });
+    }
+    const csect=document.createElement('div'); csect.className='tree-sect'; csect.textContent='Components';
+    tree.appendChild(csect);
     asm.components.forEach(comp=>{
       const el=document.createElement('div');
       el.className='feat'+(comp.id===asmSel?' sel':'')+(comp.error?' errored':'');
@@ -6801,9 +6849,34 @@ const CSG = (function(){
     if(!hit||hit.faceIndex==null)return null;
     const m=hit.object; m.updateMatrixWorld(true);
     const fit=fitFace(m.geometry,hit.faceIndex); if(!fit)return null;
-    return {kind:fit.kind,r:fit.r,mesh:m,seed:hit.faceIndex,compId:m.userData.compId,
+    return {kind:fit.kind,r:fit.r,mesh:m,seed:hit.faceIndex,compId:m.userData.compId,dist:hit.distance,
       p:fit.p.clone().applyMatrix4(m.matrixWorld),
       d:fit.d.clone().transformDirection(m.matrixWorld).normalize()};
+  }
+  /* The origin planes and axes are pickable ends too. They read as a face with
+     no component: an origin plane is a flat face at the origin, an origin axis
+     is a round face of no radius. Nothing else in the mate code has to know. */
+  function datumAt(e){
+    const r=canvas.getBoundingClientRect();ndc.x=((e.clientX-r.left)/r.width)*2-1;ndc.y=-((e.clientY-r.top)/r.height)*2+1;
+    raycaster.setFromCamera(ndc,camera);
+    const vis=datumPlanes.filter(m=>m.visible);
+    const hp=vis.length?raycaster.intersectObjects(vis,false)[0]:null;
+    const lines=originAxes.filter(l=>l.visible);
+    raycaster.params.Line.threshold=0.22*Math.max(1,controls.sph.radius/24);
+    const ha=lines.length?raycaster.intersectObjects(lines,false)[0]:null;
+    const pick=(ha&&(!hp||ha.distance<hp.distance))?ha:hp;
+    if(!pick)return null;
+    const nm=pick.object.userData.plane||pick.object.userData.axis;
+    return {kind:DATUM[nm]?'plane':'cyl', datum:nm, r:0, dist:pick.distance,
+      obj:pick.object, p:new THREE.Vector3(0,0,0), d:datumDir(nm)};
+  }
+  /* Whichever the ray reaches first wins — the origin planes cut through the
+     whole scene, so "a part always beats a plane" would put the Right plane
+     out of reach the moment anything sat on it. */
+  function mateEndAt(e){
+    const f=faceAt(e), g=datumAt(e);
+    if(f&&g)return (g.dist<f.dist-1e-6)?g:f;
+    return f||g;
   }
   /* ---- mates ---------------------------------------------------------------
      Pick a face on each part and the mate is solved from those two faces, not
@@ -6815,45 +6888,67 @@ const CSG = (function(){
     mateHi=[];
   }
   function faceHilite(f,color){
+    const mat=c=>new THREE.MeshBasicMaterial({color:c,transparent:true,opacity:0.5,
+      side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4});
+    if(f.datum){
+      let mm;
+      if(DATUM[f.datum]){                       // an origin plane: light the panel
+        mm=new THREE.Mesh(f.obj.geometry.clone(),mat(color));
+        f.obj.add(mm);
+      } else {                                  // an origin axis: a sleeve along it
+        const d=datumDir(f.datum), L=120, rr=0.16*Math.max(1,controls.sph.radius/24);
+        mm=new THREE.Mesh(new THREE.CylinderGeometry(rr,rr,L,10,1,true),mat(color));
+        mm.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),d);
+        mm.material.opacity=0.85; mm.material.depthTest=false;
+        scene.add(mm);
+      }
+      mm.renderOrder=8; mateHi.push(mm); return mm;
+    }
     const geom=f.mesh.geometry, ids=faceRegion(geom,f.seed);
     const pos=geom.attributes.position, idx=geom.index, arr=[];
     for(const t of ids)for(let j=0;j<3;j++){ const i=idx?idx.getX(t*3+j):t*3+j;
       arr.push(pos.getX(i),pos.getY(i),pos.getZ(i)); }
     const g=new THREE.BufferGeometry();
     g.setAttribute('position',new THREE.Float32BufferAttribute(arr,3));
-    const mm=new THREE.Mesh(g,new THREE.MeshBasicMaterial({color,transparent:true,opacity:0.5,
-      side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4}));
+    const mm=new THREE.Mesh(g,mat(color));
     mm.renderOrder=8; f.mesh.add(mm); mateHi.push(mm); return mm;
   }
   function startMate(kind){
-    if(asm.components.length<2)return setHint('Insert a second part before mating');
+    if(!asm.components.length)return setHint('Insert a part before mating');
     clearMateHi(); mateSel={kind,a:null,hover:null};
-    canvas.style.cursor='crosshair';
+    canvas.style.cursor='crosshair'; updateDatumVis();
     setHint(kind==='concentric'
-      ? 'Concentric: click a round face on the part to move, then the round face it should share an axis with (Esc cancels)'
-      : 'Coincident: click a flat face on the part to move, then the flat face it should sit against (Esc cancels)');
+      ? 'Concentric: click a round face on the part to move, then the round face or origin axis it should share an axis with (Esc cancels)'
+      : 'Coincident: click a flat face on the part to move, then the flat face or origin plane it should sit against (Esc cancels)');
     refreshAsmUI();
   }
+  function endMatePick(){ mateSel=null; clearMateHi(); canvas.style.cursor='default'; updateDatumVis(); }
   function cancelMate(quiet){
     if(!mateSel)return false;
-    mateSel=null; clearMateHi(); canvas.style.cursor='default';
+    endMatePick();
     if(!quiet)setHint('Mate cancelled');
     refreshAsmUI(); return true;
   }
   function wantKind(k){ return k==='concentric'?'cyl':'plane'; }
   function mateFaceClick(e){
-    const f=faceAt(e);
-    if(!f)return setHint('No face there — click on a part');
+    const f=mateEndAt(e);
     const need=wantKind(mateSel.kind);
+    if(!f)return setHint(need==='cyl'
+      ? 'Nothing there — click a round face, or one of the origin axes'
+      : 'Nothing there — click a flat face, or one of the origin planes');
     if(f.kind!==need)return setHint(need==='cyl'
-      ? 'That is not a round face — pick a hole or a boss'
-      : 'That is not a flat face — pick a planar one');
+      ? 'That is not a round face — pick a hole, a boss, or an origin axis'
+      : 'That is not a flat face — pick a planar one, or an origin plane');
     if(!mateSel.a){
+      if(f.datum)return setHint('Start with a face on the part you want to move — the origin can only be the second pick');
       mateSel.a=f; clearMateHi(); faceHilite(f,0xFBBC05);
-      setHint('Now click the matching face on the other part');
+      setHint(need==='cyl'
+        ? 'Now click the round face or origin axis it should share an axis with'
+        : 'Now click the flat face or origin plane it should sit against');
       return;
     }
-    if(f.compId===mateSel.a.compId)return setHint('Pick the second face on a different part');
+    if(!f.datum&&f.compId===mateSel.a.compId)
+      return setHint('Pick the second face on a different part, or on the origin');
     faceHilite(f,0x34A853);
     applyMate(mateSel.a,f,mateSel.kind);
   }
@@ -6886,13 +6981,29 @@ const CSG = (function(){
     c.t.x=rd(t.x);c.t.y=rd(t.y);c.t.z=rd(t.z);
     applyCompTransform(c);
   }
-  /* the stored face, in world, as the component sits right now */
+  /* the stored face, in world, as the component sits right now. An origin
+     plane or axis is ground: it sits at the world origin, never moves, and
+     `comp` is null, which is what makes mateStep treat it as immovable. */
   function endWorld(end){
+    if(end.datum){
+      const d=datumDir(end.datum); if(!d)return null;
+      return {comp:null, r:0, p:new THREE.Vector3(0,0,0), d};
+    }
     const c=compById(end.comp); if(!c)return null;
     const q=compQuat(c);
     return {comp:c, r:end.r,
       p:new THREE.Vector3(end.p[0],end.p[1],end.p[2]).applyQuaternion(q).add(compPos(c)),
       d:new THREE.Vector3(end.d[0],end.d[1],end.d[2]).applyQuaternion(q).normalize()};
+  }
+  function datumDir(name){
+    if(DATUM[name])return DATUM[name].n.clone();          // a plane, by its normal
+    const a=AXIS_DIR[name];                                // an origin axis
+    return a?new THREE.Vector3(a[0],a[1],a[2]):null;
+  }
+  function datumName(n){ return DATUM[n]?n+' plane':n+' axis'; }
+  function endLabel(end){
+    if(end.datum)return datumName(end.datum);
+    const c=compById(end.comp); return c?c.name:'?';
   }
   function mateError(m){
     const A=endWorld(m.a),B=endWorld(m.b);
@@ -6915,8 +7026,8 @@ const CSG = (function(){
   }
   function mateStep(m,lock,relax,prefer){
     const A=endWorld(m.a),B=endWorld(m.b); if(!A||!B)return;
-    const aFree=!A.comp.fixed&&!lock.has(A.comp.id);
-    const bFree=!B.comp.fixed&&!lock.has(B.comp.id);
+    const aFree=!!A.comp&&!A.comp.fixed&&!lock.has(A.comp.id);
+    const bFree=!!B.comp&&!B.comp.fixed&&!lock.has(B.comp.id);
     if(!aFree&&!bFree)return;                    // nothing here can give
     const aim=(m.kind==='concentric')
       ? (A.d.dot(B.d)<0?B.d.clone().negate():B.d.clone())   // nearest of the two senses
@@ -6933,13 +7044,14 @@ const CSG = (function(){
        of being dragged back by them. */
     let wa=aFree&&bFree?0.5:(aFree?1:0);
     if(aFree&&bFree&&prefer!=null){
-      if(A.comp.id===prefer)wa=0.12; else if(B.comp.id===prefer)wa=0.88;
+      if(A.comp&&A.comp.id===prefer)wa=0.12; else if(B.comp&&B.comp.id===prefer)wa=0.88;
     }
     const I=new THREE.Quaternion(), wb=1-wa;
     if(aFree&&wa>0)moveComp(A.comp,I.clone().slerp(R,wa*relax),A.p,Tv.clone().multiplyScalar(wa*relax));
     if(bFree&&wb>0)moveComp(B.comp,I.clone().slerp(R.clone().invert(),wb*relax),B.p,Tv.clone().multiplyScalar(-wb*relax));
   }
-  function liveMates(){ return asm.mates.filter(m=>compById(m.a.comp)&&compById(m.b.comp)); }
+  const endLives=e=>!!(e&&(e.datum?datumDir(e.datum):compById(e.comp)));
+  function liveMates(){ return asm.mates.filter(m=>endLives(m.a)&&endLives(m.b)); }
   function solveMates(opts){
     opts=opts||{};
     const lock=opts.lock||new Set(), live=liveMates();
@@ -6975,9 +7087,8 @@ const CSG = (function(){
   function restoreAsmT(s){ for(const r of s){ const c=compById(r.id);
     if(c){ Object.assign(c.t,r.t); applyCompTransform(c); } } }
   function mateLabel(m){
-    const a=compById(m.a.comp),b=compById(m.b.comp);
     return (m.kind==='concentric'?'Concentric':'Coincident')+
-      ' · '+(a?a.name:'?')+' ↔ '+(b?b.name:'?');
+      ' · '+endLabel(m.a)+' ↔ '+endLabel(m.b);
   }
   function removeMate(m){
     const i=asm.mates.indexOf(m); if(i<0)return;
@@ -6993,32 +7104,47 @@ const CSG = (function(){
      partner is held for that first solve only — after that both ends are as
      free as being unfixed makes them. */
   function applyMate(fa,fb,kind){
-    const ca=compById(fa.compId), cb=compById(fb.compId);
-    if(!ca||!cb)return cancelMate(true);
-    if(ca.fixed&&cb.fixed){ setHint('Both parts are fixed — unfix one to mate them'); return cancelMate(true); }
-    const local=(f,mesh)=>({comp:f.compId,r:f.r,seed:f.seed,
-      mi:(asmMeshes[asm.components.indexOf(compById(f.compId))]||[]).indexOf(f.mesh),
-      p:(()=>{const c=compById(f.compId),q=compQuat(c).invert();
-        return f.p.clone().sub(compPos(c)).applyQuaternion(q).toArray();})(),
-      d:f.d.clone().applyQuaternion(compQuat(compById(f.compId)).invert()).normalize().toArray()});
+    const ca=fa.datum?null:compById(fa.compId), cb=fb.datum?null:compById(fb.compId);
+    if(!ca&&!cb){ setHint('A mate needs at least one part — the origin can\'t move'); return cancelMate(true); }
+    if((!ca||ca.fixed)&&(!cb||cb.fixed)){
+      setHint(ca&&cb?'Both parts are fixed — unfix one to mate them'
+                   :'That part is fixed — unfix it to mate it to the origin');
+      return cancelMate(true);
+    }
+    /* An origin end stores only its name: it is ground, so there is nothing to
+       transform and nothing that can go stale. A part end stores its face in
+       the part's own coordinates. */
+    const local=f=>{
+      if(f.datum)return {datum:f.datum,r:0};
+      const c=compById(f.compId), qi=compQuat(c).invert();
+      return {comp:f.compId,r:f.r,seed:f.seed,
+        mi:(asmMeshes[asm.components.indexOf(c)]||[]).indexOf(f.mesh),
+        p:f.p.clone().sub(compPos(c)).applyQuaternion(qi).toArray(),
+        d:f.d.clone().applyQuaternion(qi).normalize().toArray()};
+    };
     const m={id:mateUid++,kind,a:local(fa),b:local(fb)};
     const snap=snapAsmT();
     asm.mates.push(m);
     /* Hold the second-picked part for the first solve so the part whose face
        was picked first is the one that travels — that is what the hint
-       promised while the faces were being chosen. */
-    const first=solveMates({lock:new Set(ca.fixed?[]:[cb.id])});
+       promised while the faces were being chosen. An origin end needs no hold;
+       it is immovable already. */
+    const hold=new Set(); if(cb&&ca&&!ca.fixed)hold.add(cb.id);
+    const first=solveMates({lock:hold});
     const r=first.ok?first:solveMates({});
     if(!r.ok){
       asm.mates.pop(); restoreAsmT(snap);
-      setHint('That mate can\'t be met with the others already on these parts — remove one first');
-      mateSel=null; clearMateHi(); canvas.style.cursor='default'; refreshAsmUI();
+      setHint('That mate can\'t be met with the others already there — remove one first');
+      endMatePick(); refreshAsmUI();
       return;
     }
-    asmSel=ca.id; mateSel=null; clearMateHi(); canvas.style.cursor='default';
+    const mover=(ca&&!ca.fixed)?ca:(cb&&!cb.fixed)?cb:(ca||cb);
+    if(mover)asmSel=mover.id;
+    endMatePick();
+    const an=ca?ca.name:datumName(fa.datum), bn=cb?cb.name:datumName(fb.datum);
     setHint(kind==='concentric'
-      ? ca.name+' is concentric with '+cb.name+' (Ø'+(2*fb.r).toFixed(2)+') — the mate holds from now on'
-      : ca.name+' sits flush against '+cb.name+' — the mate holds from now on');
+      ? an+' is concentric with '+bn+(fb.datum?'':' (Ø'+(2*fb.r).toFixed(2)+')')+' — the mate holds from now on'
+      : an+' sits flush against '+bn+' — the mate holds from now on');
     refreshAsmUI();
   }
   const ACMD={
@@ -7536,7 +7662,7 @@ const CSG = (function(){
     get asmMeshes(){ return asmMeshes; },
     addComponent, setDocMode, buildPartShapes, asmTransformedShapes, removeComponent,
     startMate, cancelMate, fitFace, faceRegion, applyMate, applyCompTransform,
-    get mateSel(){ return mateSel; }, perimeterHit,
+    get mateSel(){ return mateSel; }, perimeterHit, datumAt, mateEndAt, updateDatumVis,
     solveMates, mateError, removeMate, endWorld, mateLabel, openCompProps,
     editSketch, finishSketch, defineState, lockedEnts, sketchHandles, updateTraceLabels,
     get editing(){ return editing; }, get tool(){ return tool; }, set tool(v){ tool=v; dockSel(); },

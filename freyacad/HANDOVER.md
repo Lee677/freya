@@ -144,7 +144,17 @@ the overlay iframe.
     so dragging tows its neighbours instead of being dragged back by them. Convergence is
     geometric at roughly 0.3 per pass with `relax` 0.7; the early-out is what keeps 300
     iterations cheap. On load, component ids are reissued, so the mates' `comp` refs must
-    be remapped or every relation in the file points at nothing.
+    be remapped or every relation in the file points at nothing — and the remap must skip
+    origin ends, which carry no id (that bug silently ate every datum mate in a file).
+18. **The origin is ground in an assembly too.** A mate end is either `{comp,p,d,r}` or
+    `{datum:'Top'|…|'Z'}`; `endWorld` turns the datum name into a world point/direction at
+    the origin with `comp: null`, and null-comp is exactly what `mateStep` already treats
+    as immovable — so nothing else in the solver needed to know. An origin plane reads as
+    a flat face, an origin axis as a round face of no radius, which is what lets the pick
+    flow and `wantKind` stay unchanged. `updateDatumVis` shows only the sort of datum the
+    live mate can use, and only while it's picking; `mateEndAt` picks part face vs datum
+    by ray distance, because "a part always beats a plane" would put the Right plane out
+    of reach the moment anything sat on it.
 
 ## Biggest thing still missing
 
