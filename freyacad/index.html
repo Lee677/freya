@@ -374,7 +374,11 @@ if(!window.THREE){
   #tree-collapse{margin-left:auto;padding:1px 6px;font-size:11px;line-height:1.2;border-radius:5px}
   .tree-sect{font-family:var(--mono);font-size:9px;letter-spacing:.16em;text-transform:uppercase;
     color:var(--muted-2);padding:7px 10px 3px}
-  .feat .twist{width:11px;flex:0 0 auto;text-align:center;color:var(--muted-2);font-size:9px;cursor:pointer}
+  .feat .twist{width:11px;flex:0 0 auto;text-align:center;color:var(--muted-2);font-size:11px;cursor:pointer}
+  .tree-sect.fold{cursor:pointer;user-select:none}
+  .tree-sect.fold:hover{color:var(--text)}
+  .tree-sect .twist{display:inline-block;width:11px;text-align:center;font-size:11px;
+    color:var(--muted-2);margin-right:3px}
   .feat .twist:hover{color:var(--g-blue)}
   .feat.datum .fname{color:var(--muted)}
   .feat.datum.shown .fname{color:var(--text)}
@@ -3019,7 +3023,7 @@ const CSG = (function(){
   }
   // Tools where clicking an existing point means something — the glow is the
   // affordance that says "this endpoint is grabbable".
-  const POINT_TOOLS=['dim','select','erase'];
+  const POINT_TOOLS=['dim','select','erase','coinc','conc'];
   function nearestSketchPoint(p){
     if(!editing)return null;
     const tol=Math.max(0.55,controls.sph.radius*0.035);
@@ -3557,9 +3561,11 @@ const CSG = (function(){
       if(pr){
         if(!coincRef){ coincRef=pr; setHint('Now click the point to lock it to'); }
         else {
-          if(sameRef(coincRef,pr)) setHint('Pick a different second point');
-          else if(applyCoincident(coincRef,pr)) setHint('Points locked together — delete the badge to separate them');
-          else setHint('Neither of those points can move — pick a movable one');
+          const rz=sameRef(coincRef,pr)?'same':applyCoincident(coincRef,pr);
+          setHint(rz===true ? 'Points locked together — delete the badge to separate them'
+            : rz==='adjacent' ? 'Those are the two ends of one line — joining them would erase it'
+            : rz==='same' ? 'Pick a different second point'
+            : 'Neither of those points can move — pick a movable one');
           coincRef=null; relaxDims(editing,3); rebuild();
         }
       } else setHint('Click a line end, a centre, or the origin');
@@ -4344,6 +4350,18 @@ const CSG = (function(){
   }
   function applyCoincident(ra,rb){
     const sk=editing;
+    /* Two ends of the SAME segment would collapse it to a dot — the line reads
+       as deleted and whatever was joined to it piles onto the survivor, which
+       is exactly the "it eats my line" report. Joining two non-adjacent points
+       of a chain is fine (that closes a shape), so only neighbours are barred. */
+    if(ra&&rb&&ra.ent===rb.ent&&ra.ent>=0){
+      const e=sk.entities[ra.ent];
+      const adjacent=!e||e.type!=='poly'||(()=>{
+        const n=e.pts.length, d=Math.abs(ra.idx-rb.idx);
+        return d===1||(e.closed&&d===n-1);
+      })();
+      if(adjacent)return 'adjacent';
+    }
     let src=ra,dst=rb;                        // second-picked point moves...
     if(!liveRef(sk,dst)){ if(!liveRef(sk,src))return false; const t=src;src=dst;dst=t; }
     const S=resolvePt(sk,src), D=resolvePt(sk,dst); if(!S||!D)return false;
@@ -4993,6 +5011,7 @@ const CSG = (function(){
      it nests under it in the tree and stays out of the viewport. Sketches that
      nothing has used yet remain top-level, and visible. */
   const collapsed=new Set();                 // feature ids whose sketch row is folded away
+  let originCollapsed=false;                 // the whole Origin section folds too
   const EYE_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" '+
     'stroke-linecap="round" stroke-linejoin="round"><path d="M1.8 12S5.6 5.4 12 5.4 22.2 12 22.2 12'+
     ' 18.4 18.6 12 18.6 1.8 12 1.8 12Z"/><circle cx="12" cy="12" r="3.1"/></svg>';
@@ -5011,7 +5030,7 @@ const CSG = (function(){
     el.dataset.fid=f.id;
     const fname=(propsFeat&&propsFeat.id===f.id&&draftFeat)?draftFeat.name:f.name;
     el.title=fname;
-    el.innerHTML=(twist?`<span class="twist" title="Collapse or expand">${twist==='open'?'▾':'▸'}</span>`:'')+
+    el.innerHTML=(twist?`<span class="twist" title="Collapse or expand">${twist==='open'?'−':'+'}</span>`:'')+
       icHTML(iconFor(f))+`<span class="fname">${fname}</span>`+
       (f.type==='sketch'&&f.show?`<span class="fshow" title="shown in the viewport">${EYE_SVG}</span>`:'')+
       (f.error?`<span class="ferr" title="Click to see error details">!</span>`:'')+
@@ -5036,8 +5055,12 @@ const CSG = (function(){
     tree.innerHTML='';
     // the three datum planes are always there, so they head the tree as their
     // own section rather than being features
-    const sect=document.createElement('div'); sect.className='tree-sect'; sect.textContent='Origin';
+    const sect=document.createElement('div'); sect.className='tree-sect fold';
+    sect.innerHTML='<span class="twist">'+(originCollapsed?'+':'−')+'</span>Origin';
+    sect.title=originCollapsed?'Show the origin planes and axes':'Hide the origin planes and axes';
+    sect.addEventListener('click',()=>{ originCollapsed=!originCollapsed; refreshTree(); });
     tree.appendChild(sect);
+    if(!originCollapsed)
     for(const nm of ['Top','Front','Right']){
       const el=document.createElement('div');
       el.className='feat datum'+(datumShow[nm]?' shown':'');
@@ -5057,6 +5080,7 @@ const CSG = (function(){
       });
       tree.appendChild(el);
     }
+    if(!originCollapsed)
     for(const ax of ['X','Y','Z']){
       const el=document.createElement('div');
       el.className='feat datum'+(axisShow[ax]?' shown':'');
@@ -6266,7 +6290,8 @@ const CSG = (function(){
     // a line already picked with the Pointer? apply the constraint to it now,
     // rather than making the user click the icon and then the line
     if(applyConstraintToSelection(tool)){ tool='select'; }
-    syncRotateGate(); if(tool!=='select')clearSketchSel();
+    if(tool==='erase'&&boxSel&&editing){ deleteBoxSel(); tool='select'; }
+    syncRotateGate(); syncCursor(); if(tool!=='select')clearSketchSel();
     $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.tool===tool));
     redrawDraft(null);redrawHandles();updateHint();
   }));
