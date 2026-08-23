@@ -2996,6 +2996,10 @@ const CSG = (function(){
      once, then Delete (or pick the eraser) to remove the lot. Window select,
      as in SolidWorks: only what is wholly inside comes with you. Shift+drag
      still orbits, so the view is never out of reach. */
+  // tools that act on a line want the line to light up under the cursor, the
+  // same affordance the endpoint glow gives for points
+  const LINE_HOVER=['dim','erase','horiz','vert','paral','equal','mirror','dynmirror','select'];
+  let hoverSeg=null;
   let mirrorAxis=null;  // the line the Mirror tool reflects about, once picked
   let boxSel=null;      // {ents:[i], dims:[i]} — what the last box caught
   let boxDrag=null;     // {x0,y0,x1,y1} in client px while the box is live
@@ -3088,6 +3092,24 @@ const CSG = (function(){
             const bx=cx+ux*off, by=cy+uy*off;
             put({x:bx-nx*T,y:by-ny*T},{x:bx+nx*T,y:by+ny*T});
           }
+        }
+      }
+    }
+    if(hoverSeg&&hoverSeg.entIdx!=null&&(!sketchSel||sketchSel.entIdx!==hoverSeg.entIdx)){
+      const he=editing.entities[hoverSeg.entIdx];
+      if(he){
+        let hp=null;
+        if(he.type==='poly'&&hoverSeg.seg!=null){
+          const n=he.pts.length, a=he.pts[hoverSeg.seg], b=he.pts[(hoverSeg.seg+1)%n];
+          if(a&&b)hp=[a,b];
+        } else { const pa=entityDisplayPath(editing,he);
+          if(pa){ hp=pa.pts.slice(); if(pa.closed)hp.push(pa.pts[0]); } }
+        if(hp){
+          const hw=hp.map(q=>worldFromSketch(editing.frame,q.x,q.y));
+          const hl=new THREE.Line(new THREE.BufferGeometry().setFromPoints(hw),
+            new THREE.LineBasicMaterial({color:0x35d4e6,depthTest:false,
+              transparent:true,opacity:0.55}));
+          hl.renderOrder=9; selGroupSk.add(hl);
         }
       }
     }
@@ -5760,7 +5782,7 @@ const CSG = (function(){
     syncCursor();
     const nc=$('navcube'); if(nc)nc.style.display=(m==='sketch')?'none':'';
     if(m!=='sketch'){ closeDimInput(); clearDimLabels(); dragVtx=null; dragSnapPt=null; redrawHandles();
-      hoverSnap=null; hoverGuides=[]; hoverPt=null; dimPick=null; sketchCursor=null;
+      hoverSnap=null; hoverGuides=[]; hoverPt=null; hoverSeg=null; dimPick=null; sketchCursor=null;
       sketchSel=null; drawSketchSel();
       drawSnapMark(); const tc=$('tool-cursor'); if(tc)tc.style.display='none';
       const pl=$('sk-plane'); if(pl)pl.style.display='none';
@@ -5895,6 +5917,11 @@ const CSG = (function(){
       const p0=pointerToSketch(e);if(!p0)return;
       sketchCursor=p0;
       hoverPt=(POINT_TOOLS.indexOf(tool)>=0)?nearestSketchPoint(p0):null;
+      // a point under the cursor wins — that is what the click would take
+      const hs=(!hoverPt&&LINE_HOVER.indexOf(tool)>=0)?dimHit(p0):null;
+      const hk=hs?(hs.entIdx+':'+(hs.seg!=null?hs.seg:hs.kind)):null;
+      const pk=hoverSeg?(hoverSeg.entIdx+':'+(hoverSeg.seg!=null?hoverSeg.seg:hoverSeg.kind)):null;
+      if(hk!==pk){ hoverSeg=hs; drawSketchSel(); }
       const p=applyDrawSnap(p0);
       drawSnapMark();
       redrawDraft(p);
@@ -6200,7 +6227,7 @@ const CSG = (function(){
       pushUndo('dynamic mirror off'); editing.dynMirror=null; tool='select';
       rebuild(); drawSketchSel(); dockSel(); setHint('Dynamic mirror off'); return;
     }
-    tool=t;chain=null;mirrorAxis=null;draftStage=0;draftA=null;
+    tool=t;chain=null;mirrorAxis=null;hoverSeg=null;draftStage=0;draftA=null;
     paralRef=null;equalRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;
     hoverSnap=null;dimPick=null;drawSnapMark();redrawHandles();dockSel();};
   const CMD={
@@ -6739,7 +6766,7 @@ const CSG = (function(){
       pushUndo('dynamic mirror off'); editing.dynMirror=null; tool='select';
       rebuild(); drawSketchSel(); dockSel(); setHint('Dynamic mirror off'); return;
     }
-    tool=b.dataset.tool;chain=null;mirrorAxis=null;draftStage=0;draftA=null;paralRef=null;equalRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();
+    tool=b.dataset.tool;chain=null;mirrorAxis=null;hoverSeg=null;draftStage=0;draftA=null;paralRef=null;equalRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();
     $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));
     // a line already picked with the Pointer? apply the constraint to it now,
     // rather than making the user click the icon and then the line
