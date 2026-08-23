@@ -151,6 +151,18 @@ if(!window.THREE){
   .btn-primary{background:rgba(66,133,244,.1);border-color:var(--g-blue);color:#fff;box-shadow:0 0 8px rgba(66,133,244,0.3);text-shadow:0 0 4px rgba(66,133,244,0.8)}
   .btn-primary:hover{background:rgba(66,133,244,.25);box-shadow:0 0 15px rgba(66,133,244,0.6)}
   .btn-ghost{background:transparent}
+  .tb-sel{font-family:var(--sans);font-size:11.5px;color:var(--text);background:var(--panel-2);
+    border:1px solid var(--line);border-radius:var(--radius);padding:5px 7px;cursor:pointer}
+  .tb-sel:hover{border-color:var(--g-blue)}
+  /* the drawing sheet: a real sheet of paper, on a desk */
+  .sheet-wrap{position:absolute;inset:0;overflow:auto;background:#11161c;display:none;
+    align-items:center;justify-content:center;padding:26px}
+  .sheet-wrap.on{display:flex}
+  #sheet{background:#fff;box-shadow:0 10px 40px rgba(0,0,0,.55);flex:0 0 auto}
+  #sheet .vw{cursor:grab}
+  #sheet .vw.drag{cursor:grabbing}
+  #sheet .vw.sel .vwbox{stroke:#4285F4;stroke-dasharray:3 2;stroke-width:.3;fill:none}
+  #sheet .vwbox{fill:none;stroke:none}
   .btn-danger{color:#ffb3b3;border-color:var(--line)}
   .btn-danger:hover{border-color:var(--g-red);color:#ffb3b3;background:rgba(234,67,53,0.1);box-shadow:0 0 10px rgba(234,67,53,0.4);text-shadow:0 0 4px var(--g-red)}
 
@@ -511,6 +523,28 @@ if(!window.THREE){
     <div class="tb-group" id="tb-asm-main" style="display:none">
       <button id="btn-insert" class="btn-primary">Insert part</button>
     </div>
+    <div class="tb-group" id="tb-draw-main" style="display:none">
+      <button id="btn-dw-view" class="btn-primary">Add view</button>
+      <select id="dw-sheet" class="tb-sel" title="Sheet size">
+        <option value="A4">A4</option><option value="A3" selected>A3</option>
+        <option value="A2">A2</option><option value="A1">A1</option><option value="A0">A0</option>
+      </select>
+      <select id="dw-orient" class="tb-sel" title="Sheet orientation">
+        <option value="landscape" selected>Landscape</option><option value="portrait">Portrait</option>
+      </select>
+      <select id="dw-scale" class="tb-sel" title="Sheet scale">
+        <option value="0" selected>Scale: fit</option>
+        <option value="10">10:1</option><option value="5">5:1</option><option value="2">2:1</option>
+        <option value="1">1:1</option><option value="0.5">1:2</option><option value="0.2">1:5</option>
+        <option value="0.1">1:10</option><option value="0.05">1:20</option><option value="0.02">1:50</option>
+      </select>
+      <select id="dw-angle" class="tb-sel" title="Projection convention">
+        <option value="3" selected>Third angle</option><option value="1">First angle</option>
+      </select>
+      <button id="btn-dw-hidden" class="btn-ghost" title="Show or hide hidden-detail lines">Hidden</button>
+      <button id="btn-dw-print" class="btn-ghost" title="Print the sheet, or save it as PDF">Print</button>
+      <button id="btn-dw-svg" class="btn-ghost" title="Download the sheet as an SVG drawing">Export SVG</button>
+    </div>
     <div class="tb-group" id="tb-sketch" style="display:none">
       <button id="btn-finish" class="btn-primary">Finish sketch</button>
       <button id="btn-cancel-sk" class="btn-ghost btn-danger">Cancel</button>
@@ -519,6 +553,7 @@ if(!window.THREE){
     <div class="tb-group">
       <button id="btn-new" class="btn-ghost">New part</button>
       <button id="btn-new-asm" class="btn-ghost">New assembly</button>
+      <button id="btn-new-draw" class="btn-ghost" title="Make an engineering drawing of what's on screen">New drawing</button>
       <button id="btn-load" class="btn-ghost">Open</button>
       <input type="file" id="file-load" style="display:none" accept=".json,.sketchcad,.asmcad,.step,.stp,.stl">
       <input type="file" id="file-insert" style="display:none" accept=".json,.sketchcad">
@@ -554,6 +589,7 @@ if(!window.THREE){
   </aside>
 
   <main class="viewport" id="viewport">
+    <div class="sheet-wrap" id="sheet-wrap"><svg id="sheet" xmlns="http://www.w3.org/2000/svg"></svg></div>
     <div class="dock" id="dock" style="display:none">
       <button data-tool="select" title="Pointer — rotate the view, drag points and dimensions, click a line and press Delete">Pointer</button>
       <button data-tool="line" class="active">Line</button>
@@ -5594,6 +5630,7 @@ const CSG = (function(){
     return el;
   }
   function refreshTree(){
+    if(docMode==='draw')return;   // the drawing owns the tree while it is open
     tree.innerHTML='';
     // the three datum planes are always there, so they head the tree as their
     // own section rather than being features
@@ -7458,24 +7495,37 @@ const CSG = (function(){
   function openAsmCompMenu(x,y,comp){ openAsmCompMenu2(x,y,comp); }
   function openAsmMenu(x,y){ buildCtxMenu(x,y,asmMenuItems(null),{cols:true}); }
   function setDocMode(m2){
-    docMode=m2;
-    const isA=m2==='asm';
-    $('tb-main').style.display=isA?'none':'flex';
+    /* A drawing is a document *about* a model, not another way of modelling
+       it, so it keeps whatever was on screen alive underneath and only swaps
+       what you are looking at. Leaving the drawing puts you back where you
+       were, with the same part or assembly still loaded. */
+    const wasDraw=docMode==='draw';
+    if(m2==='draw'){ drawReturn=(docMode==='draw')?drawReturn:docMode; docMode='draw'; }
+    else docMode=m2;
+    const isD=docMode==='draw', isA=docMode==='asm';
+    $('tb-main').style.display=(isA||isD)?'none':'flex';
     $('tb-asm-main').style.display=isA?'flex':'none';
-    $('btn-demo-tgl').style.display=isA?'none':'';
-    document.querySelector('.tree-head h2').textContent=isA?'Components':'Feature Tree';
-    [sketchOverlay,previewOverlay,refOverlay,hoverGroup,selGroup,handleGroup,draftGroup].forEach(g=>g.visible=!isA);
-    resultMeshes.forEach(mm=>mm.visible=!isA);
-    if(pickLines)pickLines.visible=!isA;
+    $('tb-draw-main').style.display=isD?'flex':'none';
+    $('btn-demo-tgl').style.display=(isA||isD)?'none':'';
+    $('sheet-wrap').classList.toggle('on',isD);
+    document.querySelector('.tree-head h2').textContent=isD?'Drawing':isA?'Components':'Feature Tree';
+    [sketchOverlay,previewOverlay,refOverlay,hoverGroup,selGroup,handleGroup,draftGroup].forEach(g=>g.visible=!isA&&!isD);
+    const modelHost=(isD?drawReturn:docMode);
+    resultMeshes.forEach(mm=>mm.visible=!isD&&modelHost!=='asm');
+    if(pickLines)pickLines.visible=!isD&&modelHost!=='asm';
     cancelMate(true);
-    asmMeshes.flat().forEach(mm=>mm.visible=isA);
+    asmMeshes.flat().forEach(mm=>mm.visible=!isD&&modelHost==='asm');
     closeProps();closeEdgeMenu();
-    if(isA){
+    if(isD){
+      renderSheet(); refreshDrawTree();
+      setHint('Drawing — Add view places a projection; drag views to arrange them, then Print or Export SVG');
+    } else if(isA){
       refreshAsmUI();updateDatumVis();
       setHint('Assembly — Insert part adds a saved .sketchcad file; right-click for options');
-    } else { rebuild(); }
+    } else { if(wasDraw)refreshTree(); rebuild(); }
     updateHelp();
   }
+  let drawReturn='part';        // the document the drawing was made from
   /* drag components on the ground plane (Shift = vertical) */
   let asmDrag=null;
   function pickComp(e){
@@ -7552,6 +7602,328 @@ const CSG = (function(){
     const out=[];
     asmMeshes.flat().forEach(m=>{m.updateMatrixWorld(true);out.push(m.geometry.clone().applyMatrix4(m.matrixWorld));});
     return out;
+  }
+
+  /* ============================ DRAWINGS ============================
+     A drawing is a sheet of paper with orthographic views of the model on it.
+     It is drawn as SVG rather than in the 3D scene: a drawing is a 2D document
+     that has to print, scale to any paper size and export as vectors, and
+     none of that survives being a picture of a WebGL canvas.
+
+     Each view is made by projecting the model's edges onto the view plane and
+     then deciding, edge sample by edge sample, whether the solid is in the way
+     — visible edges draw solid, hidden ones dashed. That is hidden-line
+     removal done the honest way round: by asking the geometry, not by
+     silhouette guessing. It runs once per view, not per frame, so the cost is
+     paid where nobody is watching. */
+  const SHEETS={A4:[297,210],A3:[420,297],A2:[594,420],A1:[841,594],A0:[1189,841]};
+  const VIEW_DIRS={           // {n: the way the eye looks, up: the way the page's +Y goes}
+    front :{n:[0,0,-1], up:[0,1,0],  label:'Front'},
+    back  :{n:[0,0,1],  up:[0,1,0],  label:'Back'},
+    top   :{n:[0,-1,0], up:[0,0,-1], label:'Top'},
+    bottom:{n:[0,1,0],  up:[0,0,1],  label:'Bottom'},
+    right :{n:[-1,0,0], up:[0,1,0],  label:'Right'},
+    left  :{n:[1,0,0],  up:[0,1,0],  label:'Left'},
+    iso   :{n:[-1,-1,-1],up:[0,1,0], label:'Isometric'}
+  };
+  let draw={sheet:'A3',orient:'landscape',scale:0,angle:3,hidden:true,
+            title:'',views:[],uid:1};
+  let drawSel=null, sheetDrag=null;
+  function sheetSize(){
+    const s=SHEETS[draw.sheet]||SHEETS.A3;
+    return draw.orient==='portrait'?[s[1],s[0]]:[s[0],s[1]];
+  }
+  /* Every triangle and every edge of what is currently modelled, in world
+     coordinates — a part or a whole assembly, whichever is in front. */
+  function drawSourceGeoms(){
+    if(docMode==='asm')return asmTransformedGeoms();
+    return resultMeshes.map(m=>{m.updateMatrixWorld(true);
+      return m.geometry.clone().applyMatrix4(m.matrixWorld);});
+  }
+  function viewBasis(kind){
+    const d=VIEW_DIRS[kind]||VIEW_DIRS.front;
+    const n=new THREE.Vector3(...d.n).normalize();      // the direction of sight
+    let up=new THREE.Vector3(...d.up);
+    up.sub(n.clone().multiplyScalar(up.dot(n)));
+    if(up.lengthSq()<1e-9)up.set(0,0,1);
+    up.normalize();
+    const r=new THREE.Vector3().crossVectors(up,n).normalize();  // page +X
+    return {n,u:r,v:up};
+  }
+  /* Project the model onto a view plane and split every edge into the runs
+     that can be seen and the runs the solid is in front of. */
+  function buildView(kind){
+    const geoms=drawSourceGeoms();
+    if(!geoms.length)return null;
+    const B=viewBasis(kind);
+    // one mesh to shoot at, and one edge set to project
+    const solids=geoms.map(g=>new THREE.Mesh(g,new THREE.MeshBasicMaterial()));
+    solids.forEach(m=>m.updateMatrixWorld(true));
+    /* One edge, once. A tessellated bore contributes the same rim segment from
+       the cylinder and from the flat it breaks through, and drawing both puts
+       every line on the sheet twice — twice the ray casting, twice the file,
+       and a heavier line where two happen to overlap. */
+    const segs=[], seenSeg=new Set(), Q=1e4;
+    const key=(a,b)=>{ const ka=[a.x,a.y,a.z].map(v=>Math.round(v*Q)).join(),
+                             kb=[b.x,b.y,b.z].map(v=>Math.round(v*Q)).join();
+      return ka<kb?ka+'|'+kb:kb+'|'+ka; };
+    for(const g of geoms){
+      const eg=new THREE.EdgesGeometry(g,25), p=eg.attributes.position;
+      for(let i=0;i<p.count;i+=2){
+        const a=new THREE.Vector3(p.getX(i),p.getY(i),p.getZ(i));
+        const b=new THREE.Vector3(p.getX(i+1),p.getY(i+1),p.getZ(i+1));
+        const k=key(a,b); if(seenSeg.has(k))continue; seenSeg.add(k);
+        segs.push([a,b]);
+      }
+      eg.dispose();
+    }
+    const ray=new THREE.Raycaster();
+    ray.far=1e5;
+    const back=B.n.clone().negate();                    // from the model toward the eye
+    const box=new THREE.Box3(); geoms.forEach(g=>{g.computeBoundingBox();box.union(g.boundingBox);});
+    const diag=Math.max(1e-3,box.getSize(new THREE.Vector3()).length());
+    const EPS=diag*2e-4;                                // lift off the surface we sit on
+    const seen=(pt)=>{
+      ray.set(pt.clone().addScaledVector(back,EPS),back);
+      const h=ray.intersectObjects(solids,false);
+      return !h.length;
+    };
+    const vis=[],hid=[];
+    const P=w=>({x:w.dot(B.u),y:w.dot(B.v)});
+    for(const [a,b] of segs){
+      const L=a.distanceTo(b);
+      const n=Math.max(2,Math.min(24,Math.ceil(L/(diag*0.02))+1));
+      let runStart=0,runVis=null;
+      const flush=(from,to,v)=>{
+        if(to<=from)return;
+        const pa=P(a.clone().lerp(b,from)), pb=P(a.clone().lerp(b,to));
+        /* A zero-length run is a dot, not a line — and with a round cap it
+           renders as one, scattering pinpricks over every corner of the
+           sheet. Edges seen exactly end-on collapse this way. */
+        if(Math.hypot(pb.x-pa.x,pb.y-pa.y)<1e-6)return;
+        (v?vis:hid).push([pa,pb]);
+      };
+      for(let i=0;i<n;i++){
+        const t=(i+0.5)/n, v=seen(a.clone().lerp(b,t));
+        if(runVis===null){runVis=v;runStart=0;continue;}
+        if(v!==runVis){ flush(runStart,i/n,runVis); runStart=i/n; runVis=v; }
+      }
+      flush(runStart,1,runVis===null?true:runVis);
+    }
+    solids.forEach(m=>m.material.dispose());
+    geoms.forEach(g=>g.dispose());
+    let bb=null;
+    for(const s of vis.concat(hid))for(const q of s){
+      if(!bb)bb={x0:q.x,x1:q.x,y0:q.y,y1:q.y};
+      bb.x0=Math.min(bb.x0,q.x);bb.x1=Math.max(bb.x1,q.x);
+      bb.y0=Math.min(bb.y0,q.y);bb.y1=Math.max(bb.y1,q.y);
+    }
+    return {vis,hid,bb:bb||{x0:0,x1:1,y0:0,y1:1}};
+  }
+  /* The scale the sheet uses when it is set to fit: the biggest of the
+     preferred series that still leaves every view inside its share of the
+     page. Drawings are read at a stated scale, so pick from the series rather
+     than inventing 1:3.7. */
+  const SCALE_SERIES=[100,50,20,10,5,2,1,0.5,0.2,0.1,0.05,0.02,0.01,0.005,0.002,0.001];
+  function fitScale(){
+    if(draw.scale)return draw.scale;
+    if(!draw.views.length)return 1;
+    const [W,H]=sheetSize();
+    const cell=[Math.max(20,(W-40)/Math.max(1,Math.min(3,draw.views.length))-14),
+                Math.max(20,(H-52)/Math.max(1,Math.ceil(draw.views.length/3))-14)];
+    let need=1;
+    for(const v of draw.views){ if(!v.geo)continue;
+      const w=v.geo.bb.x1-v.geo.bb.x0, h=v.geo.bb.y1-v.geo.bb.y0;
+      need=Math.max(need,w/cell[0],h/cell[1]);
+    }
+    const want=1/need;
+    for(const s of SCALE_SERIES)if(s<=want)return s;
+    return SCALE_SERIES[SCALE_SERIES.length-1];
+  }
+  function scaleLabel(s){
+    if(s>=1)return (Math.round(s*100)/100)+':1';
+    return '1:'+(Math.round(100/s)/100);
+  }
+  function addDrawView(kind){
+    const geo=buildView(kind);
+    if(!geo)return setHint('Nothing to draw — model something first');
+    const [W,H]=sheetSize();
+    /* Where a view lands is not decorative: a projected view sits square with
+       its parent, and which side depends on the convention the sheet is in.
+       Third angle puts the top view above; first angle puts it below. */
+    const parent=draw.views.find(v=>v.kind==='front');
+    const third=draw.angle===3;
+    let x=W/2,y=H/2;
+    if(parent){
+      const s=fitScale(), gap=Math.max(28,(parent.geo.bb.x1-parent.geo.bb.x0)*s*0.8+22);
+      const off={top:[0,-1],bottom:[0,1],right:[1,0],left:[-1,0],back:[2,0],iso:[1,-1]}[kind]||[0,0];
+      const sgn=third?1:-1;
+      x=parent.x+off[0]*gap*(kind==='iso'?1:sgn);
+      y=parent.y+off[1]*gap*(kind==='iso'?1:sgn);
+    }
+    const v={id:draw.uid++,kind,x:Math.max(24,Math.min(W-24,x)),y:Math.max(30,Math.min(H-40,y)),
+             scale:0,hidden:null,geo};
+    draw.views.push(v); drawSel=v.id;
+    renderSheet(); refreshDrawTree();
+    setHint(VIEW_DIRS[kind].label+' view added — drag it to place it');
+  }
+  function rebuildDrawViews(){
+    for(const v of draw.views){ const g=buildView(v.kind); if(g)v.geo=g; }
+    renderSheet();
+  }
+  function removeDrawView(v){
+    const i=draw.views.indexOf(v); if(i<0)return;
+    draw.views.splice(i,1); if(drawSel===v.id)drawSel=null;
+    renderSheet(); refreshDrawTree();
+  }
+  const SVGNS='http://www.w3.org/2000/svg';
+  const mk=(t,a)=>{const e=document.createElementNS(SVGNS,t);
+    for(const k in a)e.setAttribute(k,a[k]); return e;};
+  function renderSheet(){
+    const svg=$('sheet'); if(!svg)return;
+    while(svg.firstChild)svg.removeChild(svg.firstChild);
+    const [W,H]=sheetSize();
+    svg.setAttribute('viewBox','0 0 '+W+' '+H);
+    // fill the pane without ever spilling off it
+    const wrap=$('sheet-wrap'), avail=Math.max(120,wrap.clientWidth-52), availH=Math.max(120,wrap.clientHeight-52);
+    const px=Math.min(avail/W,availH/H);
+    svg.setAttribute('width',(W*px).toFixed(1)); svg.setAttribute('height',(H*px).toFixed(1));
+    svg.appendChild(mk('rect',{x:0,y:0,width:W,height:H,fill:'#fff'}));
+    svg.appendChild(mk('rect',{x:10,y:10,width:W-20,height:H-20,fill:'none',stroke:'#111','stroke-width':0.5}));
+    const S=fitScale();
+    for(const v of draw.views){
+      if(!v.geo)continue;
+      const s=v.scale||S;
+      const g=mk('g',{class:'vw'+(drawSel===v.id?' sel':''),'data-id':v.id,
+        transform:'translate('+v.x.toFixed(3)+' '+v.y.toFixed(3)+') scale('+s+' '+(-s)+')'});
+      const cx=(v.geo.bb.x0+v.geo.bb.x1)/2, cy=(v.geo.bb.y0+v.geo.bb.y1)/2;
+      const inner=mk('g',{transform:'translate('+(-cx).toFixed(4)+' '+(-cy).toFixed(4)+')'});
+      const path=(list,cls)=>{
+        if(!list.length)return null;
+        let d='';
+        for(const [a,b] of list)d+='M'+a.x.toFixed(3)+' '+a.y.toFixed(3)+'L'+b.x.toFixed(3)+' '+b.y.toFixed(3);
+        return mk('path',{d,fill:'none',stroke:cls==='hid'?'#5a6470':'#111',
+          'stroke-width':(cls==='hid'?0.25:0.4)/s,'stroke-linecap':'round',
+          'stroke-dasharray':cls==='hid'?(1.6/s)+' '+(1.1/s):'none'});
+      };
+      const showHidden=(v.hidden==null?draw.hidden:v.hidden);
+      if(showHidden){ const p=path(v.geo.hid,'hid'); if(p)inner.appendChild(p); }
+      const p2=path(v.geo.vis,'vis'); if(p2)inner.appendChild(p2);
+      g.appendChild(inner);
+      // an invisible box so the whole view is grabbable, not just its lines
+      const bw=(v.geo.bb.x1-v.geo.bb.x0)||1, bh=(v.geo.bb.y1-v.geo.bb.y0)||1;
+      g.appendChild(mk('rect',{class:'vwbox',x:-bw/2-1,y:-bh/2-1,width:bw+2,height:bh+2,
+        'stroke-width':0.3/s,'pointer-events':'all'}));
+      svg.appendChild(g);
+      const lab=mk('text',{x:v.x,y:v.y+(bh/2)*s+5,'text-anchor':'middle',
+        'font-family':'sans-serif','font-size':3.6,fill:'#111'});
+      lab.textContent=VIEW_DIRS[v.kind].label+(v.scale?'  ('+scaleLabel(v.scale)+')':'');
+      svg.appendChild(lab);
+    }
+    drawTitleBlock(svg,W,H,S);
+    svg.querySelectorAll('.vw').forEach(g=>{
+      g.addEventListener('pointerdown',e=>{
+        e.preventDefault();
+        const id=+g.dataset.id, v=draw.views.find(x=>x.id===id); if(!v)return;
+        drawSel=id; refreshDrawTree();
+        const r=svg.getBoundingClientRect(), k=W/r.width;
+        sheetDrag={v,ox:v.x-(e.clientX-r.left)*k,oy:v.y-(e.clientY-r.top)*k};
+        g.setPointerCapture&&g.setPointerCapture(e.pointerId);
+        renderSheet();
+      });
+    });
+  }
+  function drawTitleBlock(svg,W,H,S){
+    const w=110,h=28,x=W-10-w,y=H-10-h;
+    const g=mk('g',{}), ln=(a,b,c,d)=>g.appendChild(mk('line',{x1:a,y1:b,x2:c,y2:d,stroke:'#111','stroke-width':0.35}));
+    g.appendChild(mk('rect',{x,y,width:w,height:h,fill:'none',stroke:'#111','stroke-width':0.5}));
+    ln(x,y+11,x+w,y+11); ln(x,y+19.5,x+w,y+19.5);
+    ln(x+62,y+11,x+62,y+h); ln(x+86,y+11,x+86,y+h);
+    const txt=(tx,ty,s,t,anchor)=>{const e=mk('text',{x:tx,y:ty,'font-family':'sans-serif',
+      'font-size':s,fill:'#111','text-anchor':anchor||'start'});e.textContent=t;g.appendChild(e);};
+    txt(x+3,y+7.6,4.6,draw.title||partTitle());
+    txt(x+3,y+16.5,2.4,'DRAWN WITH FREYACAD');
+    txt(x+3,y+25,2.4,'freya.co.nz');
+    txt(x+64.5,y+16.5,2.2,'SCALE'); txt(x+64.5,y+25,3.6,scaleLabel(S));
+    txt(x+88.5,y+16.5,2.2,'PROJECTION');
+    projSymbol(g,x+94,y+23,draw.angle===3);
+    svg.appendChild(g);
+  }
+  /* The truncated-cone symbol every drawing carries so nobody has to guess
+     which side the projected views were put on. */
+  function projSymbol(g,cx,cy,third){
+    const s=1.0, o=mk('g',{transform:'translate('+cx+' '+cy+')'});
+    const circ=(dx,r1,r2)=>{ o.appendChild(mk('ellipse',{cx:dx,cy:0,rx:r1,ry:r1,fill:'none',stroke:'#111','stroke-width':0.3}));
+      o.appendChild(mk('ellipse',{cx:dx,cy:0,rx:r2,ry:r2,fill:'none',stroke:'#111','stroke-width':0.3})); };
+    const tri=(dx,flip)=>{ const d='M'+(dx-2.6*flip)+' -2.2L'+(dx+2.6*flip)+' -1.1L'+(dx+2.6*flip)+' 1.1L'+(dx-2.6*flip)+' 2.2Z';
+      o.appendChild(mk('path',{d,fill:'none',stroke:'#111','stroke-width':0.3})); };
+    if(third){ circ(-3.4*s,2.2,1.1); tri(3.4*s,1); } else { tri(-3.4*s,-1); circ(3.4*s,2.2,1.1); }
+    g.appendChild(o);
+  }
+  function partTitle(){
+    if(drawReturn==='asm')return 'ASSEMBLY';
+    // the feature that made the body reads as the part's name; the last one is
+    // usually a hole or a fillet, which names the drawing after its own detail
+    const f=features.find(x=>!x.suppressed&&/^(extrude|revolve|import)$/.test(x.type));
+    return (f&&f.name?f.name:'PART').toUpperCase();
+  }
+  function sheetSVGText(){
+    const svg=$('sheet').cloneNode(true);
+    svg.removeAttribute('width'); svg.removeAttribute('height');
+    const [W,H]=sheetSize();
+    svg.setAttribute('width',W+'mm'); svg.setAttribute('height',H+'mm');
+    svg.querySelectorAll('.vwbox').forEach(n=>n.remove());
+    svg.querySelectorAll('.vw').forEach(n=>n.removeAttribute('class'));
+    return '<?xml version="1.0" encoding="UTF-8"?>\n'+svg.outerHTML;
+  }
+  function exportSheetSVG(){
+    const blob=new Blob([sheetSVGText()],{type:'image/svg+xml'});
+    const u=URL.createObjectURL(blob), a=document.createElement('a');
+    a.href=u; a.download='drawing.svg'; a.click(); URL.revokeObjectURL(u);
+    setHint('Drawing saved as SVG — vectors, so it scales and prints cleanly');
+  }
+  function printSheet(){
+    const w=window.open('','_blank');
+    if(!w)return setHint('The browser blocked the print window — allow pop-ups for this page');
+    const [W,H]=sheetSize();
+    w.document.write('<!doctype html><title>freyacad drawing</title><style>'+
+      '@page{size:'+W+'mm '+H+'mm;margin:0}html,body{margin:0;padding:0}'+
+      'svg{width:'+W+'mm;height:'+H+'mm;display:block}</style>'+sheetSVGText());
+    w.document.close();
+    setTimeout(()=>{w.focus();w.print();},250);
+  }
+  function refreshDrawTree(){
+    if(docMode!=='draw')return;
+    tree.innerHTML='';
+    const sect=document.createElement('div'); sect.className='tree-sect'; sect.textContent='Sheet';
+    tree.appendChild(sect);
+    const sh=document.createElement('div');
+    sh.className='feat'; sh.title='The sheet and its scale';
+    sh.innerHTML=icHTML('dplane')+`<span class="fname">${draw.sheet} ${draw.orient==='portrait'?'portrait':'landscape'} · ${esc(scaleLabel(fitScale()))}</span>`;
+    tree.appendChild(sh);
+    const vs=document.createElement('div'); vs.className='tree-sect'; vs.textContent='Views';
+    tree.appendChild(vs);
+    draw.views.forEach(v=>{
+      const el=document.createElement('div');
+      el.className='feat'+(drawSel===v.id?' sel':'');
+      el.title=VIEW_DIRS[v.kind].label+' view';
+      el.innerHTML=icHTML(v.kind==='iso'?'iso':'normal')+
+        `<span class="fname">${VIEW_DIRS[v.kind].label}</span>`+
+        '<button class="fx" title="Remove this view">×</button>';
+      el.addEventListener('click',e=>{
+        if(e.target.classList.contains('fx')){removeDrawView(v);return;}
+        drawSel=v.id; renderSheet(); refreshDrawTree();
+      });
+      tree.appendChild(el);
+    });
+    $('tree-pill').textContent=draw.views.length;
+  }
+  function openDrawViewPicker(){
+    const items=[{sect:'Add a view'}];
+    for(const k of ['front','top','right','left','bottom','back','iso'])
+      items.push({ic:k==='iso'?'iso':'normal',label:VIEW_DIRS[k].label,fn:()=>addDrawView(k)});
+    const r=$('btn-dw-view').getBoundingClientRect();
+    buildCtxMenu(r.left,r.bottom+6,items);
   }
 
   /* ============================ WIRING ============================ */
@@ -7714,6 +8086,46 @@ const CSG = (function(){
          {label:'Discard',danger:true,fn:start},{label:'Cancel'}]);
     } else start();
   });
+  /* Drawings ---------------------------------------------------------------- */
+  $('btn-new-draw').addEventListener('click',()=>{
+    if(docMode==='draw'){ setDocMode(drawReturn); setHint('Back to the model'); return; }
+    if(mode==='sketch'){ setHint('Finish the sketch first, then make a drawing of the part'); return; }
+    const has=(docMode==='asm')?asmMeshes.flat().length:resultMeshes.length;
+    if(!has){ setHint('Nothing to draw yet — model something first'); return; }
+    const resume=draw.views.length>0;
+    if(!resume){
+      draw={sheet:$('dw-sheet').value||'A3',orient:$('dw-orient').value||'landscape',
+            scale:+($('dw-scale').value||0),angle:+($('dw-angle').value||3),
+            hidden:true,title:'',views:[],uid:1};
+      drawSel=null;
+    }
+    setDocMode('draw');
+    /* Coming back to a drawing re-projects every view from the model as it is
+       now, keeping the sheet you laid out. That is the whole point of a
+       drawing being a document about the part rather than a picture of it. */
+    if(resume){ rebuildDrawViews(); refreshDrawTree();
+      setHint('Drawing reopened — the views are re-projected from the model as it stands'); }
+    else addDrawView('front');            // a drawing always starts with a front view
+  });
+  $('btn-dw-view').addEventListener('click',openDrawViewPicker);
+  $('dw-sheet').addEventListener('change',e=>{draw.sheet=e.target.value;renderSheet();refreshDrawTree();});
+  $('dw-orient').addEventListener('change',e=>{draw.orient=e.target.value;renderSheet();refreshDrawTree();});
+  $('dw-scale').addEventListener('change',e=>{draw.scale=+e.target.value;renderSheet();refreshDrawTree();});
+  $('dw-angle').addEventListener('change',e=>{draw.angle=+e.target.value;renderSheet();});
+  $('btn-dw-hidden').addEventListener('click',()=>{
+    draw.hidden=!draw.hidden; $('btn-dw-hidden').classList.toggle('btn-primary',draw.hidden);
+    renderSheet(); setHint(draw.hidden?'Hidden detail shown, dashed':'Hidden detail off');
+  });
+  $('btn-dw-print').addEventListener('click',printSheet);
+  $('btn-dw-svg').addEventListener('click',exportSheetSVG);
+  window.addEventListener('pointermove',e=>{
+    if(!sheetDrag)return;
+    const svg=$('sheet'), r=svg.getBoundingClientRect(), [W,H]=sheetSize(), k=W/r.width;
+    sheetDrag.v.x=Math.max(14,Math.min(W-14,(e.clientX-r.left)*k+sheetDrag.ox));
+    sheetDrag.v.y=Math.max(20,Math.min(H-14,(e.clientY-r.top)*k+sheetDrag.oy));
+    renderSheet();
+  });
+  window.addEventListener('pointerup',()=>{ if(sheetDrag){sheetDrag=null;} });
   $('btn-insert').addEventListener('click',()=>$('file-insert').click());
   $('file-insert').addEventListener('change',e=>{
     const file=e.target.files[0]; if(!file)return;
@@ -7898,6 +8310,7 @@ const CSG = (function(){
   }
 
   function resize(){const w=viewport.clientWidth,h=viewport.clientHeight;renderer.setSize(w,h,false);perspCam.aspect=w/h;perspCam.updateProjectionMatrix();syncOrtho();
+    if(docMode==='draw')renderSheet();      // the sheet is sized to the pane, not the window
     if(mode==='sketch'&&typeof flashOrigin==='function')flashOrigin();}
   window.addEventListener('resize',resize);resize();
   (function loop(now){requestAnimationFrame(loop);
@@ -7934,6 +8347,8 @@ const CSG = (function(){
     get asmShapes(){ return asmShapes; },
     get asmMeshes(){ return asmMeshes; },
     addComponent, setDocMode, buildPartShapes, asmTransformedShapes, removeComponent,
+    get draw(){ return draw; }, addDrawView, buildView, renderSheet, fitScale,
+    sheetSVGText, removeDrawView, rebuildDrawViews, sheetSize,
     startMate, cancelMate, fitFace, faceRegion, applyMate, applyCompTransform,
     get mateSel(){ return mateSel; }, perimeterHit, datumAt, mateEndAt, updateDatumVis,
     isSpline, splinePath, splinePts, splineTangent, splineHandles, splineInsertPoint,

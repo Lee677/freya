@@ -169,6 +169,22 @@ the overlay iframe.
     a sparse `tan` array splices at its end when the index is past its length, which
     silently moves one point's handle onto another.
 
+20. **A drawing is SVG, not the 3D scene.** `docMode==='draw'` swaps the WebGL canvas for
+    `#sheet`, an SVG sheet in millimetres (`viewBox` = the paper size), because a drawing
+    has to print at true size and export as vectors, and a screenshot of a WebGL canvas
+    does neither. The model stays loaded underneath — `drawReturn` remembers whether it
+    came from a part or an assembly, and re-entering the drawing calls `rebuildDrawViews`,
+    which is what makes views track the model.
+    **Hidden-line removal is done by asking the geometry.** `buildView` projects deduped
+    `EdgesGeometry` segments onto the view basis, then samples each one and raycasts from
+    the sample back toward the eye: a hit means the solid is in the way. Runs of samples
+    become solid or dashed polylines. Two traps: lift the ray origin off the surface by
+    ~2e-4 of the model diagonal or every sample hits its own face, and drop zero-length
+    runs — with `stroke-linecap: round` a degenerate run renders as a *dot*, scattering
+    pinpricks over the sheet. It runs once per view, ~110 ms for a small part.
+    Note that a bore's front and back rims legitimately project to the same 2D circle;
+    those overlapping strokes are correct, not duplicates.
+
 ## Biggest thing still missing
 
 **A real constraint solver *for sketches*.** Dimensions are applied one at a time, so
