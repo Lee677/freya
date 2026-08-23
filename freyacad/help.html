@@ -240,8 +240,10 @@ Cancel) first, since finishing is the commonest reason to open it; then <b>Sketc
 entities</b>, <b>Relations</b> and <b>View</b>.</p>
 <p><b>Customise tools…</b> at the foot of that menu opens a dialog where you can drag any
 tool into another group, reorder it, or drop it into <b>Hidden</b> to take it off both the
-menu and the dock. Your layout is remembered by the browser; <b>Reset to default</b> puts
-it back.</p>
+menu and the dock. It has a tab per menu — <b>Sketch</b>, <b>Model</b> and <b>Assembly</b> —
+so every right-click menu in the program is arranged the same way, and each chip carries the
+tool's own icon so you can find it by sight. Your layout is remembered by the browser;
+<b>Reset to default</b> puts it back.</p>
 <p>Finish with <kbd>Enter</kbd> or the <b>Finish</b> button. <kbd>Esc</kbd> backs out of
 whatever you're mid-way through, and again to leave the sketch.</p>
 
@@ -454,7 +456,11 @@ mistaken for geometry in any state.</p>
   <li><b>Move a point</b> — drag any endpoint, as long as it's still blue. The view stays
       put while you drag, and the point snaps to the origin, the plane traces and other
       vertices on its way past.</li>
-  <li><b>Resize or spin a polygon</b> — drag one of its corners.</li>
+  <li><b>Resize a circle or a polygon</b> — drag its outline, anywhere along it. There's no
+      special handle to find: the whole rim is the handle, and the shape follows the cursor
+      from wherever you took hold. A single click on the outline selects the shape instead.</li>
+  <li><b>Spin a polygon</b> — drag one of its corners. Corners resize <em>and</em> rotate;
+      the flats between them only resize.</li>
   <li><b>Delete</b> — click a line to select it, then <kbd>Delete</kbd>. Or use the eraser
       to remove individual segments and dimensions.</li>
   <li><b>Select several at once</b> — drag a box over empty space. Everything
@@ -539,8 +545,10 @@ they are always there and never part of the recipe.</p>
 <p>They're hidden until wanted; right-click one and toggle its visibility. You can also add
 your own:</p>
 <ul>
-  <li><b>Add plane</b> — a new sketching plane, typically offset from an existing one.
-      This is how you sketch somewhere that isn't a face of the model.</li>
+  <li><b>Add plane</b> — a new sketching plane set <b>at an angle</b> to one of the three.
+      Pick the plane to start from, which of its two in-plane axes to tilt about, and the
+      angle. The result still passes through that axis, so it's an angled plane rather than
+      a floating one. This is how you sketch somewhere that isn't a face of the model.</li>
   <li><b>Add axis</b> — a reference line, useful as the spin axis for a revolve or a
       circular pattern. Its panel asks how the axis is defined: <b>two planes</b> (the line
       where they meet), <b>normal to a plane</b> through a point, or a plain
@@ -601,9 +609,32 @@ neutral archive. If you're choosing between the two and not printing, choose STE
 <p><b>New assembly</b> starts a document that holds several parts rather than one.
 <b>Insert</b> brings a saved part in as a component; select one and <kbd>Delete</kbd>
 removes it. Assemblies save as <code>.asmcad</code>.</p>
-<p>This is the newest and least developed corner of freyacad — treat it as useful for
-laying parts out together and checking how they sit, rather than as a full assembly
-environment with mates and joints.</p>
+<p>Drag a component to slide it on the ground plane; hold <kbd>Shift</kbd> to raise or lower
+it instead. Right-click for the component menu — position, fix in place, remove, and the two
+mates. A component that is <b>fixed</b> won't move: the first part you insert is fixed
+automatically, so everything else lands relative to it.</p>
+
+<h3>Mates</h3>
+<p>Both mates work by <b>picking faces</b>, one on each part. Choose the mate, click the face
+on the part you want to move, then click the face it should meet. Faces light up as the
+cursor passes over them, the first pick stays highlighted in amber, and <kbd>Esc</kbd>
+cancels. If a face is the wrong sort for the mate you chose, the pick is refused and says so
+rather than doing something surprising.</p>
+<table>
+  <tr><th>Mate</th><th>Pick</th><th>Does</th></tr>
+  <tr><td><b>Concentric</b></td><td>Two round faces</td><td>Puts the two on a common axis —
+    a pin into a hole, a boss into a counterbore. The part is free to slide along that axis
+    and to spin about it afterwards.</td></tr>
+  <tr><td><b>Coincident</b></td><td>Two flat faces</td><td>Sets the faces against each other,
+    face to face. The part is free to slide about on that plane afterwards.</td></tr>
+</table>
+<p>Faces are recovered from the part's own geometry, so a hole reads as a hole and its
+diameter is reported back when the mate lands. If both parts are fixed, nothing can move and
+the mate says so; if only one is fixed, the free one moves whichever you picked first.</p>
+<p><b>Mates are applied, not remembered.</b> Each one puts the part where you asked, once —
+it doesn't stay as a relation, so moving a part afterwards moves it for good and won't drag
+its partners along. Treat assemblies as a way to lay parts out and check how they sit rather
+than as a solved assembly environment.</p>
 
 <h2 id="keys">Keyboard</h2>
 <table>
@@ -633,7 +664,8 @@ environment with mates and joints.</p>
   <li><b>The parameter panel is outside undo.</b></li>
   <li><b>Desktop only</b>, by design.</li>
   <li><b>No autosave.</b> The tab is the only copy until you save.</li>
-  <li><b>Assemblies are early.</b> No mates or joints.</li>
+  <li><b>Assembly mates are applied, not solved.</b> Concentric and coincident put a part
+      where you ask, once; they aren't kept as relations, and there are no joints.</li>
 </ul>
 
 <h2 id="about">About</h2>

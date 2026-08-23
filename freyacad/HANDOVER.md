@@ -1,6 +1,6 @@
 # freyacad — handover
 
-Browser CAD at `/freyacad`. One 4,900-line `index.html`, no build step, no framework.
+Browser CAD at `/freyacad`. One ~7,400-line `index.html`, no build step, no framework.
 Open CASCADE compiled to WASM (CDN, ~11 MB) does the geometry; three.js r128 draws it.
 
 ## The one standing rule
@@ -112,6 +112,26 @@ the overlay iframe.
     `applyDrawSnap` into draft points), and drag-release stores origin/trace/vertex-join
     constraints via `refOfHandle`. Plane-name labels are edge-pinned HTML
     (`.trace-label`, `updateTraceLabels` in the render loop), not sprites.
+
+15. **Assembly faces are recovered from the mesh, not from OCCT.** `asmMeshes` holds one
+    merged `BufferGeometry` per solid with no face groups, so `meshTopo` welds the
+    vertices (1e-4 quantised key), `faceRegion` floods across shared *edges* while the
+    crease stays under 38°, and `fitFace` decides what it got: normals all parallel is a
+    plane; normals all perpendicular to one direction is a cylinder, whose axis is the
+    smallest eigenvector of Σ w·nnᵀ (power-iterated on `tr·I − M`) and whose centre comes
+    from a Kåsa circle fit. Fit the circle on the **welded vertices, not the triangle
+    centroids** — a centroid sits inside its chord, and that bias reported Ø5.98 for a
+    Ø6 pin. Region and fit are memoised on `geom.userData._topo`, which is why hover
+    highlighting can afford to run per pointermove. Both caches die with the geometry, so
+    a rebuild invalidates them for free.
+16. **A drag handle you have to *find* is a bad handle.** The circle rim started as a
+    single dot at 3 o'clock; it is now the whole outline (`perimeterHit`, `kind:'rim'`),
+    with `ratio` recording where along the radius you took hold so a polygon grabbed on a
+    flat doesn't jump out to its circumradius. Two things this must not break: a corner
+    handle still wins the pick (corners spin, flats only resize), and a *tap* on the
+    outline has to fall through to selection — going back through `sketchClick` isn't
+    enough there, because `dimHit` measures a polygon to its circumcircle and a click on
+    the flat of an edge finds nothing.
 
 ## Biggest thing still missing
 

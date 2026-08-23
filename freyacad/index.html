@@ -2965,11 +2965,10 @@ const CSG = (function(){
     editing.entities.forEach((e,ei)=>{
       if(e.type==='poly'){ e.pts.forEach(pt=>hs.push({pt,kind:'v',ei})); }
       else if(e.type==='rect'){ hs.push({pt:e.a,kind:'v',ei}); hs.push({pt:e.b,kind:'v',ei}); }
-      else if(e.type==='circle'){
-        hs.push({pt:e.c,kind:'c',ei});
-        // a rim handle so the circle can be resized by dragging its edge
-        hs.push({pt:{x:e.c.x+e.r,y:e.c.y},kind:'cr',ent:e,ei});
-      }
+      // A circle carries no rim handle: the whole circumference is the handle
+      // (see perimeterHit) — one dot on the rim was something to hunt for, and
+      // it only ever sat at 3 o'clock.
+      else if(e.type==='circle'){ hs.push({pt:e.c,kind:'c',ei}); }
       else if(e.type==='polygon'){
         hs.push({pt:e.c,kind:'c',ei});
         // a live handle per corner: dragging one spins and resizes the polygon
@@ -2983,6 +2982,34 @@ const CSG = (function(){
   }
   function nearestHandle(p,maxd){
     let best=null,bd=maxd; for(const h of sketchHandles()){ const d=Math.hypot(h.pt.x-p.x,h.pt.y-p.y); if(d<bd){bd=d;best=h;} } return best;
+  }
+  function polyCorners(e){
+    const cor=[]; for(let i=0;i<e.sides;i++){ const a=e.rot+i/e.sides*Math.PI*2;
+      cor.push({x:e.c.x+e.r*Math.cos(a),y:e.c.y+e.r*Math.sin(a)}); }
+    return cor;
+  }
+  /* The perimeter of a circle or a polygon IS its resize handle — grab it
+     anywhere. Radius follows the cursor's distance from the centre, scaled by
+     where on the outline you took hold, so a polygon grabbed mid-edge doesn't
+     jump out to its circumradius the moment you move. */
+  function perimeterHit(p,tol){
+    if(!editing)return null;
+    let best=null,bd=tol;
+    editing.entities.forEach((e,ei)=>{
+      if(e.type==='circle'){
+        const d=Math.abs(Math.hypot(p.x-e.c.x,p.y-e.c.y)-e.r);
+        if(d<bd){bd=d;best={ent:e,ei};}
+      } else if(e.type==='polygon'){
+        const cor=polyCorners(e);
+        for(let i=0;i<cor.length;i++){
+          const d=seg2Dist(p,cor[i],cor[(i+1)%cor.length]);
+          if(d<bd){bd=d;best={ent:e,ei};}
+        }
+      }
+    });
+    if(!best)return null;
+    const e=best.ent, gd=Math.hypot(p.x-e.c.x,p.y-e.c.y);
+    return {kind:'rim',ent:e,ei:best.ei,ratio:(gd>1e-6?e.r/gd:1),pt:{x:p.x,y:p.y}};
   }
 
   /* ---- hover snap for the drawing tools --------------------------------
@@ -5861,7 +5888,10 @@ const CSG = (function(){
       if(docMode==='asm'){ asmPointerDown(e); return; }
       if(mode==='sketch'&&editing&&tool==='select'&&e.button===0){
         const p=pointerToSketch(e);
-        if(p){ const tol=Math.max(0.6,controls.sph.radius*0.04); const h=nearestHandle(p,tol);
+        if(p){ const tol=Math.max(0.6,controls.sph.radius*0.04);
+          // a point beats the outline it sits on — the corner handle spins a
+          // polygon, the edge between corners only resizes it
+          const h=nearestHandle(p,tol)||perimeterHit(p,tol);
           if(h&&lockedEnts(editing)[h.ei]){
             /* Fully grounded: every freedom is spent against the origin and
                planes, so no drag can move this without breaking something.
@@ -5893,6 +5923,20 @@ const CSG = (function(){
     if(boxDrag){ boxDrag.x1=e.clientX; boxDrag.y1=e.clientY; drawBox(); return; }
     if(docMode==='asm'){
       if(asmDrag){ asmPointerMove(e); return; }
+      if(mateSel){
+        // preview the face the click would take — the pick is the hard part of
+        // a mate, so never make the user guess what the cursor is over
+        const f=faceAt(e), want=wantKind(mateSel.kind);
+        const key=f?(f.mesh.id+':'+f.seed):null;
+        if(key!==mateSel.hover){
+          mateSel.hover=key;
+          while(mateHi.length>(mateSel.a?1:0)){ const m=mateHi.pop();
+            if(m.parent)m.parent.remove(m); m.geometry.dispose(); m.material.dispose(); }
+          if(f&&f.kind===want&&(!mateSel.a||f.compId!==mateSel.a.compId))faceHilite(f,0x35d4e6);
+        }
+        canvas.style.cursor='crosshair';
+        return;
+      }
       const hp=pickComp(e);
       canvas.style.cursor=(hp&&hp.comp&&!hp.comp.fixed)?'grab':'default';
       return;
@@ -5916,10 +5960,10 @@ const CSG = (function(){
         liveSketchRedraw();
         return;
       }
-      if(dragVtx.kind==='cr'&&dragVtx.ent){          // dragging a circle's rim
-        const e2=dragVtx.ent, rr=Math.hypot(p.x-e2.c.x,p.y-e2.c.y);
+      if(dragVtx.kind==='rim'&&dragVtx.ent){    // anywhere on a circle/polygon outline
+        const e2=dragVtx.ent, rr=Math.hypot(p.x-e2.c.x,p.y-e2.c.y)*dragVtx.ratio;
         if(rr>1e-3)e2.r=rr;
-        dragVtx.pt.x=e2.c.x+e2.r; dragVtx.pt.y=e2.c.y; dragSnapPt=null;
+        dragVtx.pt.x=p.x; dragVtx.pt.y=p.y; dragSnapPt=null;
         relaxDims(editing,400,dragVtx); liveSketchRedraw(); return;
       }
       const snap=dragSnap(p,dragVtx);
@@ -5941,6 +5985,12 @@ const CSG = (function(){
       const p0=pointerToSketch(e);if(!p0)return;
       sketchCursor=p0;
       hoverPt=(POINT_TOOLS.indexOf(tool)>=0)?nearestSketchPoint(p0):null;
+      if(tool==='select'){
+        // the outline of a circle or polygon is draggable, so say so
+        const tolH=Math.max(0.6,controls.sph.radius*0.04);
+        canvas.style.cursor=(hoverPt||nearestHandle(p0,tolH))?'move'
+                          :perimeterHit(p0,tolH)?'nwse-resize':'default';
+      }
       // a point under the cursor wins — that is what the click would take
       const hs=(!hoverPt&&LINE_HOVER.indexOf(tool)>=0)?dimHit(p0):null;
       const hk=hs?(hs.entIdx+':'+(hs.seg!=null?hs.seg:hs.kind)):null;
@@ -5963,6 +6013,7 @@ const CSG = (function(){
     if(docMode==='asm'){
       if(asmDrag){ asmPointerUp(); return; }
       if(Math.hypot(e.clientX-downX,e.clientY-downY)>5)return;
+      if(mateSel){ if(e.button===0)mateFaceClick(e); else cancelMate(); return; }
       if(e.button===0){
         const hp=pickComp(e);
         asmSel=(hp&&hp.comp)?hp.comp.id:null;
@@ -5972,6 +6023,20 @@ const CSG = (function(){
     }
     // a real box consumes the gesture; a click falls through to selection
     if(boxDrag){ if(applyBoxSel())return; }
+    /* Grabbing the outline arms a resize, but a tap that never moved is a
+       selection — otherwise clicking a circle to delete it or make it
+       construction would silently do nothing. */
+    if(dragVtx&&dragVtx.kind==='rim'&&Math.hypot(e.clientX-downX,e.clientY-downY)<=5){
+      undoStack.pop(); refreshUndoUI();          // nothing moved: don't bank a step
+      const ei=dragVtx.ei;
+      dragVtx=null; dragSnapPt=null; dragJoins=null;
+      /* Select the entity the outline belongs to. Going back through
+         sketchClick would re-hit-test, and for a polygon that test measures to
+         the circumcircle — a click on the flat of an edge would find nothing. */
+      sketchSel={entIdx:ei,seg:null}; drawSketchSel(); ensureSketchProps();
+      setHint('Selected — press Delete to remove it, or drag the outline to resize');
+      return;
+    }
     if(dragVtx){
       // already snapped during the move; just commit + rebuild. Say which of the
       // four it caught — "joined" would be a lie about the origin or a trace.
@@ -6440,6 +6505,7 @@ const CSG = (function(){
   let asm={components:[],mates:[]};   // component: {id,name,features,t:{x,y,z,rx,ry,rz},fixed}
   let asmSel=null, cuid=1;
   let asmMeshes=[], asmShapes=[];     // parallel to asm.components; shapes are untransformed
+  let mateSel=null, mateHi=[];        // mate in progress: {kind,a,hover} + its highlight meshes
   const D2R=Math.PI/180;
 
   /* run a feature list through the engine without touching the open part */
@@ -6493,6 +6559,7 @@ const CSG = (function(){
   }
   function removeComponent(comp){
     const i=asm.components.indexOf(comp); if(i<0)return;
+    cancelMate(true);            // its highlights hang off the meshes about to go
     for(const m of asmMeshes[i]){scene.remove(m);m.geometry.dispose();}
     for(const s of asmShapes[i]){try{s.delete();}catch(_){}}
     asm.components.splice(i,1);asmMeshes.splice(i,1);asmShapes.splice(i,1);
@@ -6561,40 +6628,219 @@ const CSG = (function(){
     el.querySelector('#pc-close').addEventListener('click',closeProps);
     el.querySelector('#pc-del').addEventListener('click',()=>{closeProps();removeComponent(comp);});
   }
-  /* ---- mates ---------------------------------------------------------------
-     Applied straight to the component's transform rather than solved as a
-     system: each one answers "put this there" exactly, which is what you want
-     for laying parts out. They are not persistent relations - move a part
-     afterwards and it stays moved. */
-  function compBox(comp){
-    const i=asm.components.indexOf(comp); if(i<0)return null;
-    const ms=asmMeshes[i]; if(!ms||!ms.length)return null;
-    const box=new THREE.Box3();
-    ms.forEach(m=>{ m.updateMatrixWorld(true); box.expandByObject(m); });
-    return box.isEmpty()?null:box;
-  }
-  function otherComp(comp){
-    // the mate partner: whatever else is selected, else the one before it
-    const i=asm.components.indexOf(comp);
-    if(asmSel!=null){ const o=asm.components.find(c=>c.id===asmSel&&c!==comp); if(o)return o; }
-    return asm.components[i>0?i-1:1]||null;
-  }
-  function mate(comp,kind){
-    if(!comp)return setHint('Select a component first');
-    if(comp.fixed)return setHint(comp.name+' is fixed in place — unfix it to mate it');
-    const B=otherComp(comp), A=compBox(comp), Bb=B&&compBox(B);
-    if(!A||!Bb)return setHint('Needs two components with geometry — select the other one first');
-    const ca=A.getCenter(new THREE.Vector3()), cb=Bb.getCenter(new THREE.Vector3()), t=comp.t;
-    if(kind==='concentric'){
-      // share an axis: line the parts up on the two axes across it
-      t.x+=cb.x-ca.x; t.z+=cb.z-ca.z;
-      setHint(comp.name+' is concentric with '+B.name);
-    } else {
-      // faces flush: set this part down on top of the other, aligned
-      t.x+=cb.x-ca.x; t.z+=cb.z-ca.z; t.y+=Bb.max.y-A.min.y;
-      setHint(comp.name+' sits flush on '+B.name);
+  /* ---- face picking ---------------------------------------------------------
+     A component mesh is triangle soup, so a "face" has to be recovered from it:
+     weld the vertices, walk out from the triangle under the cursor across every
+     edge whose crease is gentle, and fit whatever comes back. Normals all
+     parallel is a plane. Normals all perpendicular to one direction is a
+     cylinder, and a circle fit through the band gives the axis. That is exactly
+     the two things the mates need — a plane to sit flush on, and an axis to
+     share. Everything is computed in the mesh's own space and pushed to world
+     through its matrix, so it survives the component being moved. */
+  function meshTopo(geom){
+    if(geom.userData._topo)return geom.userData._topo;
+    const pos=geom.attributes.position, idx=geom.index;
+    const nT=Math.floor((idx?idx.count:pos.count)/3);
+    const key=new Map(), tri=[], byV=new Map(), verts=[];
+    const Q=1e4;                                  // weld at 0.1 µm; OCCT emits exact duplicates
+    const vidOf=i=>{
+      const k=Math.round(pos.getX(i)*Q)+','+Math.round(pos.getY(i)*Q)+','+Math.round(pos.getZ(i)*Q);
+      let v=key.get(k);
+      if(v==null){v=key.size;key.set(k,v);verts.push(new THREE.Vector3(pos.getX(i),pos.getY(i),pos.getZ(i)));}
+      return v;
+    };
+    const A=new THREE.Vector3(),B=new THREE.Vector3(),C=new THREE.Vector3();
+    for(let t=0;t<nT;t++){
+      const ii=[0,1,2].map(j=>idx?idx.getX(t*3+j):t*3+j);
+      A.fromBufferAttribute(pos,ii[0]);B.fromBufferAttribute(pos,ii[1]);C.fromBufferAttribute(pos,ii[2]);
+      const n=B.clone().sub(A).cross(C.clone().sub(A));
+      const area=n.length()/2;
+      if(area>1e-12)n.divideScalar(area*2); else n.set(0,0,1);
+      const vs=ii.map(vidOf);
+      tri.push({n,area,c:A.clone().add(B).add(C).multiplyScalar(1/3),v:vs});
+      for(const v of vs){ let l=byV.get(v); if(!l){l=[];byV.set(v,l);} l.push(t); }
     }
-    applyCompTransform(comp); refreshAsmUI();
+    const topo={tri,byV,verts,regions:new Map(),fits:new Map()};
+    geom.userData._topo=topo; return topo;
+  }
+  function faceRegion(geom,seed){
+    const topo=meshTopo(geom);
+    if(topo.regions.has(seed))return topo.regions.get(seed);
+    /* 38° is the crease: a cylinder tessellated finer than that stays whole as
+       the normal walks round it, while a chamfer or a box corner stops the
+       flood. Compared neighbour-to-neighbour, never to the seed — that is what
+       lets the region wrap a full cylinder. */
+    const COS=Math.cos(38*Math.PI/180);
+    const seen=new Set([seed]), out=[seed], stack=[seed];
+    while(stack.length){
+      const t=stack.pop(), T=topo.tri[t], cand=new Map();
+      for(const v of T.v) for(const o of topo.byV.get(v)||[]) if(!seen.has(o))cand.set(o,(cand.get(o)||0)+1);
+      for(const [o,shared] of cand){
+        if(shared<2)continue;                        // must share an edge, not a corner
+        if(topo.tri[o].n.dot(T.n)<COS)continue;
+        seen.add(o); out.push(o); stack.push(o);
+      }
+    }
+    topo.regions.set(seed,out); return out;
+  }
+  function fitFace(geom,seed){
+    const topo=meshTopo(geom);
+    if(topo.fits.has(seed))return topo.fits.get(seed);
+    const ids=faceRegion(geom,seed), T=topo.tri;
+    let wsum=0; const N=new THREE.Vector3(), Cen=new THREE.Vector3();
+    for(const t of ids){ const w=T[t].area||1e-9; wsum+=w;
+      N.addScaledVector(T[t].n,w); Cen.addScaledVector(T[t].c,w); }
+    Cen.divideScalar(wsum||1);
+    let out;
+    if(N.length()/wsum>0.9995){                     // normals agree: a planar face
+      out={kind:'plane',p:Cen,d:N.normalize(),r:0,n:ids.length};
+    } else {
+      /* Axis = the direction every normal is perpendicular to, i.e. the
+         eigenvector of Σ w·nnᵀ with the smallest eigenvalue. Power-iterate on
+         (tr·I − M), whose largest eigenvector is that same direction, seeded
+         from the cross of two normals that differ most. */
+      const M=[0,0,0,0,0,0,0,0,0];
+      for(const t of ids){ const w=T[t].area||1e-9, n=T[t].n;
+        const a=[n.x,n.y,n.z];
+        for(let i=0;i<3;i++)for(let j=0;j<3;j++)M[i*3+j]+=w*a[i]*a[j]; }
+      const tr=M[0]+M[4]+M[8];
+      const P=M.map((v,i)=>(i%4===0?tr:0)-v);       // tr·I − M
+      let d=T[ids[0]].n.clone().cross(T[ids[ids.length-1]].n);
+      if(d.lengthSq()<1e-12)d.set(0,0,1); d.normalize();
+      for(let k=0;k<40;k++){
+        const x=P[0]*d.x+P[1]*d.y+P[2]*d.z, y=P[3]*d.x+P[4]*d.y+P[5]*d.z, z=P[6]*d.x+P[7]*d.y+P[8]*d.z;
+        const L=Math.hypot(x,y,z); if(L<1e-12)break; d.set(x/L,y/L,z/L);
+      }
+      let worst=0; for(const t of ids)worst=Math.max(worst,Math.abs(T[t].n.dot(d)));
+      if(worst>0.12) out={kind:'other',p:Cen,d:N.normalize(),r:0,n:ids.length};
+      else {
+        /* Circle fit (Kåsa) across the axis. On the mesh vertices, not the
+           triangle centroids: a vertex sits exactly on the cylinder, while a
+           centroid sits inside its chord — that bias reads back as a diameter
+           a fraction under the real one. */
+        const u=(Math.abs(d.y)<0.9?new THREE.Vector3(0,1,0):new THREE.Vector3(1,0,0)).cross(d).normalize();
+        const v=d.clone().cross(u).normalize();
+        const vids=new Set(); for(const t of ids)for(const q of T[t].v)vids.add(q);
+        let Sxx=0,Sxy=0,Syy=0,Sx=0,Sy=0,S=0,Sxz=0,Syz=0,Sz=0;
+        for(const vi of vids){ const q=topo.verts[vi].clone().sub(Cen);
+          const x=q.dot(u), y=q.dot(v), z=x*x+y*y;
+          Sxx+=x*x;Sxy+=x*y;Syy+=y*y;Sx+=x;Sy+=y;S+=1;Sxz+=x*z;Syz+=y*z;Sz+=z; }
+        // solve [2Sxx 2Sxy Sx; 2Sxy 2Syy Sy; 2Sx 2Sy S]·[a,b,c] = [Sxz,Syz,Sz]
+        const A3=[[2*Sxx,2*Sxy,Sx],[2*Sxy,2*Syy,Sy],[2*Sx,2*Sy,S]], B3=[Sxz,Syz,Sz];
+        const det=A3[0][0]*(A3[1][1]*A3[2][2]-A3[1][2]*A3[2][1])
+                 -A3[0][1]*(A3[1][0]*A3[2][2]-A3[1][2]*A3[2][0])
+                 +A3[0][2]*(A3[1][0]*A3[2][1]-A3[1][1]*A3[2][0]);
+        if(Math.abs(det)<1e-14) out={kind:'other',p:Cen,d,r:0,n:ids.length};
+        else{
+          const col=(k,b)=>{const m2=A3.map(r=>r.slice()); for(let i=0;i<3;i++)m2[i][k]=b[i];
+            return m2[0][0]*(m2[1][1]*m2[2][2]-m2[1][2]*m2[2][1])
+                  -m2[0][1]*(m2[1][0]*m2[2][2]-m2[1][2]*m2[2][0])
+                  +m2[0][2]*(m2[1][0]*m2[2][1]-m2[1][1]*m2[2][0]);};
+          const a=col(0,B3)/det, b=col(1,B3)/det, c=col(2,B3)/det;
+          const r=Math.sqrt(Math.max(0,c+a*a+b*b));
+          out={kind:'cyl',p:Cen.clone().addScaledVector(u,a).addScaledVector(v,b),d,r,n:ids.length};
+        }
+      }
+    }
+    topo.fits.set(seed,out); return out;
+  }
+  function faceAt(e){
+    const r=canvas.getBoundingClientRect();ndc.x=((e.clientX-r.left)/r.width)*2-1;ndc.y=-((e.clientY-r.top)/r.height)*2+1;
+    raycaster.setFromCamera(ndc,camera);
+    const hit=raycaster.intersectObjects(asmMeshes.flat(),false)[0];
+    if(!hit||hit.faceIndex==null)return null;
+    const m=hit.object; m.updateMatrixWorld(true);
+    const fit=fitFace(m.geometry,hit.faceIndex); if(!fit)return null;
+    return {kind:fit.kind,r:fit.r,mesh:m,seed:hit.faceIndex,compId:m.userData.compId,
+      p:fit.p.clone().applyMatrix4(m.matrixWorld),
+      d:fit.d.clone().transformDirection(m.matrixWorld).normalize()};
+  }
+  /* ---- mates ---------------------------------------------------------------
+     Pick a face on each part and the mate is solved from those two faces, not
+     from bounding boxes. Applied straight to the component's transform rather
+     than kept as a relation: it answers "put this there" exactly, which is what
+     you want for laying parts out. Move a part afterwards and it stays moved. */
+  function clearMateHi(){
+    for(const m of mateHi){ if(m.parent)m.parent.remove(m); m.geometry.dispose(); m.material.dispose(); }
+    mateHi=[];
+  }
+  function faceHilite(f,color){
+    const geom=f.mesh.geometry, ids=faceRegion(geom,f.seed);
+    const pos=geom.attributes.position, idx=geom.index, arr=[];
+    for(const t of ids)for(let j=0;j<3;j++){ const i=idx?idx.getX(t*3+j):t*3+j;
+      arr.push(pos.getX(i),pos.getY(i),pos.getZ(i)); }
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.Float32BufferAttribute(arr,3));
+    const mm=new THREE.Mesh(g,new THREE.MeshBasicMaterial({color,transparent:true,opacity:0.5,
+      side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4}));
+    mm.renderOrder=8; f.mesh.add(mm); mateHi.push(mm); return mm;
+  }
+  function startMate(kind){
+    if(asm.components.length<2)return setHint('Insert a second part before mating');
+    clearMateHi(); mateSel={kind,a:null,hover:null};
+    canvas.style.cursor='crosshair';
+    setHint(kind==='concentric'
+      ? 'Concentric: click a round face on the part to move, then the round face it should share an axis with (Esc cancels)'
+      : 'Coincident: click a flat face on the part to move, then the flat face it should sit against (Esc cancels)');
+    refreshAsmUI();
+  }
+  function cancelMate(quiet){
+    if(!mateSel)return false;
+    mateSel=null; clearMateHi(); canvas.style.cursor='default';
+    if(!quiet)setHint('Mate cancelled');
+    refreshAsmUI(); return true;
+  }
+  function wantKind(k){ return k==='concentric'?'cyl':'plane'; }
+  function mateFaceClick(e){
+    const f=faceAt(e);
+    if(!f)return setHint('No face there — click on a part');
+    const need=wantKind(mateSel.kind);
+    if(f.kind!==need)return setHint(need==='cyl'
+      ? 'That is not a round face — pick a hole or a boss'
+      : 'That is not a flat face — pick a planar one');
+    if(!mateSel.a){
+      mateSel.a=f; clearMateHi(); faceHilite(f,0xFBBC05);
+      setHint('Now click the matching face on the other part');
+      return;
+    }
+    if(f.compId===mateSel.a.compId)return setHint('Pick the second face on a different part');
+    faceHilite(f,0x34A853);
+    applyMate(mateSel.a,f,mateSel.kind);
+  }
+  function compById(id){ return asm.components.find(c=>c.id===id)||null; }
+  function applyMate(fa,fb,kind){
+    let A=fa,B=fb, ca=compById(fa.compId), cb=compById(fb.compId);
+    if(!ca||!cb)return cancelMate(true);
+    if(ca.fixed&&cb.fixed){ setHint('Both parts are fixed — unfix one to mate it'); return cancelMate(true); }
+    if(ca.fixed){ A=fb;B=fa; const t2=ca; ca=cb; cb=t2; }   // the free part is the one that moves
+    const t=ca.t;
+    const q=new THREE.Quaternion().setFromEuler(new THREE.Euler(t.rx*D2R,t.ry*D2R,t.rz*D2R,'XYZ'));
+    const T=new THREE.Vector3(t.x,t.y,t.z);
+    // where should A's face end up pointing?
+    const aim=(kind==='concentric')
+      ? (A.d.dot(B.d)<0?B.d.clone().negate():B.d.clone())   // axes: nearest of the two senses
+      : B.d.clone().negate();                               // flat faces meet nose to nose
+    const qfix=new THREE.Quaternion().setFromUnitVectors(A.d.clone().normalize(),aim.normalize());
+    const q2=qfix.clone().multiply(q);
+    // spin about the picked point so the face stays where the user grabbed it
+    const pLocal=A.p.clone().sub(T).applyQuaternion(q.clone().invert());
+    const T2=A.p.clone().sub(pLocal.clone().applyQuaternion(q2));
+    if(kind==='concentric'){
+      const off=B.p.clone().sub(A.p);
+      T2.add(off.sub(aim.clone().multiplyScalar(off.dot(aim))));   // close the gap across the axis
+    } else {
+      T2.addScaledVector(B.d,B.p.clone().sub(A.p).dot(B.d));       // slide onto B's plane
+    }
+    const rd=v=>Math.abs(v)<1e-9?0:Math.round(v*1e4)/1e4;
+    const eu=new THREE.Euler().setFromQuaternion(q2,'XYZ');
+    t.x=rd(T2.x);t.y=rd(T2.y);t.z=rd(T2.z);
+    t.rx=rd(eu.x/D2R);t.ry=rd(eu.y/D2R);t.rz=rd(eu.z/D2R);
+    applyCompTransform(ca);
+    asmSel=ca.id; mateSel=null; clearMateHi(); canvas.style.cursor='default';
+    setHint(kind==='concentric'
+      ? ca.name+' is concentric with '+cb.name+' (Ø'+(2*B.r).toFixed(2)+')'
+      : ca.name+' sits flush against '+cb.name);
+    refreshAsmUI();
   }
   const ACMD={
     insert  :{ic:'open', label:'Insert part file…',fn:()=>$('file-insert').click()},
@@ -6603,8 +6849,8 @@ const CSG = (function(){
     fix     :{ic:'suppress',label:'Fix / unfix',fn:()=>{const c=selComp();
                 if(c){c.fixed=!c.fixed;refreshAsmTree();setHint(c.name+(c.fixed?' fixed':' free'));}}},
     remove  :{ic:'del',  label:'Remove',      fn:()=>{const c=selComp();if(c)removeComponent(c);}},
-    m_conc  :{ic:'coinc',  label:'Concentric with the other part',fn:()=>mate(selComp(),'concentric')},
-    m_face  :{ic:'dplane', label:'Coincident — faces flush',        fn:()=>mate(selComp(),'coincident')}
+    m_conc  :{ic:'coinc',  label:'Concentric — pick two round faces',fn:()=>startMate('concentric')},
+    m_face  :{ic:'dplane', label:'Coincident — pick two flat faces', fn:()=>startMate('coincident')}
   };
   const DEFAULT_ASM_LAYOUT=[
     {name:'Assembly',  ids:['insert','demo']},
@@ -6621,8 +6867,10 @@ const CSG = (function(){
       if(!live.length)continue;
       items.push({sect:sec.name});
       for(const id of live){ const c=ACMD[id];
+        // mates start with a face pick, so they need parts — not a selection
+        const free=(id==='insert'||id==='demo'||id==='m_conc'||id==='m_face');
         items.push({ic:c.ic,label:c.label,fn:c.fn,
-          disabled:(id!=='insert'&&id!=='demo')&&!comp&&!selComp()}); }
+          disabled:!free&&!comp&&!selComp()}); }
     }
     return items;
   }
@@ -6639,6 +6887,7 @@ const CSG = (function(){
     [sketchOverlay,previewOverlay,refOverlay,hoverGroup,selGroup,handleGroup,draftGroup].forEach(g=>g.visible=!isA);
     resultMeshes.forEach(mm=>mm.visible=!isA);
     if(pickLines)pickLines.visible=!isA;
+    cancelMate(true);
     asmMeshes.flat().forEach(mm=>mm.visible=isA);
     closeProps();closeEdgeMenu();
     if(isA){
@@ -6657,6 +6906,7 @@ const CSG = (function(){
   }
   function asmPointerDown(e){
     if(e.button!==0)return;
+    if(mateSel)return;             // picking faces, not dragging parts about
     const hit=pickComp(e);
     if(hit&&hit.comp&&!hit.comp.fixed){
       controls._animLock=false;controls._s=0;controls.enableRotate=false;
@@ -6997,6 +7247,7 @@ const CSG = (function(){
       if(e.key==='5'){e.preventDefault();setProjection(!orthoOn);return;}
     }
     if(e.key==='F1'){e.preventDefault();openManual();return;}
+    if(e.key==='Escape'&&mateSel){e.preventDefault();cancelMate();return;}
     if(!e.ctrlKey&&!e.metaKey&&!e.altKey&&/^Arrow(Left|Right|Up|Down)$/.test(e.key)){
       e.preventDefault();
       const S=Math.PI/6;
@@ -7093,6 +7344,8 @@ const CSG = (function(){
     get asmShapes(){ return asmShapes; },
     get asmMeshes(){ return asmMeshes; },
     addComponent, setDocMode, buildPartShapes, asmTransformedShapes, removeComponent,
+    startMate, cancelMate, fitFace, faceRegion, applyMate, applyCompTransform,
+    get mateSel(){ return mateSel; }, perimeterHit,
     editSketch, finishSketch, defineState, lockedEnts, sketchHandles, updateTraceLabels,
     get editing(){ return editing; }, get tool(){ return tool; }, set tool(v){ tool=v; dockSel(); },
     snap(){ renderer.render(scene, camera); return renderer.domElement.toDataURL('image/jpeg', 0.85); }
