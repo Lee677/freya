@@ -2656,7 +2656,18 @@ const CSG = (function(){
       const pf=features.find(x=>x.id===plane.refId&&x.type==='dplane');
       if(!pf) throw new Error('its datum plane was deleted');
       if(pf.suppressed) throw new Error('its datum plane is suppressed');
-      const fr=frameClone(DATUM[pf.base]); fr.o.addScaledVector(fr.n,pf.offset); return fr;
+      const fr=frameClone(DATUM[pf.base]);
+      /* Tilt the base plane about an axis by an angle. The axis is one of the
+         base plane's own two in-plane directions, so the result always still
+         passes through the base plane's origin line — an angled plane, not a
+         floating one. */
+      const ang=(pf.angle||0)*Math.PI/180;
+      if(Math.abs(ang)>1e-9){
+        const ax=(pf.about==='v')?fr.v.clone():fr.u.clone();
+        const q=new THREE.Quaternion().setFromAxisAngle(ax.normalize(),ang);
+        fr.u.applyQuaternion(q); fr.v.applyQuaternion(q); fr.n.applyQuaternion(q);
+      }
+      return fr;
     }
     const p=plane.frame, v3=a=>a.isVector3?a.clone():new THREE.Vector3(a.x,a.y,a.z);
     return {o:v3(p.o),u:v3(p.u),v:v3(p.v),n:v3(p.n)};
@@ -2954,7 +2965,11 @@ const CSG = (function(){
     editing.entities.forEach((e,ei)=>{
       if(e.type==='poly'){ e.pts.forEach(pt=>hs.push({pt,kind:'v',ei})); }
       else if(e.type==='rect'){ hs.push({pt:e.a,kind:'v',ei}); hs.push({pt:e.b,kind:'v',ei}); }
-      else if(e.type==='circle'){ hs.push({pt:e.c,kind:'c',ei}); }
+      else if(e.type==='circle'){
+        hs.push({pt:e.c,kind:'c',ei});
+        // a rim handle so the circle can be resized by dragging its edge
+        hs.push({pt:{x:e.c.x+e.r,y:e.c.y},kind:'cr',ent:e,ei});
+      }
       else if(e.type==='polygon'){
         hs.push({pt:e.c,kind:'c',ei});
         // a live handle per corner: dragging one spins and resizes the polygon
@@ -5171,7 +5186,7 @@ const CSG = (function(){
     if(type==='fillet')return {id:nextId(),type:'fillet',name:'Fillet'+cnt('fillet'),kind:'fillet',r:0.5,propagate:true,seeds:selectedEdges.map(s=>({mid:s.mid.slice(),dir:s.dir.slice()})),suppressed:false};
     if(type==='chamfer')return {id:nextId(),type:'fillet',name:'Chamfer'+cnt('fillet'),kind:'chamfer',r:0.5,propagate:true,seeds:selectedEdges.map(s=>({mid:s.mid.slice(),dir:s.dir.slice()})),suppressed:false};
     if(type==='rcut'){const f={id:nextId(),type:'revolve',name:'RevolveCut'+cnt('revolve'),sketchId:sid,angle:360,axis:'v',operation:'cut',merge:true,segments:48,suppressed:false};return f;}
-    if(type==='dplane')return {id:nextId(),type:'dplane',name:'Plane'+cnt('dplane'),base:'Top',offset:5,suppressed:false};
+    if(type==='dplane')return {id:nextId(),type:'dplane',name:'Plane'+cnt('dplane'),base:'Top',about:'u',angle:30,suppressed:false};
     if(type==='daxis')return {id:nextId(),type:'daxis',name:'Axis'+cnt('daxis'),method:'planes',pa:'Top',pb:'Front',dir:'Y',px:0,py:0,pz:0,suppressed:false};
     if(type==='mirror')return {id:nextId(),type:'mirror',name:'Mirror'+cnt('mirror'),plane:'Right',merge:true,suppressed:false};
     if(type==='lpattern')return {id:nextId(),type:'lpattern',name:'LPattern'+cnt('lpattern'),dir:'X',count:3,spacing:4,merge:false,suppressed:false};
@@ -5605,7 +5620,10 @@ const CSG = (function(){
       add(fieldCheck('Merge result',f.merge,v=>{f.merge=v;rerun();}));
     } else if(f.type==='dplane'){
       add(fieldSeg('Base plane',[{l:'Top',v:'Top'},{l:'Front',v:'Front'},{l:'Right',v:'Right'}],f.base,v=>{f.base=v;rerun();}));
-      add(fieldNumber('Offset along normal',f.offset,0.5,null,null,'units',v=>{f.offset=v;rerun();}));
+      add(fieldSeg('Tilt about',[{l:'Its U axis',v:'u'},{l:'Its V axis',v:'v'}],f.about||'u',
+        v=>{f.about=v;rerun();}));
+      add(fieldNumber('Angle to the base plane',f.angle==null?30:f.angle,5,-180,180,'deg',
+        v=>{f.angle=v;rerun();}));
       const nt=document.createElement('div');nt.className='note';nt.textContent='Right-click the plane in the feature tree to start a sketch on it.';add(nt);
     } else if(f.type==='daxis'){
       const planes=['Top','Front','Right']
@@ -5897,6 +5915,12 @@ const CSG = (function(){
                                             // and the early-out keeps it cheap
         liveSketchRedraw();
         return;
+      }
+      if(dragVtx.kind==='cr'&&dragVtx.ent){          // dragging a circle's rim
+        const e2=dragVtx.ent, rr=Math.hypot(p.x-e2.c.x,p.y-e2.c.y);
+        if(rr>1e-3)e2.r=rr;
+        dragVtx.pt.x=e2.c.x+e2.r; dragVtx.pt.y=e2.c.y; dragSnapPt=null;
+        relaxDims(editing,400,dragVtx); liveSketchRedraw(); return;
       }
       const snap=dragSnap(p,dragVtx);
       if(snap){ dragVtx.pt.x=snap.x; dragVtx.pt.y=snap.y; dragSnapPt=snap; }
@@ -6558,28 +6582,19 @@ const CSG = (function(){
   function mate(comp,kind){
     if(!comp)return setHint('Select a component first');
     if(comp.fixed)return setHint(comp.name+' is fixed in place — unfix it to mate it');
-    const A=compBox(comp);
-    if(!A&&kind!=='align')return setHint('That component has no geometry to mate');
-    const t=comp.t;
-    if(kind==='align'){ t.rx=0;t.ry=0;t.rz=0; }
-    else if(kind==='floor'){ t.y-=A.min.y; }
-    else if(kind==='centre'){ const c=A.getCenter(new THREE.Vector3()); t.x-=c.x; t.z-=c.z; }
-    else if(kind==='origin'){ const c=A.getCenter(new THREE.Vector3()); t.x-=c.x;t.y-=c.y;t.z-=c.z; }
-    else {
-      const B=otherComp(comp), Bb=B&&compBox(B);
-      if(!Bb)return setHint('Needs a second component — select the other one first');
-      const ca=A.getCenter(new THREE.Vector3()), cb=Bb.getCenter(new THREE.Vector3());
-      if(kind==='stack'){ t.x+=cb.x-ca.x; t.z+=cb.z-ca.z; t.y+=Bb.max.y-A.min.y; }
-      else if(kind==='concentric'){ t.x+=cb.x-ca.x; t.z+=cb.z-ca.z; }
-      else if(kind==='coincident'){ t.x+=cb.x-ca.x; t.y+=cb.y-ca.y; t.z+=cb.z-ca.z; }
-      else if(kind==='beside'){ t.z+=cb.z-ca.z; t.y+=cb.y-ca.y; t.x+=Bb.max.x-A.min.x; }
+    const B=otherComp(comp), A=compBox(comp), Bb=B&&compBox(B);
+    if(!A||!Bb)return setHint('Needs two components with geometry — select the other one first');
+    const ca=A.getCenter(new THREE.Vector3()), cb=Bb.getCenter(new THREE.Vector3()), t=comp.t;
+    if(kind==='concentric'){
+      // share an axis: line the parts up on the two axes across it
+      t.x+=cb.x-ca.x; t.z+=cb.z-ca.z;
+      setHint(comp.name+' is concentric with '+B.name);
+    } else {
+      // faces flush: set this part down on top of the other, aligned
+      t.x+=cb.x-ca.x; t.z+=cb.z-ca.z; t.y+=Bb.max.y-A.min.y;
+      setHint(comp.name+' sits flush on '+B.name);
     }
     applyCompTransform(comp); refreshAsmUI();
-    setHint(comp.name+': '+({align:'rotation zeroed',floor:'sitting on the Top plane',
-      centre:'centred over the origin',origin:'centred on the origin',
-      stack:'stacked on '+((otherComp(comp)||{}).name||'the other part'),
-      concentric:'axes aligned',coincident:'centres coincident',
-      beside:'set alongside'}[kind]||'mated'));
   }
   const ACMD={
     insert  :{ic:'open', label:'Insert part file…',fn:()=>$('file-insert').click()},
@@ -6588,19 +6603,13 @@ const CSG = (function(){
     fix     :{ic:'suppress',label:'Fix / unfix',fn:()=>{const c=selComp();
                 if(c){c.fixed=!c.fixed;refreshAsmTree();setHint(c.name+(c.fixed?' fixed':' free'));}}},
     remove  :{ic:'del',  label:'Remove',      fn:()=>{const c=selComp();if(c)removeComponent(c);}},
-    m_floor :{ic:'dplane',label:'Sit on the Top plane',fn:()=>mate(selComp(),'floor')},
-    m_centre:{ic:'daxis',label:'Centre over the origin',fn:()=>mate(selComp(),'centre')},
-    m_origin:{ic:'daxis',label:'Centre on the origin',  fn:()=>mate(selComp(),'origin')},
-    m_align :{ic:'normal',label:'Align rotation to world',fn:()=>mate(selComp(),'align')},
-    m_stack :{ic:'lpattern',label:'Stack on the other part',fn:()=>mate(selComp(),'stack')},
-    m_conc  :{ic:'coinc',label:'Align axes with the other part',fn:()=>mate(selComp(),'concentric')},
-    m_coin  :{ic:'coinc',label:'Centres coincident',fn:()=>mate(selComp(),'coincident')},
-    m_side  :{ic:'mirror',label:'Set alongside the other part',fn:()=>mate(selComp(),'beside')}
+    m_conc  :{ic:'coinc',  label:'Concentric with the other part',fn:()=>mate(selComp(),'concentric')},
+    m_face  :{ic:'dplane', label:'Coincident — faces flush',        fn:()=>mate(selComp(),'coincident')}
   };
   const DEFAULT_ASM_LAYOUT=[
     {name:'Assembly',  ids:['insert','demo']},
     {name:'Component', ids:['pos','fix','remove']},
-    {name:'Mates',     ids:['m_floor','m_centre','m_origin','m_align','m_stack','m_conc','m_coin','m_side']}
+    {name:'Mates',     ids:['m_conc','m_face']}
   ];
   MENUS.asm.cmds=ACMD; MENUS.asm.def=DEFAULT_ASM_LAYOUT; loadMenu(MENUS.asm);
   function selComp(){ return asm.components.find(c=>c.id===asmSel)||null; }
