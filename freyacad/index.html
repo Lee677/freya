@@ -558,6 +558,7 @@ if(!window.THREE){
       <button data-tool="rect">Rect</button>
       <button data-tool="circle">Circle</button>
       <button data-tool="polygon">Polygon</button>
+      <button data-tool="cline" title="Construction line: reference geometry, never part of the solid">&#8901;&#8901; Constr</button>
       <button data-tool="mirror" title="Mirror: pick a line, then click shapes to mirror">&#8646; Mirror</button>
       <button data-tool="dynmirror" title="Dynamic mirror: pick a line, then everything you draw appears both sides">&#8644; Dyn</button>
       <button data-tool="dim">Dim</button>
@@ -1434,11 +1435,15 @@ const CSG = (function(){
     sk.entities.forEach((e,i)=>{
       const path=entityDisplayPath(sk,e); if(!path)return;
       const ok=st[i]&&st[i].defined;
-      const mat=new THREE.LineBasicMaterial({color:ok?0xFBBC05:0x4285F4,transparent:true,
-        opacity:ok?1.0:0.95,depthTest:false});
+      const mat=e.construction
+        ? new THREE.LineDashedMaterial({color:ok?0xFBBC05:0x4285F4,transparent:true,
+            opacity:0.55,dashSize:0.4,gapSize:0.3,depthTest:false})
+        : new THREE.LineBasicMaterial({color:ok?0xFBBC05:0x4285F4,transparent:true,
+            opacity:ok?1.0:0.95,depthTest:false});
       const pts=path.pts.map(p=>worldFromSketch(frame,p.x,p.y));
       if(path.closed)pts.push(pts[0]);
       const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),mat);
+      if(e.construction)ln.computeLineDistances();
       ln.renderOrder=2;target.add(ln);
     });
     updateAnchorChip(sk);
@@ -1791,6 +1796,7 @@ const CSG = (function(){
     const frame = sk.frame;
     const items = [];
     for(const e of sk.entities){
+      if(e.construction) continue;      // reference geometry: never becomes a face
       if(e.type === 'circle'){
         const segs = 24, poly = [];
         for(let i = 0; i < segs; i++){ const a = i/segs*2*Math.PI; poly.push({x: e.c.x + e.r*Math.cos(a), y: e.c.y + e.r*Math.sin(a)}); }
@@ -3069,7 +3075,7 @@ const CSG = (function(){
     return best;
   }
   const snapMarkGroup=new THREE.Group(); scene.add(snapMarkGroup);
-  const DRAW_TOOLS=['line','rect','circle','polygon'];
+  const DRAW_TOOLS=['line','cline','rect','circle','polygon'];
   function drawSnapMark(){
     while(snapMarkGroup.children.length){const c=snapMarkGroup.children.pop();if(c.geometry)c.geometry.dispose();}
     if(mode!=='sketch'||!editing||!editing.frame)return;
@@ -3432,7 +3438,7 @@ const CSG = (function(){
     // 0.06 to match the Pointer's handles — a draft point that reads bigger than
     // the handle it becomes made the same vertex look like two different things
     const vmesh=(p,c)=>{const m=new THREE.Mesh(new THREE.SphereGeometry(0.06,12,10),new THREE.MeshBasicMaterial({color:c,depthTest:false}));m.position.copy(worldFromSketch(fr,p.x,p.y));m.renderOrder=6;draftGroup.add(m);};
-    if(tool==='line'){
+    if(tool==='line'||tool==='cline'){
       if(chain){
         // committed segments draw themselves; this is just the rubber band
         const ent=chain.ei!=null?editing.entities[chain.ei]:null;
@@ -3470,7 +3476,7 @@ const CSG = (function(){
     // Backspace/Escape, so only the commit is worth an undo step
     if(tool==='rect'||tool==='circle'||tool==='polygon'){ if(draftStage===1)pushUndo('draw '+tool); }
     else if(tool==='erase'||tool==='horiz'||tool==='vert'||tool==='paral'||tool==='equal'||tool==='coinc'){ pushUndo(tool); }
-    if(tool==='line'){
+    if(tool==='line'||tool==='cline'){
       if(chain&&chain.ei!=null){
         const ent=editing.entities[chain.ei];
         if(ent&&ent.type==='poly'&&!ent.closed){
@@ -3501,6 +3507,7 @@ const CSG = (function(){
       if(Math.abs(chain.start.x-p.x)<1e-6&&Math.abs(chain.start.y-p.y)<1e-6)return;
       pushUndo('draw line');
       const ent={type:'poly',pts:[{x:chain.start.x,y:chain.start.y},{x:p.x,y:p.y}],closed:false};
+      if(tool==='cline')ent.construction=true;
       editing.entities.push(ent);
       const ei=editing.entities.length-1;
       if(chain.start.g)storeGround({ent:ei,idx:0},chain.start.g);
@@ -5063,6 +5070,7 @@ const CSG = (function(){
     rcut:_sw(`<path d="M5 3v18" stroke="${_B}" stroke-dasharray="4.5 2 1.2 2"/><path d="M9 6.5c6 0 10 2.2 10 5.5s-4 5.5-10 5.5z" stroke="${_B}"/><path d="M9 10h5.5v4H9z" stroke="${_Y}"/>`),
     fillet:_sw(`<path d="M4 4v16h16" stroke="${_B}" stroke-dasharray="3 2.4" opacity=".45"/><path d="M4 4v6a10 10 0 0 0 10 10h6" stroke="${_Y}" stroke-width="1.9"/>`),
     chamfer:_sw(`<path d="M4 4v16h16" stroke="${_B}" stroke-dasharray="3 2.4" opacity=".45"/><path d="M4 4v8l8 8h8" stroke="${_Y}" stroke-width="1.9"/>`),
+    cline:_sw(`<path d="M3 19 21 5" stroke="${_Y}" stroke-dasharray="3 2.5"/>`),
     mirror:_sw(`<path d="M12 3v18" stroke="${_G}" stroke-dasharray="4 3"/><path d="M8.5 8 3.5 12l5 4z" fill="${_B}" stroke="${_B}"/><path d="M15.5 8l5 4-5 4z" stroke="${_B}"/>`),
     lpattern:_sw(`<rect x="3" y="9.5" width="5" height="5" fill="${_B}"/><rect x="9.7" y="9.5" width="5" height="5" stroke="${_B}"/><rect x="16.4" y="9.5" width="5" height="5" stroke="${_B}" opacity=".5"/><path d="M4 19h14M15.5 16.7 18 19l-2.5 2.3" stroke="${_Y}"/>`),
     cpattern:_sw(`<circle cx="12" cy="13" r="7.5" stroke="${_B}" stroke-dasharray="3 2.4" opacity=".55"/><rect x="9.7" y="3" width="4.6" height="4.6" fill="${_B}"/><rect x="3.4" y="14" width="4.6" height="4.6" stroke="${_B}"/><rect x="16" y="14" width="4.6" height="4.6" stroke="${_B}"/><circle cx="12" cy="13" r="1.4" fill="${_Y}"/>`),
@@ -5625,6 +5633,7 @@ const CSG = (function(){
       else if(tool==='horiz')h.innerHTML='<span class="pip"></span> Horizontal: click a line segment to lay it flat';
       else if(tool==='vert')h.innerHTML='<span class="pip"></span> Vertical: click a line segment to stand it upright';
       else if(tool==='paral')h.innerHTML='<span class="pip"></span> Parallel: click the reference line, then the line to align to it';
+      else if(tool==='cline')h.innerHTML='<span class="pip"></span> Construction line: draws like a line but never becomes part of the solid — mirror lines, centre lines, references';
       else if(tool==='mirror')h.innerHTML='<span class="pip"></span> Mirror: click the line to mirror about, then click each shape to mirror';
       else if(tool==='dynmirror')h.innerHTML='<span class="pip"></span> Dynamic mirror: click a line to arm it — what you draw then appears both sides. Click it again to stop';
       else if(tool==='coinc')h.innerHTML='<span class="pip"></span> Coincident: click a point, then the point to lock it to — the pair then moves as one';
@@ -6013,6 +6022,7 @@ const CSG = (function(){
     polygon  :{ic:'polygon',label:'Polygon',    tool:'polygon'},
     mirror   :{ic:'mirror', label:'Mirror',     tool:'mirror'},
     dynmirror:{ic:'dynmirror',label:'Dynamic mirror',tool:'dynmirror'},
+    cline    :{ic:'cline',  label:'Construction line', tool:'cline'},
     dim      :{ic:'dim',    label:'Dimension',  tool:'dim'},
     erase    :{ic:'erase',  label:'Erase',      tool:'erase'},
     corners  :{ic:'fillet', label:'Sketch corners…',fn:()=>{cornerUI=true;ensureSketchProps();
@@ -6030,7 +6040,7 @@ const CSG = (function(){
   };
   const DEFAULT_LAYOUT=[
     {name:'Sketch',          ids:['finish','finishext','cancel']},
-    {name:'Sketch entities', ids:['select','line','rect','circle','polygon','mirror','dynmirror','dim','erase','corners']},
+    {name:'Sketch entities', ids:['select','line','cline','rect','circle','polygon','mirror','dynmirror','dim','erase','corners']},
     {name:'Relations',       ids:['horiz','vert','paral','equal','coinc']},
     {name:'View',            ids:['normal','iso','fit','proj']}
   ];
@@ -6397,7 +6407,7 @@ const CSG = (function(){
   /* decorate every button with its pictogram; original text becomes a .lbl */
   (function decorate(){
     menu.querySelectorAll('[data-ic]').forEach(b=>{ b.innerHTML=icHTML(b.dataset.ic)+'<span class="lbl">'+b.textContent+'</span>'; });
-    const dockLbl={select:'Pointer',line:'Line',move:'Move',rect:'Rect',circle:'Circle',polygon:'Polygon',mirror:'Mirror',dynmirror:'Dyn mirror',dim:'Dim',horiz:'Horiz',vert:'Vert',paral:'Parallel',equal:'Equal',coinc:'Coinc',erase:'Erase'};
+    const dockLbl={select:'Pointer',line:'Line',move:'Move',rect:'Rect',circle:'Circle',polygon:'Polygon',cline:'Construction',mirror:'Mirror',dynmirror:'Dyn mirror',dim:'Dim',horiz:'Horiz',vert:'Vert',paral:'Parallel',equal:'Equal',coinc:'Coinc',erase:'Erase'};
     $('dock').querySelectorAll('button').forEach(b=>{ const t=b.dataset.tool; b.innerHTML=icHTML(t)+'<span class="lbl">'+(dockLbl[t]||t)+'</span>'; });
     const tb={'btn-save':'save','btn-load':'open','btn-export':'stl','btn-step':'step','btn-new':'newpart','btn-new-asm':'asm','btn-insert':'add','btn-finish':'finish','btn-cancel-sk':'cancel'};
     for(const id in tb){ const b=$(id); b.innerHTML=icHTML(tb[id])+'<span class="lbl">'+b.textContent+'</span>'; }
