@@ -341,7 +341,7 @@ distance to a plane, an angle to a plane), the count floors at the freedoms the 
 shape retains, and the chip stays honest about it.</p>
 
 <h3>The constraints</h3>
-<p>Six constraints live in the tool dock. Horizontal and vertical work either way round:</p>
+<p>Five constraints live in the tool dock. Horizontal and vertical work either way round:</p>
 <ul>
   <li><b>Select first</b> — click a line with the pointer, then click the H or V icon.</li>
   <li><b>Tool first</b> — click the H or V icon, then click the line.</li>
@@ -355,6 +355,10 @@ way the line's angle changes again is deleting that badge (click it and press
 lock it to, and from then on they move as one. Lock a point to the <b>origin</b> the same
 way to pin it to ground. Its badge sits by the joined point and deletes like the
 others.</p>
+<p>Clicking a <b>circle or polygon anywhere on its outline</b> means its centre, so the
+same tool makes two of them <b>concentric</b> — no hunting for the little centre dot.
+That pairing badges itself ◎, since two shapes sharing a centre is worth being able to
+see and undo.</p>
 <p><b>Snaps become constraints by themselves.</b> Draw or drop a point onto the origin
 and a ⊕ appears; onto a plane trace and an ∈ (on-plane) appears — the point can then
 slide along the plane but never off it. Release a dragged point onto another point and
@@ -365,10 +369,8 @@ the join is plain to see, and a marker on every corner would only be clutter.</p
 <p><b>Parallel</b> (∥) and <b>equal</b> (=) relate two lines, so they always want a
 reference first: click the icon (or have a line selected when you click it), click the
 line to copy from, then click the line to change. Parallel matches its direction; equal
-matches its length. <b>Concentric</b> (◎) does the same for circles and polygons: click
-the reference, then the one to move onto its centre. All of these persist exactly like
-H and V — the badge sits on the following line (or the shared centre), and deleting it
-is what dissolves the relationship.</p>
+matches its length. Both persist exactly like H and V — the badge sits on the following
+line, and deleting it is what dissolves the relationship.</p>
 <p>Every constraint holds through everything: drags, other constraints, and typed
 dimension changes all settle together, so a line that says H <em>is</em> horizontal —
 if a dimension edit would bend it, the free geometry moves instead.</p>

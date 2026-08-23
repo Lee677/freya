@@ -544,7 +544,6 @@ if(!window.THREE){
       <button data-tool="vert" title="Make a line vertical">⊥ Vert</button>
       <button data-tool="paral" title="Make one line parallel to another">∥ Parallel</button>
       <button data-tool="equal" title="Make one line the same length as another">= Equal</button>
-      <button data-tool="conc" title="Make a circle or polygon share another's centre">◎ Conc</button>
       <button data-tool="coinc" title="Lock two points together (or a point to the origin)">⊕ Coinc</button>
       <button data-tool="erase">Erase</button>
     </div>
@@ -2990,14 +2989,6 @@ const CSG = (function(){
      line with the Pointer and press the tool. Returns true if it acted. */
   function applyConstraintToSelection(t){
     if(!editing||!sketchSel)return false;
-    if(t==='conc'){
-      // a selected circle or polygon seeds the reference, same as paral/equal
-      const e=editing.entities[sketchSel.entIdx];
-      if(!e||(e.type!=='circle'&&e.type!=='polygon'))return false;
-      concRef={entIdx:sketchSel.entIdx,kind:e.type==='circle'?'dia':'pdia'};
-      setHint('Now click the circle or polygon to move onto that centre');
-      return false;
-    }
     if(sketchSel.seg==null)return false;
     if(t!=='horiz'&&t!=='vert'&&t!=='paral'&&t!=='equal')return false;
     const d={entIdx:sketchSel.entIdx,kind:'seg',seg:sketchSel.seg};
@@ -3023,7 +3014,7 @@ const CSG = (function(){
   }
   // Tools where clicking an existing point means something — the glow is the
   // affordance that says "this endpoint is grabbable".
-  const POINT_TOOLS=['dim','select','erase','coinc','conc'];
+  const POINT_TOOLS=['dim','select','erase','coinc'];
   function nearestSketchPoint(p){
     if(!editing)return null;
     const tol=Math.max(0.55,controls.sph.radius*0.035);
@@ -3272,7 +3263,6 @@ const CSG = (function(){
     polygon:'<svg viewBox="0 0 16 16"><path d="M8 2.8 12.5 5.4 12.5 10.6 8 13.2 3.5 10.6 3.5 5.4Z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
     dim:'<span>&#10231;</span>', horiz:'<span>&#8866;</span>', vert:'<span>&#8869;</span>',
     paral:'<span>&#8741;</span>', equal:'<span>=</span>',
-    conc:'<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
     coinc:'<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2" fill="currentColor"/><path d="M8 2v3.4M8 10.6V14M2 8h3.4M10.6 8H14" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
     erase:'<svg viewBox="0 0 16 16"><path d="M4 12 12 4M4 4l8 8" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>'
   };
@@ -3436,7 +3426,7 @@ const CSG = (function(){
     // one snapshot per committed shape; the in-progress polyline is covered by
     // Backspace/Escape, so only the commit is worth an undo step
     if(tool==='rect'||tool==='circle'||tool==='polygon'){ if(draftStage===1)pushUndo('draw '+tool); }
-    else if(tool==='erase'||tool==='horiz'||tool==='vert'||tool==='paral'||tool==='equal'||tool==='conc'||tool==='coinc'){ pushUndo(tool); }
+    else if(tool==='erase'||tool==='horiz'||tool==='vert'||tool==='paral'||tool==='equal'||tool==='coinc'){ pushUndo(tool); }
     if(tool==='line'){
       if(chain&&chain.ei!=null){
         const ent=editing.entities[chain.ei];
@@ -3548,16 +3538,13 @@ const CSG = (function(){
         else { applyEqual(equalRef, d); storeSegPair('equal',equalRef,d); equalRef=null;
                relaxDims(editing,3); rebuild(); setHint('Lines constrained equal — delete the = badge to free them'); }
       } else setHint('Click a reference line segment first');
-    } else if(tool==='conc'){
-      const d=dimHit(p);
-      if(d && (d.kind==='dia'||d.kind==='pdia')){
-        if(!concRef){ concRef=d; redrawDraft(null); setHint('Now click the circle or polygon to move onto that centre'); }
-        else { if(applyConcentric(concRef, d)){ storeConc(concRef,d);
-                 setHint('Centres constrained concentric — delete the ◎ badge to free them'); }
-               concRef=null; relaxDims(editing,3); rebuild(); }
-      } else setHint('Click a reference circle or polygon first');
     } else if(tool==='coinc'){
-      const pr=nearestPointRef(p);
+      /* a click on a circle or polygon means its centre — the rim is a far
+         easier target than the centre dot, which is what the old separate
+         concentric tool was really for */
+      let pr=nearestPointRef(p);
+      if(!pr){ const eh=dimHit(p);
+        if(eh&&(eh.kind==='dia'||eh.kind==='pdia'))pr={ent:eh.entIdx,idx:0}; }
       if(pr){
         if(!coincRef){ coincRef=pr; setHint('Now click the point to lock it to'); }
         else {
@@ -3568,7 +3555,7 @@ const CSG = (function(){
             : 'Neither of those points can move — pick a movable one');
           coincRef=null; relaxDims(editing,3); rebuild();
         }
-      } else setHint('Click a line end, a centre, or the origin');
+      } else setHint('Click a line end, a circle or polygon, or the origin');
     } else if(tool==='erase'){
       if(eraseAt(p))rebuild(); else setHint('Nothing under the cursor to erase');
     }
@@ -3749,23 +3736,12 @@ const CSG = (function(){
     t.a.x=mx - dx*RL/2; t.a.y=my - dy*RL/2;
     t.b.x=mx + dx*RL/2; t.b.y=my + dy*RL/2;
   }
-  // concentric: move one circle or polygon onto another's centre. entPoints
-  // exposes centres, so the shared centre then reads as a coincidence pin.
-  function centreOf(d){
-    const e=editing.entities[d.entIdx];
-    return (e&&(e.type==='circle'||e.type==='polygon'))?e.c:null;
-  }
-  function applyConcentric(refD, tgtD){
-    const ca=centreOf(refD), cb=centreOf(tgtD);
-    if(!ca||!cb||ca===cb) return false;
-    cb.x=ca.x; cb.y=ca.y; return true;
-  }
 
   /* ===================== SKETCH DIMENSIONS (driving) =====================
      A dimension writes its value straight back to the shape parameter, so the
      geometry moves to match — true driving behaviour. Each dim is stored on the
      sketch feature and shown as an editable label. */
-  let dimInputEl=null, dimLabelEls=[], paralRef=null, equalRef=null, concRef=null, coincRef=null;
+  let dimInputEl=null, dimLabelEls=[], paralRef=null, equalRef=null, coincRef=null;
   let selCon=null;                       // constraint picked by clicking its badge
   function seg2Dist(p,a,b){
     const dx=b.x-a.x, dy=b.y-a.y, L2=dx*dx+dy*dy;
@@ -4273,15 +4249,6 @@ const CSG = (function(){
     if(i>=0)cons.splice(i,1);
     cons.push({kind:kind,a:{ent:refD.entIdx,seg:refD.seg},b:{ent:tgtD.entIdx,seg:tgtD.seg}});
   }
-  function storeConc(refD,tgtD){
-    // concentric IS coincidence of centres — stored as one so it shares the
-    // enforcement, badge, deletion and reindex machinery. via marks the glyph.
-    const cons=consOf(editing), key=r=>r.ent+'.'+r.idx;
-    const a={ent:refD.entIdx,idx:0}, b={ent:tgtD.entIdx,idx:0};
-    if(!cons.some(c=>c.kind==='coinc'&&
-        ((key(c.a)===key(a)&&key(c.b)===key(b))||(key(c.a)===key(b)&&key(c.b)===key(a)))))
-      cons.push({kind:'coinc',via:'conc',a:a,b:b});
-  }
   /* Auto-grounding: a point drawn or dropped onto the origin or a plane trace
      gets a real stored constraint, not a loose coincidence of coordinates.
      Snap meant something — make it hold, visibly, until its badge is deleted. */
@@ -4367,9 +4334,14 @@ const CSG = (function(){
     const S=resolvePt(sk,src), D=resolvePt(sk,dst); if(!S||!D)return false;
     D.x=S.x; D.y=S.y;
     const key=r=>r.ent+'.'+r.idx, cons=consOf(sk);
+    // two centres brought together is a concentric — badge it as one, so the
+    // relationship stays visible and deletable even though the tool is gone
+    const centre=r=>{const e=sk.entities[r.ent];
+      return !!e&&(e.type==='circle'||e.type==='polygon')&&r.idx===0;};
+    const via=(centre(src)&&centre(dst))?'conc':undefined;
     if(!cons.some(c=>c.kind==='coinc'&&
         ((key(c.a)===key(src)&&key(c.b)===key(dst))||(key(c.a)===key(dst)&&key(c.b)===key(src)))))
-      cons.push({kind:'coinc',a:{ent:src.ent,idx:src.idx},b:{ent:dst.ent,idx:dst.idx}});
+      cons.push({kind:'coinc',via:via,a:{ent:src.ent,idx:src.idx},b:{ent:dst.ent,idx:dst.idx}});
     return true;
   }
   function applyCons(sk,dragged){
@@ -4963,7 +4935,6 @@ const CSG = (function(){
     vert:_sw(`<path d="M12 4v16" stroke="${_B}" stroke-width="2.2"/><text x="6" y="15" text-anchor="middle" font-size="10" font-weight="700" font-family="monospace" fill="${_G}" stroke="none">V</text>`),
     paral:_sw(`<path d="M6 20 12 4M12 20 18 4" stroke="${_G}" stroke-width="2"/>`),
     equal:_sw(`<path d="M6 10h12M6 14h12" stroke="${_G}" stroke-width="2.2"/>`),
-    conc:_sw(`<circle cx="12" cy="12" r="8" stroke="${_G}"/><circle cx="12" cy="12" r="3.5" stroke="${_G}"/>`),
     coinc:_sw(`<circle cx="12" cy="12" r="2.6" fill="${_G}" stroke="none"/><path d="M12 3v5M12 16v5M3 12h5M16 12h5" stroke="${_G}"/>`),
     import:_sw(`<path d="M4 14v5h16v-5" stroke="${_B}"/><path d="M12 3v11M7.5 9.5 12 14l4.5-4.5" stroke="${_Y}"/>`),
     erase:_sw(`<path d="M14.5 4.5 20 10l-8.5 8.5H7l-2.5-2.5z" stroke="${_R}"/><path d="M11 8l5.5 5.5" stroke="${_R}"/><path d="M4 20.5h16" stroke="${_B}" opacity=".5"/>`),
@@ -5507,7 +5478,6 @@ const CSG = (function(){
       else if(tool==='horiz')h.innerHTML='<span class="pip"></span> Horizontal: click a line segment to lay it flat';
       else if(tool==='vert')h.innerHTML='<span class="pip"></span> Vertical: click a line segment to stand it upright';
       else if(tool==='paral')h.innerHTML='<span class="pip"></span> Parallel: click the reference line, then the line to align to it';
-      else if(tool==='conc')h.innerHTML='<span class="pip"></span> Concentric: click the reference circle or polygon, then the one to move onto its centre';
       else if(tool==='coinc')h.innerHTML='<span class="pip"></span> Coincident: click a point, then the point to lock it to — the pair then moves as one';
       else if(tool==='equal')h.innerHTML='<span class="pip"></span> Equal: click the reference line, then the line to match its length';
       else h.innerHTML=`<span class="pip"></span> ${tool}: click two points`;
@@ -5877,7 +5847,7 @@ const CSG = (function(){
     buildCtxMenu(x,y,items,{cols:true});
   }
   function openSketchMenu(x,y){
-    const setTool=t=>()=>{tool=t;chain=null;draftStage=0;draftA=null;paralRef=null;equalRef=null;concRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();redrawHandles();dockSel();};
+    const setTool=t=>()=>{tool=t;chain=null;draftStage=0;draftA=null;paralRef=null;equalRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();redrawHandles();dockSel();};
     buildCtxMenu(x,y,[
       {sect:'Sketch tools'},
       {ic:'move',label:'Pointer — select & rotate',fn:setTool('select')},
@@ -5892,7 +5862,6 @@ const CSG = (function(){
       {ic:'vert',label:'Vertical',fn:setTool('vert')},
       {ic:'paral',label:'Parallel',fn:setTool('paral')},
       {ic:'equal',label:'Equal length',fn:setTool('equal')},
-      {ic:'conc',label:'Concentric',fn:setTool('conc')},
       {ic:'coinc',label:'Coincident',fn:setTool('coinc')},
       {sect:'View'},
       {ic:'normal',label:'Normal to',fn:viewNormalTo},
@@ -6168,7 +6137,7 @@ const CSG = (function(){
   /* decorate every button with its pictogram; original text becomes a .lbl */
   (function decorate(){
     menu.querySelectorAll('[data-ic]').forEach(b=>{ b.innerHTML=icHTML(b.dataset.ic)+'<span class="lbl">'+b.textContent+'</span>'; });
-    const dockLbl={select:'Pointer',line:'Line',move:'Move',rect:'Rect',circle:'Circle',polygon:'Polygon',dim:'Dim',horiz:'Horiz',vert:'Vert',paral:'Parallel',equal:'Equal',conc:'Conc',coinc:'Coinc',erase:'Erase'};
+    const dockLbl={select:'Pointer',line:'Line',move:'Move',rect:'Rect',circle:'Circle',polygon:'Polygon',dim:'Dim',horiz:'Horiz',vert:'Vert',paral:'Parallel',equal:'Equal',coinc:'Coinc',erase:'Erase'};
     $('dock').querySelectorAll('button').forEach(b=>{ const t=b.dataset.tool; b.innerHTML=icHTML(t)+'<span class="lbl">'+(dockLbl[t]||t)+'</span>'; });
     const tb={'btn-save':'save','btn-load':'open','btn-export':'stl','btn-step':'step','btn-new':'newpart','btn-new-asm':'asm','btn-insert':'add','btn-finish':'finish','btn-cancel-sk':'cancel'};
     for(const id in tb){ const b=$(id); b.innerHTML=icHTML(tb[id])+'<span class="lbl">'+b.textContent+'</span>'; }
@@ -6285,7 +6254,7 @@ const CSG = (function(){
     else addFeature(a);
   }));
   $('dock').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
-    tool=b.dataset.tool;chain=null;draftStage=0;draftA=null;paralRef=null;equalRef=null;concRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();
+    tool=b.dataset.tool;chain=null;draftStage=0;draftA=null;paralRef=null;equalRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();
     $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));
     // a line already picked with the Pointer? apply the constraint to it now,
     // rather than making the user click the icon and then the line
