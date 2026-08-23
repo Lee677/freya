@@ -222,6 +222,8 @@ if(!window.THREE){
   /* a steep trace would run straight through horizontal text, so the two words
      part company and the line passes down the gap between them */
   .trace-label.split{gap:20px}
+  #boxsel{position:absolute;z-index:30;display:none;pointer-events:none;
+    border:1px dashed var(--cyan);background:rgba(66,133,244,.09);border-radius:2px}
 
   /* props panel */
   .props{position:absolute;top:14px;right:14px;width:260px;background:rgba(13,17,23,.92);backdrop-filter:blur(10px);border:1px solid var(--g-blue);border-radius:11px;padding:0;z-index:10;box-shadow:0 15px 40px -10px rgba(0,0,0,.9),0 0 20px rgba(66,133,244,0.15);overflow:hidden}
@@ -812,6 +814,24 @@ const CSG = (function(){
   /* ---- clickable datum planes, shown while the part is empty ---- */
   const datumGroup=new THREE.Group(); datumGroup.visible=false; scene.add(datumGroup);
   const datumPlanes=[];
+  /* The three origin axes. Reference geometry like the planes: always present,
+     hidden until asked for, and never part of the feature recipe. */
+  const originAxes=[];
+  const AXIS_DIR={X:[1,0,0],Y:[0,1,0],Z:[0,0,1]};
+  const AXIS_COL={X:0xc0584f,Y:0x5a9e6f,Z:0x4f86c0};
+  (function buildOriginAxes(){
+    const L=60;
+    for(const k of ['X','Y','Z']){
+      const d=AXIS_DIR[k];
+      const g=new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-d[0]*L,-d[1]*L,-d[2]*L),
+        new THREE.Vector3( d[0]*L, d[1]*L, d[2]*L)]);
+      const ln=new THREE.Line(g,new THREE.LineDashedMaterial({color:AXIS_COL[k],
+        transparent:true,opacity:0.75,dashSize:0.7,gapSize:0.45,depthTest:false}));
+      ln.computeLineDistances(); ln.renderOrder=2; ln.visible=false;
+      ln.userData.axis=k; scene.add(ln); originAxes.push(ln);
+    }
+  })();
   let hoveredDatum=null;
   (function buildDatumPlanes(){
     const SZ=9;
@@ -872,6 +892,9 @@ const CSG = (function(){
       if(m.userData.border)m.userData.border.visible=on;
       if(m.userData.label)m.userData.label.visible=on;
     }
+    // axes are opt-in only — they'd clutter the empty-part plane picker
+    for(const ln of originAxes)
+      ln.visible=(docMode==='part')&&!!axisShow[ln.userData.axis];
     if(!auto)setDatumHover(null);          // only clickable as the empty-part picker
     const db=$('btn-demo'); if(db)db.style.display=auto?'':'none';
   }
@@ -2872,12 +2895,78 @@ const CSG = (function(){
   function syncRotateGate(){
     controls.enableRotate = (mode!=='sketch') ? true : (tool==='select');
   }
-  function clearSketchSel(){ if(sketchSel){ sketchSel=null; drawSketchSel(); } }
+  function clearSketchSel(){ if(sketchSel||boxSel){ sketchSel=null; boxSel=null; drawSketchSel(); } }
+  /* ---- rubber-band selection ----------------------------------------------
+     Drag a box over empty space with the Pointer to take several things at
+     once, then Delete (or pick the eraser) to remove the lot. Window select,
+     as in SolidWorks: only what is wholly inside comes with you. Shift+drag
+     still orbits, so the view is never out of reach. */
+  let boxSel=null;      // {ents:[i], dims:[i]} — what the last box caught
+  let boxDrag=null;     // {x0,y0,x1,y1} in client px while the box is live
+  function drawBox(){
+    let el=$('boxsel');
+    if(!el){ el=document.createElement('div'); el.id='boxsel'; viewport.appendChild(el); }
+    if(!boxDrag){ el.style.display='none'; return; }
+    const r=canvas.getBoundingClientRect();
+    el.style.display='block';
+    el.style.left=Math.min(boxDrag.x0,boxDrag.x1)-r.left+'px';
+    el.style.top =Math.min(boxDrag.y0,boxDrag.y1)-r.top +'px';
+    el.style.width =Math.abs(boxDrag.x1-boxDrag.x0)+'px';
+    el.style.height=Math.abs(boxDrag.y1-boxDrag.y0)+'px';
+  }
+  function applyBoxSel(){
+    if(!boxDrag)return;
+    const r=canvas.getBoundingClientRect();
+    const x0=Math.min(boxDrag.x0,boxDrag.x1)-r.left, x1=Math.max(boxDrag.x0,boxDrag.x1)-r.left;
+    const y0=Math.min(boxDrag.y0,boxDrag.y1)-r.top,  y1=Math.max(boxDrag.y0,boxDrag.y1)-r.top;
+    boxDrag=null; drawBox();
+    if(!editing||!editing.frame)return;
+    if(x1-x0<4&&y1-y0<4){ boxSel=null; drawSketchSel(); return; }   // a click, not a box
+    const fr=editing.frame;
+    const inBox=q=>{ const w=worldFromSketch(fr,q.x,q.y).project(camera);
+      const sx=(w.x*0.5+0.5)*r.width, sy=(-w.y*0.5+0.5)*r.height;
+      return w.z<=1&&sx>=x0&&sx<=x1&&sy>=y0&&sy<=y1; };
+    const ents=[], dims=[];
+    editing.entities.forEach((e,i)=>{ const pts=entPoints(e);
+      if(pts.length&&pts.every(inBox))ents.push(i); });
+    (editing.dims||[]).forEach((d,i)=>{ const g=dimResolve(editing,d);
+      if(g&&g.anchor&&inBox(g.anchor))dims.push(i); });
+    sketchSel=null;
+    boxSel=(ents.length||dims.length)?{ents:ents,dims:dims}:null;
+    drawSketchSel();
+    setHint(boxSel
+      ? ents.length+' shape'+(ents.length===1?'':'s')+
+        (dims.length?(' and '+dims.length+' dimension'+(dims.length===1?'':'s')):'')+
+        ' selected — Delete, or pick the eraser'
+      : 'Nothing was fully inside the box');
+  }
+  function deleteBoxSel(){
+    if(!boxSel||!editing)return false;
+    pushUndo('delete selection');
+    // highest index first, so the ones still to go keep the indices we found
+    (boxSel.dims||[]).slice().sort((a,b)=>b-a).forEach(i=>{ if(editing.dims)editing.dims.splice(i,1); });
+    (boxSel.ents||[]).slice().sort((a,b)=>b-a).forEach(i=>{
+      editing.entities.splice(i,1); dropDimsFor(editing,i); });
+    boxSel=null; drawSketchSel(); rebuild();
+    return true;
+  }
   const selGroupSk=new THREE.Group(); scene.add(selGroupSk);
   function drawSketchSel(){
     while(selGroupSk.children.length){const c=selGroupSk.children.pop();
       if(c.geometry)c.geometry.dispose(); if(c.material)c.material.dispose();}
-    if(!sketchSel||mode!=='sketch'||!editing||!editing.frame)return;
+    if(mode!=='sketch'||!editing||!editing.frame)return;
+    if(boxSel){                       // everything the rubber band caught
+      for(const i of boxSel.ents){
+        const be=editing.entities[i]; if(!be)continue;
+        const path=entityDisplayPath(editing,be); if(!path)continue;
+        const bp=path.pts.slice(); if(path.closed)bp.push(path.pts[0]);
+        const bw=bp.map(q=>worldFromSketch(editing.frame,q.x,q.y));
+        const bl=new THREE.Line(new THREE.BufferGeometry().setFromPoints(bw),
+          new THREE.LineBasicMaterial({color:0x35d4e6,depthTest:false,transparent:true,opacity:1}));
+        bl.renderOrder=10; selGroupSk.add(bl);
+      }
+    }
+    if(!sketchSel)return;
     const e=editing.entities[sketchSel.entIdx]; if(!e)return;
     let pts=null;
     if(e.type==='poly'&&sketchSel.seg!=null){
@@ -3070,7 +3159,10 @@ const CSG = (function(){
     hoverSnap=null;hoverGuides=[];
     if(mode!=='sketch'||!editing||DRAW_TOOLS.indexOf(tool)<0)return p;
     const R=controls.sph.radius;
-    const tolP=Math.max(0.5,R*0.035), tolL=Math.max(0.35,R*0.022);
+    /* Tolerances are a constant slice of the view, so they tighten as you zoom
+       in: the old millimetre floors meant a close-up still grabbed from what
+       looked like miles away on screen. The tiny floor is only a divide guard. */
+    const tolP=Math.max(0.02,R*0.035), tolL=Math.max(0.015,R*0.022);
     const pts=snapCandidates().pts;
     let best=null,bd=tolP;
     for(const c of pts){const d=Math.hypot(c.x-p.x,c.y-p.y);if(d<bd){bd=d;best=c;}}
@@ -3121,13 +3213,43 @@ const CSG = (function(){
      other vertices and nothing else, so a dragged endpoint could never reach the
      origin or a trace — the two things that actually remove degrees of freedom.
      Landing on the origin pins the point, so a drag can now *define* geometry. */
+  /* Every point already joined to this handle, live objects. They sit at the
+     SAME coordinates as the dragged point, so without this they are the
+     nearest snap candidate on every single move: the point gets pinned to
+     wherever its partner happens to have lagged to, the constraint drags the
+     partner back, and the pair judders about instead of following the cursor.
+     A chain never showed this — consecutive points are at different places. */
+  function coincPartners(sk,h){
+    const set=new Set();
+    const ref=refOfHandle(h); if(!ref)return set;
+    const all=(sk.cons||[]).concat(dragJoins||[]);
+    const key=r=>r.ent+'.'+r.idx, want=new Set([key(ref)]);
+    for(let pass=0,grew=true;grew&&pass<8;pass++){   // follow joins transitively
+      grew=false;
+      for(const c of all){
+        if(c.kind!=='coinc')continue;
+        const ka=key(c.a), kb=key(c.b);
+        if(want.has(ka)&&!want.has(kb)){want.add(kb);grew=true;}
+        else if(want.has(kb)&&!want.has(ka)){want.add(ka);grew=true;}
+      }
+    }
+    for(const k of want){
+      const ei=+k.split('.')[0], idx=+k.split('.')[1];
+      if(ei<0)continue;
+      const e=sk.entities[ei]; if(!e)continue;
+      const q=entPoints(e)[idx]; if(q)set.add(q);
+    }
+    return set;
+  }
   function dragSnap(p,h){
     const R=controls.sph.radius;
-    const tolP=Math.max(SNAP_JOIN,R*0.035), tolL=Math.max(0.35,R*0.022);
+    const tolP=Math.max(0.02,R*0.035), tolL=Math.max(0.015,R*0.022);
     const cand=snapCandidates();
+    const joined=coincPartners(editing,h);
     let best=null,bd=tolP;
     for(const c of cand.pts){
       if(c.pt===h.pt)continue;                 // a point never snaps to itself
+      if(c.pt&&joined.has(c.pt))continue;      // nor to something already joined to it
       // a centre must not catch its own shape's corners, which orbit it at r
       if(h.kind==='c'&&c.ei===h.ei)continue;
       const d=Math.hypot(c.x-p.x,c.y-p.y);
@@ -3484,6 +3606,9 @@ const CSG = (function(){
       });
     }
   }
+  // is a dimension label right under this sketch point? (box-select must not
+  // start on top of one — dragging a dimension repositions its leader)
+  function dimNearHit(p){ return dimNear(p)>=0; }
   function dimNear(p){
     if(!editing||!editing.dims)return -1;
     const tol=Math.max(0.8,controls.sph.radius*0.05);
@@ -4540,6 +4665,12 @@ const CSG = (function(){
     /* constraint badges: the little H / V / ⊕ living up-right of what they
        hold. Click selects (Delete removes); the eraser removes outright. */
     (editing.cons||[]).forEach(c=>{
+      /* Two line ends joined to each other need no marker — the join is plain
+         to see in the geometry, and a badge on every corner is noise. Badges
+         are for relationships you could NOT otherwise read off the sketch:
+         ground (origin, plane) and a deliberate concentric. */
+      if(c.kind==='coinc'&&c.via!=='conc'&&
+         !(c.a&&c.a.ent===-1)&&!(c.b&&c.b.ent===-1))return;
       const el=document.createElement('div');
       el.className='con-badge'+(selCon===c?' sel':'');
       el.textContent=c.kind==='horiz'?'H':c.kind==='vert'?'V'
@@ -4866,6 +4997,7 @@ const CSG = (function(){
     'stroke-linecap="round" stroke-linejoin="round"><path d="M1.8 12S5.6 5.4 12 5.4 22.2 12 22.2 12'+
     ' 18.4 18.6 12 18.6 1.8 12 1.8 12Z"/><circle cx="12" cy="12" r="3.1"/></svg>';
   const datumShow={Top:false,Front:false,Right:false};
+  const axisShow={X:false,Y:false,Z:false};
   function sketchConsumedBy(f){ return features.find(x=>x.sketchId===f.id)||null; }
   function sketchVisible(f){
     if(editing&&editing.id===f.id) return true;      // open for editing
@@ -4921,6 +5053,24 @@ const CSG = (function(){
           {sect:nm+' plane'},
           {ic:'sketch',label:'Sketch on this plane',fn:()=>addSketch(nm)},
           {ic:'dplane',label:datumShow[nm]?'Hide':'Show',fn:toggle}
+        ]);
+      });
+      tree.appendChild(el);
+    }
+    for(const ax of ['X','Y','Z']){
+      const el=document.createElement('div');
+      el.className='feat datum'+(axisShow[ax]?' shown':'');
+      el.title=ax+' axis — click to show or hide';
+      el.innerHTML='<span class="twist"></span>'+icHTML('daxis')+
+        `<span class="fname">${ax} axis</span>`+
+        (axisShow[ax]?`<span class="fshow" title="visible">${EYE_SVG}</span>`:'');
+      const tg=()=>{ axisShow[ax]=!axisShow[ax]; updateDatumVis(); refreshTree(); };
+      el.addEventListener('click',tg);
+      el.addEventListener('contextmenu',ev=>{
+        ev.preventDefault(); ev.stopPropagation();
+        buildCtxMenu(ev.clientX,ev.clientY,[
+          {sect:ax+' axis'},
+          {ic:'daxis',label:axisShow[ax]?'Hide':'Show',fn:tg}
         ]);
       });
       tree.appendChild(el);
@@ -5289,7 +5439,7 @@ const CSG = (function(){
     else {cornerUI=false;
       // `editing` may already be null by now, so match the panel by type
       if(propsFeat&&(propsFeat===editing||propsFeat.type==='sketch'))closeProps();}
-    canvas.style.cursor=(m==='sketch')?'crosshair':'default';
+    syncCursor();
     const nc=$('navcube'); if(nc)nc.style.display=(m==='sketch')?'none':'';
     if(m!=='sketch'){ closeDimInput(); clearDimLabels(); dragVtx=null; dragSnapPt=null; redrawHandles();
       hoverSnap=null; hoverGuides=[]; hoverPt=null; dimPick=null; sketchCursor=null;
@@ -5370,11 +5520,17 @@ const CSG = (function(){
             dragJoins=collectJoins(editing);   // loose joints ride along with the hand
             dragPreErr=maxDimErr(editing);     // so the release check judges the delta
             controls._s=0;              // this gesture is a point drag, not an orbit
-            redrawHandles(); } }
-      }
+            redrawHandles(); }
+          else if(!e.shiftKey&&!dimNearHit(p)){
+            // empty space: rubber-band a selection rather than orbit
+            controls._s=0;
+            boxDrag={x0:e.clientX,y0:e.clientY,x1:e.clientX,y1:e.clientY};
+            drawBox();
+          } } }
   });
   canvas.addEventListener('pointermove',e=>{
     const r=canvas.getBoundingClientRect();ndc.x=((e.clientX-r.left)/r.width)*2-1;ndc.y=-((e.clientY-r.top)/r.height)*2+1;
+    if(boxDrag){ boxDrag.x1=e.clientX; boxDrag.y1=e.clientY; drawBox(); return; }
     if(docMode==='asm'){
       if(asmDrag){ asmPointerMove(e); return; }
       const hp=pickComp(e);
@@ -5443,6 +5599,7 @@ const CSG = (function(){
       }
       return;
     }
+    if(boxDrag){ applyBoxSel(); return; }
     if(dragVtx){
       // already snapped during the move; just commit + rebuild. Say which of the
       // four it caught — "joined" would be a lie about the origin or a trace.
@@ -6274,7 +6431,8 @@ const CSG = (function(){
         if(selCon&&editing&&editing.cons&&editing.cons.indexOf(selCon)>=0){
           pushUndo('delete constraint');
           editing.cons.splice(editing.cons.indexOf(selCon),1);selCon=null;rebuild();
-        } else if(!deleteSketchSel())setHint('Nothing selected — use the Pointer to click a line or a constraint badge first');}
+        } else if(boxSel){ deleteBoxSel(); }
+        else if(!deleteSketchSel())setHint('Nothing selected — use the Pointer to click a line, box-select, or click a constraint badge');}
       else if(e.key==='Backspace'){e.preventDefault();
         if(tool==='line'&&chain&&chain.ei!=null){
           // step back one committed point of the live run
@@ -6300,11 +6458,16 @@ const CSG = (function(){
       else if(e.key.toLowerCase()==='f')fitAll();
     }
   });
-  function dockSel(){$('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.tool===tool));
+  // the Pointer points; every drawing tool aims
+  function syncCursor(){ canvas.style.cursor=(mode==='sketch'&&tool!=='select')?'crosshair':'default'; }
+  function dockSel(){
+    // picking the eraser with a box selection live is a delete instruction
+    if(tool==='erase'&&boxSel&&editing){ deleteBoxSel(); tool='select'; }
+    $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.tool===tool));
     // every tool change lands here (dock, menus, keyboard) — a live line run
     // must not survive into another tool and quietly extend an old entity
     if(tool!=='line'&&chain){chain=null;}
-    syncRotateGate(); if(tool!=='select')clearSketchSel(); redrawDraft(null);updateHint();
+    syncRotateGate(); syncCursor(); if(tool!=='select')clearSketchSel(); redrawDraft(null);updateHint();
     if(mode==='sketch')ensureSketchProps();   // the panel follows the tool in hand
   }
 

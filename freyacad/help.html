@@ -281,6 +281,8 @@ status line names what it caught when you let go.</p>
 that costs it its freedom to move — which is how a sketch becomes defined without you
 dimensioning every last thing. Dragging a loose endpoint onto the origin will define it the
 same way, mid-edit.</p>
+<p>Snapping reaches a fixed distance <em>on screen</em>, not in millimetres, so zooming in
+tightens it: work up close and the cursor only catches what is genuinely near.</p>
 <p>The cursor also shows a small glyph of the active tool up and to the right, so you can
 tell at a glance whether you're about to draw a line or a circle.</p>
 
@@ -357,6 +359,9 @@ others.</p>
 and a ⊕ appears; onto a plane trace and an ∈ (on-plane) appears — the point can then
 slide along the plane but never off it. Release a dragged point onto another point and
 the join is stored as a coincident. What snapped, holds — until you delete the badge.</p>
+<p>Badges appear only for relationships you could not otherwise read off the sketch:
+ground (origin, plane) and concentric. Two line ends joined to each other show nothing —
+the join is plain to see, and a marker on every corner would only be clutter.</p>
 <p><b>Parallel</b> (∥) and <b>equal</b> (=) relate two lines, so they always want a
 reference first: click the icon (or have a line selected when you click it), click the
 line to copy from, then click the line to change. Parallel matches its direction; equal
@@ -428,6 +433,10 @@ mistaken for geometry in any state.</p>
   <li><b>Resize or spin a polygon</b> — drag one of its corners.</li>
   <li><b>Delete</b> — click a line to select it, then <kbd>Delete</kbd>. Or use the eraser
       to remove individual segments and dimensions.</li>
+  <li><b>Select several at once</b> — drag a box over empty space. Everything
+      <em>completely inside</em> it is caught, lines and dimensions alike; then press
+      <kbd>Delete</kbd> or pick the eraser to remove the lot. (Hold <kbd>Shift</kbd> and
+      drag if you want to orbit the view instead.)</li>
   <li><b>Change a dimension</b> — click its value and type a new one.</li>
 </ul>
 <p>To edit a sketch you've already finished, find it in the tree and open it from the
@@ -490,6 +499,9 @@ the row marks anything currently visible.</p>
 <p>The three planes — <b>Top</b>, <b>Front</b>, <b>Right</b> — meet at the origin and are
 the reference everything else hangs off. They sit at the top of the tree, above your
 features, because they exist before the part does.</p>
+<p>The three <b>origin axes</b> — X, Y and Z — sit just below them in the tree, and work
+the same way: click to show or hide, colour-keyed red, green and blue. Like the planes
+they are always there and never part of the recipe.</p>
 <p>They're hidden until wanted; right-click one and toggle its visibility. You can also add
 your own:</p>
 <ul>
