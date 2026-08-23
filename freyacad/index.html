@@ -229,6 +229,10 @@ if(!window.THREE){
     padding:16px 18px;width:min(900px,95vw);max-height:88vh;overflow:auto}
   .cust h3{margin:0 0 4px;font-size:15px}
   .cust-hint{margin:0 0 12px;font-size:12px;color:var(--muted)}
+  .cust-tabs{display:flex;gap:6px;margin-bottom:10px}
+  .cust-tab{background:var(--panel-2);border:1px solid var(--line);border-radius:6px;
+    padding:4px 10px;font-size:12px;color:var(--muted);cursor:pointer}
+  .cust-tab.on{color:var(--text);border-color:var(--g-blue);background:rgba(66,133,244,.12)}
   .cust-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:10px}
   .cust-col{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:8px;padding:8px}
   .cust-col.over{border-color:var(--g-blue);background:rgba(66,133,244,.09)}
@@ -1257,7 +1261,7 @@ const CSG = (function(){
   // ---- closed-loop flash: a face-coloured pulse when a sketch loop closes
   const flashes=[];
   function flashLoop(sk,ent){
-    if(!editing||!editing.frame)return;
+    if(!editing||!editing.frame)return false;
     let loop;try{loop=entityLoops(Object.assign({},sk,{entities:[ent]}))[0];}catch(_){return;}
     if(!loop||loop.length<3)return;
     const fr=editing.frame;
@@ -2978,7 +2982,8 @@ const CSG = (function(){
     const y0=Math.min(boxDrag.y0,boxDrag.y1)-r.top,  y1=Math.max(boxDrag.y0,boxDrag.y1)-r.top;
     boxDrag=null; drawBox();
     if(!editing||!editing.frame)return;
-    if(x1-x0<4&&y1-y0<4){ boxSel=null; drawSketchSel(); return; }   // a click, not a box
+    // a click, not a box: say so, and let the normal click handling run
+    if(x1-x0<4&&y1-y0<4){ boxSel=null; drawSketchSel(); return false; }
     const fr=editing.frame;
     const inBox=q=>{ const w=worldFromSketch(fr,q.x,q.y).project(camera);
       const sx=(w.x*0.5+0.5)*r.width, sy=(-w.y*0.5+0.5)*r.height;
@@ -2991,11 +2996,13 @@ const CSG = (function(){
     sketchSel=null;
     boxSel=(ents.length||dims.length)?{ents:ents,dims:dims}:null;
     drawSketchSel();
+    const got=!!boxSel;
     setHint(boxSel
       ? ents.length+' shape'+(ents.length===1?'':'s')+
         (dims.length?(' and '+dims.length+' dimension'+(dims.length===1?'':'s')):'')+
         ' selected — Delete, or pick the eraser'
       : 'Nothing was fully inside the box');
+    return got;
   }
   function deleteBoxSel(){
     if(!boxSel||!editing)return false;
@@ -3082,6 +3089,30 @@ const CSG = (function(){
     if(t==='paral'){ paralRef=d; setHint('Now click the line to make parallel'); }
     else { equalRef=d; setHint('Now click the line to match its length'); }
     return false;
+  }
+  /* Flip a selected line between normal and construction. A chain carries one
+     flag for the whole entity, so converting a single segment of a longer chain
+     splits that segment out into its own entity first — otherwise the tick box
+     would silently convert lines you never selected. */
+  function setSelConstruction(on){
+    if(!editing||!sketchSel)return false;
+    const ei=sketchSel.entIdx, e=editing.entities[ei]; if(!e)return false;
+    const segs=(e.type==='poly')?(e.closed?e.pts.length:e.pts.length-1):0;
+    pushUndo('construction');
+    if(e.type==='poly'&&sketchSel.seg!=null&&segs>1){
+      const n=e.pts.length, a=e.pts[sketchSel.seg], b=e.pts[(sketchSel.seg+1)%n];
+      const cut={type:'poly',closed:false,pts:[{x:a.x,y:a.y},{x:b.x,y:b.y}]};
+      if(on)cut.construction=true;
+      removePolySegment(editing,ei,sketchSel.seg);
+      editing.entities.push(cut);
+      sketchSel={entIdx:editing.entities.length-1,seg:0};
+    } else {
+      if(on)e.construction=true; else delete e.construction;
+    }
+    rebuild(); drawSketchSel(); ensureSketchProps();
+    setHint(on?'Now construction geometry — it will not become part of the solid'
+              :'Now normal geometry');
+    return true;
   }
   function deleteSketchSel(){
     if(!sketchSel||!editing)return false;
@@ -3499,7 +3530,7 @@ const CSG = (function(){
     if(tool==='select'){                     // pick a line to act on; empty space clears
       const hit=dimHit(p);
       sketchSel=(hit&&hit.entIdx!=null)?{entIdx:hit.entIdx,seg:hit.kind==='seg'?hit.seg:null}:null;
-      drawSketchSel();
+      drawSketchSel(); ensureSketchProps();
       setHint(sketchSel?'Selected — press Delete to remove it':'Nothing selected');
       return;
     }
@@ -5502,11 +5533,17 @@ const CSG = (function(){
     const f=editing;
     const wantCorners=cornerUI||f.fillet>0||f.chamfer>0;
     const wantSides=(tool==='polygon');
-    if(!wantCorners&&!wantSides){ if(propsFeat===f)closeProps(); return; }
+    const selEnt=(sketchSel&&f.entities[sketchSel.entIdx])||null;
+    const wantConstr=!!selEnt;
+    if(!wantCorners&&!wantSides&&!wantConstr){ if(propsFeat===f)closeProps(); return; }
     closeProps();propsFeat=f;
     const el=document.createElement('aside');el.className='props';
     el.innerHTML=`<div class="props-head">${icHTML('sketch')}<h3>${f.name}</h3></div><div class="props-body" id="pbody"></div>`;
     viewport.appendChild(el);propsEl=el;const body=el.querySelector('#pbody');
+    if(wantConstr){
+      body.appendChild(fieldCheck('Construction geometry',!!selEnt.construction,
+        v=>setSelConstruction(v)));
+    }
     if(wantSides){
       body.appendChild(fieldNumber('Polygon sides',polygonSides,1,3,20,'',v=>{polygonSides=Math.max(3,Math.round(v));}));
     }
@@ -5792,7 +5829,8 @@ const CSG = (function(){
       }
       return;
     }
-    if(boxDrag){ applyBoxSel(); return; }
+    // a real box consumes the gesture; a click falls through to selection
+    if(boxDrag){ if(applyBoxSel())return; }
     if(dragVtx){
       // already snapped during the move; just commit + rebuild. Say which of the
       // four it caught — "joined" would be a lie about the origin or a trace.
@@ -6009,40 +6047,57 @@ const CSG = (function(){
     m.style.left=Math.max(8,Math.min(x,window.innerWidth-r.width-8))+'px';
     m.style.top=Math.max(8,Math.min(y,window.innerHeight-r.height-8))+'px';
   }
+  /* The model menu is registry-driven too, so Customise can rearrange it the
+     same way as the sketch one. Entries that need a sketch or a solid say so
+     and grey themselves out; "Edit sketch" stays outside the layout because it
+     depends on what is selected, not on what you chose to keep. */
+  const MCMD={
+    normal   :{ic:'normal',label:'Normal to',fn:()=>viewNormalTo()},
+    iso      :{ic:'iso',   label:'Isometric',fn:()=>viewIso()},
+    fit      :{ic:'fit',   label:'Fit all',  fn:()=>fitAll()},
+    proj     :{ic:'proj',  label:'Projection',fn:()=>setProjection(!orthoOn),
+                 dyn:()=>orthoOn?'Perspective':'Orthographic'},
+    sk_top   :{ic:'sketch',label:'Sketch · Top plane',  fn:()=>addSketch('Top')},
+    sk_front :{ic:'sketch',label:'Sketch · Front plane',fn:()=>addSketch('Front')},
+    sk_right :{ic:'sketch',label:'Sketch · Right plane',fn:()=>addSketch('Right')},
+    sk_face  :{ic:'face-sketch',label:'Sketch · on a face',fn:()=>addSketch('face'),need:'solid'},
+    f_extrude:{ic:'extrude',label:'Extrude boss',fn:()=>addFeature('extrude'),need:'sketch'},
+    f_cut    :{ic:'cut',    label:'Extrude cut', fn:()=>addFeature('cut'),    need:'sketch'},
+    f_revolve:{ic:'revolve',label:'Revolve boss',fn:()=>addFeature('revolve'),need:'sketch'},
+    f_rcut   :{ic:'rcut',   label:'Revolve cut', fn:()=>addFeature('rcut'),   need:'sketch'},
+    f_fillet :{ic:'fillet', label:'Fillet',      fn:()=>addFeature('fillet'), need:'solid'},
+    f_chamfer:{ic:'chamfer',label:'Chamfer',     fn:()=>addFeature('chamfer'),need:'solid'},
+    t_mirror :{ic:'mirror', label:'Mirror',      fn:()=>addFeature('mirror'), need:'solid'},
+    t_lpat   :{ic:'lpattern',label:'Linear pattern',  fn:()=>addFeature('lpattern'),need:'solid'},
+    t_cpat   :{ic:'cpattern',label:'Circular pattern',fn:()=>addFeature('cpattern'),need:'solid'},
+    r_plane  :{ic:'dplane', label:'Add plane',fn:()=>addFeature('dplane')},
+    r_axis   :{ic:'daxis',  label:'Add axis', fn:()=>addFeature('daxis')}
+  };
+  const DEFAULT_MODEL_LAYOUT=[
+    {name:'View',     ids:['normal','iso','fit','proj']},
+    {name:'Sketch',   ids:['sk_top','sk_front','sk_right','sk_face']},
+    {name:'Features', ids:['f_extrude','f_cut','f_revolve','f_rcut','f_fillet','f_chamfer']},
+    {name:'Transform',ids:['t_mirror','t_lpat','t_cpat']},
+    {name:'Reference',ids:['r_plane','r_axis']}
+  ];
   function openModelMenu(x,y){
     const hasSketch=!!lastSketchId(), hasSolid=resultShapes.length>0;
     const sf=features.find(f=>f.id===selId);
     const items=[];
-    items.push({sect:'View'});
-    items.push({ic:'normal',label:'Normal to',fn:viewNormalTo});
-    items.push({ic:'iso',label:'Isometric',fn:viewIso});
-    items.push({ic:'fit',label:'Fit all',fn:fitAll});
-    items.push({ic:'proj',label:orthoOn?'Perspective':'Orthographic',fn:()=>setProjection(!orthoOn)});
     if(sf&&sf.type==='sketch'){
       items.push({sect:sf.name});
       items.push({ic:'edit',label:'Edit sketch',fn:()=>editSketch(sf)});
     }
-    items.push(
-      {sect:'Sketch'},
-      {ic:'sketch',label:'Sketch · Top plane',fn:()=>addSketch('Top')},
-      {ic:'sketch',label:'Sketch · Front plane',fn:()=>addSketch('Front')},
-      {ic:'sketch',label:'Sketch · Right plane',fn:()=>addSketch('Right')},
-      {ic:'face-sketch',label:'Sketch · on a face',fn:()=>addSketch('face'),disabled:!hasSolid},
-      {sect:'Features'},
-      {ic:'extrude',label:'Extrude boss',fn:()=>addFeature('extrude'),disabled:!hasSketch},
-      {ic:'cut',label:'Extrude cut',fn:()=>addFeature('cut'),disabled:!hasSketch},
-      {ic:'revolve',label:'Revolve boss',fn:()=>addFeature('revolve'),disabled:!hasSketch},
-      {ic:'rcut',label:'Revolve cut',fn:()=>addFeature('rcut'),disabled:!hasSketch},
-      {ic:'fillet',label:'Fillet',fn:()=>addFeature('fillet'),disabled:!hasSolid},
-      {ic:'chamfer',label:'Chamfer',fn:()=>addFeature('chamfer'),disabled:!hasSolid},
-      {sect:'Transform'},
-      {ic:'mirror',label:'Mirror',fn:()=>addFeature('mirror'),disabled:!hasSolid},
-      {ic:'lpattern',label:'Linear pattern',fn:()=>addFeature('lpattern'),disabled:!hasSolid},
-      {ic:'cpattern',label:'Circular pattern',fn:()=>addFeature('cpattern'),disabled:!hasSolid},
-      {sect:'Reference'},
-      {ic:'dplane',label:'Add plane',fn:()=>addFeature('dplane')},
-      {ic:'daxis',label:'Add axis',fn:()=>addFeature('daxis')}
-    );
+    for(const sec of MENUS.model.layout){
+      const live=sec.ids.filter(id=>MCMD[id]);
+      if(!live.length)continue;
+      items.push({sect:sec.name});
+      for(const id of live){
+        const c=MCMD[id];
+        items.push({ic:c.ic, label:c.dyn?c.dyn():c.label, fn:c.fn,
+          disabled:c.need==='sketch'?!hasSketch:c.need==='solid'?!hasSolid:false});
+      }
+    }
     buildCtxMenu(x,y,items,{cols:true});
   }
   /* ---- the sketch command registry ---------------------------------------
@@ -6091,57 +6146,74 @@ const CSG = (function(){
     {name:'Relations',       ids:['horiz','vert','paral','equal','coinc']},
     {name:'View',            ids:['normal','iso','fit','proj']}
   ];
-  const LAYOUT_KEY='fcad-sketch-layout';
   function cloneLayout(L){ return L.map(s=>({name:s.name,ids:s.ids.slice()})); }
-  let sketchLayout=(function(){
-    try{ const raw=localStorage.getItem(LAYOUT_KEY);
+  function loadMenu(m){
+    try{ const raw=localStorage.getItem(m.key);
       if(raw){ const L=JSON.parse(raw);
-        if(Array.isArray(L)&&L.length&&L.every(s=>s&&Array.isArray(s.ids)))return L; }
+        if(Array.isArray(L)&&L.length&&L.every(x=>x&&Array.isArray(x.ids)))m.layout=L; }
     }catch(_){ }
-    return cloneLayout(DEFAULT_LAYOUT);
-  })();
-  let hiddenCmds=(function(){
-    // anything the layout no longer lists is hidden, worked out fresh each save
-    const seen=new Set(); sketchLayout.forEach(s=>s.ids.forEach(i=>seen.add(i)));
-    return Object.keys(CMD).filter(k=>!seen.has(k));
-  })();
-  function saveLayout(){
-    try{ localStorage.setItem(LAYOUT_KEY,JSON.stringify(sketchLayout)); }catch(_){ }
-    const seen=new Set(); sketchLayout.forEach(s=>s.ids.forEach(i=>seen.add(i)));
-    hiddenCmds=Object.keys(CMD).filter(k=>!seen.has(k));
-    syncDockVisibility();
+    if(!m.layout)m.layout=cloneLayout(m.def);
+    markHidden(m);
+  }
+  function markHidden(m){
+    const seen=new Set(); m.layout.forEach(sec=>sec.ids.forEach(i=>seen.add(i)));
+    m.hidden=Object.keys(m.cmds).filter(k=>!seen.has(k));
+  }
+  function saveMenu(m){
+    try{ localStorage.setItem(m.key,JSON.stringify(m.layout)); }catch(_){ }
+    markHidden(m); syncDockVisibility();
   }
   function syncDockVisibility(){
     const d=$('dock'); if(!d)return;
     d.querySelectorAll('button[data-tool]').forEach(b=>{
       const id=Object.keys(CMD).find(k=>CMD[k].tool===b.dataset.tool);
-      b.style.display=(id&&hiddenCmds.indexOf(id)>=0)?'none':'';
+      b.style.display=(id&&MENUS.sketch.hidden.indexOf(id)>=0)?'none':'';
     });
   }
-  function openCustomise(){
+  const MENUS={
+    sketch:{title:'Sketch menu',cmds:CMD, def:DEFAULT_LAYOUT,      key:'fcad-sketch-layout',layout:null,hidden:[]},
+    model :{title:'Model menu', cmds:MCMD,def:DEFAULT_MODEL_LAYOUT,key:'fcad-model-layout', layout:null,hidden:[]}
+  };
+  loadMenu(MENUS.sketch); loadMenu(MENUS.model);
+  function openCustomise(which){
     if(document.querySelector('.cust-ov'))return;
+    // called straight from a click listener too, so `which` may be an Event
+    let key=(typeof which==='string'&&MENUS[which])?which:'sketch';
     const ov=document.createElement('div'); ov.className='cust-ov';
-    const secs=cloneLayout(sketchLayout), hidden=hiddenCmds.slice();
-    ov.innerHTML='<div class="cust"><h3>Customise sketch tools</h3>'+
-      '<p class="cust-hint">Drag a tool into another group to move it, or into Hidden to take it off '+
-      'the menu and the dock. Order within a group is the order it appears.</p>'+
+    ov.innerHTML='<div class="cust"><h3>Customise menus</h3>'+
+      '<p class="cust-hint">Drag a command into another group to move it, or into Hidden to take '+
+      'it off the menu. Order within a group is the order it appears.</p>'+
+      '<div class="cust-tabs" id="cust-tabs"></div>'+
       '<div class="cust-cols" id="cust-cols"></div>'+
-      '<div class="cust-foot"><button class="btn-ghost" id="cust-reset">Reset to default</button>'+
+      '<div class="cust-foot"><button class="btn-ghost" id="cust-reset">Reset this menu</button>'+
       '<span style="flex:1"></span><button class="btn-ghost" id="cust-cancel">Cancel</button>'+
       '<button class="btn-primary" id="cust-ok">Done</button></div></div>';
     document.body.appendChild(ov);
-    const cols=ov.querySelector('#cust-cols');
+    const tabs=ov.querySelector('#cust-tabs'), cols=ov.querySelector('#cust-cols');
+    // edit copies, so Cancel really cancels
+    const work={}; Object.keys(MENUS).forEach(k=>{
+      work[k]={secs:cloneLayout(MENUS[k].layout),hidden:MENUS[k].hidden.slice()}; });
     let dragId=null;
+    function renderTabs(){
+      tabs.innerHTML='';
+      Object.keys(MENUS).forEach(k=>{
+        const b=document.createElement('button');
+        b.className='cust-tab'+(k===key?' on':''); b.textContent=MENUS[k].title;
+        b.addEventListener('click',()=>{key=k;renderTabs();render();});
+        tabs.appendChild(b);
+      });
+    }
     function render(){
+      const W=work[key], cmds=MENUS[key].cmds;
       cols.innerHTML='';
-      secs.concat([{name:'Hidden',ids:hidden,hide:true}]).forEach(g=>{
+      W.secs.concat([{name:'Hidden',ids:W.hidden,hide:true}]).forEach(g=>{
         const col=document.createElement('div'); col.className='cust-col'+(g.hide?' hide':'');
         const h=document.createElement('div'); h.className='cust-h'; h.textContent=g.name;
         const list=document.createElement('div'); list.className='cust-list';
         g.ids.forEach(id=>{
-          if(!CMD[id])return;
+          if(!cmds[id])return;
           const chip=document.createElement('div');
-          chip.className='cust-chip'; chip.draggable=true; chip.textContent=CMD[id].label;
+          chip.className='cust-chip'; chip.draggable=true; chip.textContent=cmds[id].label;
           chip.addEventListener('dragstart',e=>{dragId=id;chip.classList.add('drag');
             try{e.dataTransfer.setData('text/plain',id);}catch(_){}});
           chip.addEventListener('dragend',()=>{dragId=null;chip.classList.remove('drag');});
@@ -6153,25 +6225,24 @@ const CSG = (function(){
         col.addEventListener('drop',e=>{
           e.preventDefault(); col.classList.remove('over');
           const id=dragId||(()=>{try{return e.dataTransfer.getData('text/plain');}catch(_){return null;}})();
-          if(!id||!CMD[id])return;
-          secs.forEach(sx=>{const i=sx.ids.indexOf(id); if(i>=0)sx.ids.splice(i,1);});
-          const hi=hidden.indexOf(id); if(hi>=0)hidden.splice(hi,1);
-          if(g.hide)hidden.push(id); else g.ids.push(id);
+          if(!id||!cmds[id])return;
+          W.secs.forEach(sx=>{const i=sx.ids.indexOf(id); if(i>=0)sx.ids.splice(i,1);});
+          const hi=W.hidden.indexOf(id); if(hi>=0)W.hidden.splice(hi,1);
+          if(g.hide)W.hidden.push(id); else g.ids.push(id);
           render();
         });
         col.appendChild(h); col.appendChild(list); cols.appendChild(col);
       });
     }
-    render();
+    renderTabs(); render();
     const close=()=>ov.remove();
     ov.querySelector('#cust-cancel').addEventListener('click',close);
     ov.querySelector('#cust-ok').addEventListener('click',()=>{
-      sketchLayout=cloneLayout(secs); saveLayout(); close();
-      setHint('Tool layout saved');
+      Object.keys(MENUS).forEach(k=>{ MENUS[k].layout=cloneLayout(work[k].secs); saveMenu(MENUS[k]); });
+      close(); setHint('Menu layout saved');
     });
     ov.querySelector('#cust-reset').addEventListener('click',()=>{
-      sketchLayout=cloneLayout(DEFAULT_LAYOUT); saveLayout(); close();
-      setHint('Tool layout reset');
+      work[key]={secs:cloneLayout(MENUS[key].def),hidden:[]}; render();
     });
     ov.addEventListener('click',e=>{ if(e.target===ov)close(); });
     document.addEventListener('keydown',function esc(e){
@@ -6179,7 +6250,7 @@ const CSG = (function(){
   }
   function openSketchMenu(x,y){
     const items=[];
-    for(const sec of sketchLayout){
+    for(const sec of MENUS.sketch.layout){
       const live=sec.ids.filter(id=>CMD[id]);
       if(!live.length)continue;
       items.push({sect:sec.name});
