@@ -240,8 +240,10 @@ if(!window.THREE){
   .cust-h{font-size:10px;letter-spacing:.14em;text-transform:uppercase;
     color:var(--muted-2);margin-bottom:7px}
   .cust-list{display:flex;flex-direction:column;gap:5px;min-height:64px}
-  .cust-chip{background:var(--panel);border:1px solid var(--line);border-radius:6px;
-    padding:4px 8px;font-size:12px;cursor:grab;user-select:none}
+  .cust-chip{display:flex;align-items:center;gap:7px;background:var(--panel);
+    border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;
+    cursor:grab;user-select:none}
+  .cust-chip svg,.cust-chip .ic{width:15px;height:15px;flex:0 0 auto}
   .cust-chip:hover{border-color:var(--g-blue)}
   .cust-chip.drag{opacity:.35}
   .cust-foot{display:flex;gap:8px;align-items:center;margin-top:14px}
@@ -6213,7 +6215,9 @@ const CSG = (function(){
         g.ids.forEach(id=>{
           if(!cmds[id])return;
           const chip=document.createElement('div');
-          chip.className='cust-chip'; chip.draggable=true; chip.textContent=cmds[id].label;
+          chip.className='cust-chip'; chip.draggable=true;
+          // the same icon the menu shows, so a chip is recognisable at a glance
+          chip.innerHTML=icHTML(cmds[id].ic)+'<span>'+cmds[id].label+'</span>';
           chip.addEventListener('dragstart',e=>{dragId=id;chip.classList.add('drag');
             try{e.dataTransfer.setData('text/plain',id);}catch(_){}});
           chip.addEventListener('dragend',()=>{dragId=null;chip.classList.remove('drag');});
