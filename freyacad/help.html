@@ -114,7 +114,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line-soft);
 <main>
 <h1>freyacad</h1>
 <p class="tagline">Parametric solid modelling that runs entirely in your browser.</p>
-<p class="stamp" id="stamp">Manual — last revised 22 August 2026</p>
+<p class="stamp" id="stamp">Manual — last revised 24 August 2026</p>
 
 <h2 id="start">Start here</h2>
 <p class="lede">freyacad is a small CAD program with a real geometry kernel. You sketch on a
@@ -169,9 +169,8 @@ like. Then open the tree items and see how each was made.</p>
     menu that changes with what you're doing.</td></tr>
   <tr><td><b>Tool dock</b></td><td>Appears at the bottom while a sketch is open — the
     drawing tools, dimension, pointer and eraser.</td></tr>
-  <tr><td><b>Status chip</b></td><td>Top left while sketching. Tells you whether the sketch
-    is fully defined and how many degrees of freedom remain.</td></tr>
-  <tr><td><b>Plane name</b></td><td>Just below the chip — which plane you're sketching on.</td></tr>
+  <tr><td><b>Status chip</b></td><td>In the toolbar while sketching. Tells you whether the
+    sketch is fully defined and how many degrees of freedom remain.</td></tr>
   <tr><td><b>View cube</b></td><td>Bottom right. Shows the current orientation; click a
     face to snap the camera to it.</td></tr>
   <tr><td><b>Hint line</b></td><td>The <kbd>?</kbd> button toggles a live help panel that
@@ -324,6 +323,14 @@ single diagonal distance leaves it free to swing on a circle.</p>
 <p>Drag any dimension to reposition its leader line; long chains get unreadable fast if
 they all sit on top of each other. Values accept up to four decimal places, and the input
 box grows to fit what you type.</p>
+<h3>A dimension only changes when you type</h3>
+<p>This is a rule the whole program keeps, not a habit. Nothing — dragging a point, making
+a line horizontal, adding a relation — may alter a value you typed. If an operation cannot
+be carried out with every dimension still reading what it says, the operation is
+<b>undone</b> and you are told, rather than the numbers being quietly rewritten:
+<i>"Horizontal would change a dimension — the sketch would be over-defined. Edit or delete
+the dimension first."</i></p>
+
 <h3>Driven dimensions</h3>
 <p>If a new dimension would <b>over-define</b> the sketch — what it measures is already
 fully decided — freyacad warns you and offers to add it as <b>driven</b> instead: a grey
@@ -455,6 +462,9 @@ mistaken for geometry in any state.</p>
       <kbd>Delete</kbd> or pick the eraser to remove the lot. (Hold <kbd>Shift</kbd> and
       drag if you want to orbit the view instead.)</li>
   <li><b>Change a dimension</b> — click its value and type a new one.</li>
+  <li><b>Turn a line into construction geometry</b> — select it and tick <b>Construction
+      geometry</b>. Ticking one segment of a longer chain splits that segment out first, so
+      only the line you picked changes.</li>
 </ul>
 <p>To edit a sketch you've already finished, find it in the tree and open it from the
 right-click menu. Everything downstream rebuilds when you're done.</p>
@@ -485,6 +495,13 @@ sketch, or an existing solid — stay greyed out until it exists.</p>
 </table>
 <p>Select a feature in the tree and its parameters appear in a panel — depth, radius,
 count, spacing. Edit them and the model rebuilds.</p>
+<h3>Sketches with more than one shape</h3>
+<p>A sketch can hold several separate closed regions — say a hexagon with a hole and a
+triangle beside it. Extrude, cut and revolve normally use them all. When there is more than
+one, the feature's panel lists them as <b>contours</b> with a tick box each, so you can
+build from just the ones you want. Leave them all ticked for the usual behaviour.</p>
+<p>A shape only counts as a contour if its outline is <b>closed</b>. An open chain has no
+inside, so it makes no face — that is the usual reason a shape seems to be ignored.</p>
 <div class="note warn">
   <span class="tag">Worth knowing</span>
   <p>Edits made in the parameter panel are <b>not covered by undo</b>. <kbd>Ctrl</kbd>+<kbd>Z</kbd>
@@ -525,7 +542,9 @@ your own:</p>
   <li><b>Add plane</b> — a new sketching plane, typically offset from an existing one.
       This is how you sketch somewhere that isn't a face of the model.</li>
   <li><b>Add axis</b> — a reference line, useful as the spin axis for a revolve or a
-      circular pattern.</li>
+      circular pattern. Its panel asks how the axis is defined: <b>two planes</b> (the line
+      where they meet), <b>normal to a plane</b> through a point, or a plain
+      <b>position and direction</b>. Parallel planes are refused — they never meet.</li>
 </ul>
 
 <h2 id="undo">Undo</h2>
@@ -627,7 +646,7 @@ framework.</p>
 rel="noopener">github.com/Lee677/freya</a></p>
 
 <footer>
-  freyacad manual · revised 22 August 2026 · part of <a href="https://freya.co.nz">freya.co.nz</a><br>
+  freyacad manual · revised 24 August 2026 · part of <a href="https://freya.co.nz">freya.co.nz</a><br>
   This manual is kept in step with the application; if something here doesn't match what
   you see, the manual is the thing that's wrong.
 </footer>
