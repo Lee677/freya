@@ -133,12 +133,27 @@ the overlay iframe.
     enough there, because `dimHit` measures a polygon to its circumcircle and a click on
     the flat of an edge finds nothing.
 
+17. **Assembly mates are relations; a solver keeps them true.** Each mate stores its two
+    faces in the *components' own* coordinates (`{comp,p,d,r}`), never in world — that is
+    what survives the parts moving, the file round-tripping and the component rebuilding.
+    `solveMates` is Gauss-Seidel projection: `mateStep` works out the rigid correction one
+    mate wants and splits it between the ends, `moveComp` applies it as a rotation about a
+    world pivot plus a shift. Two rules make it behave: **the two shares must sum to one**
+    (that is what makes a single pass close one mate exactly, however it is split), and
+    fixed parts take share zero. `prefer` hands the part under the cursor the small share
+    so dragging tows its neighbours instead of being dragged back by them. Convergence is
+    geometric at roughly 0.3 per pass with `relax` 0.7; the early-out is what keeps 300
+    iterations cheap. On load, component ids are reissued, so the mates' `comp` refs must
+    be remapped or every relation in the file points at nothing.
+
 ## Biggest thing still missing
 
-**A real constraint solver.** Dimensions are applied one at a time, so satisfying one can
-disturb another. `@salusoft89/planegcs` is FreeCAD's solver compiled to WASM and would
-slot in beside the existing OCCT/manifold WASM. Everything else on the list — datum-plane
-dimensions, parallel/perpendicular/equal — is easier and less valuable than this.
+**A real constraint solver *for sketches*.** Dimensions are applied one at a time, so
+satisfying one can disturb another. `@salusoft89/planegcs` is FreeCAD's solver compiled to
+WASM and would slot in beside the existing OCCT/manifold WASM. Everything else on the list
+— datum-plane dimensions, parallel/perpendicular/equal — is easier and less valuable than
+this. Note the assembly mate solver (trap 17) does not help here: it projects rigid bodies
+in 3D, and sketch entities are neither rigid nor 3D.
 
 Also open: dimensioning to the datum planes (length and angle to a plane trace; the origin
 already works), lines parallel to a datum plane, and property-panel edits inside undo.

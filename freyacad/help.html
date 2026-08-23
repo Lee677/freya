@@ -611,8 +611,9 @@ neutral archive. If you're choosing between the two and not printing, choose STE
 removes it. Assemblies save as <code>.asmcad</code>.</p>
 <p>Drag a component to slide it on the ground plane; hold <kbd>Shift</kbd> to raise or lower
 it instead. Right-click for the component menu — position, fix in place, remove, and the two
-mates. A component that is <b>fixed</b> won't move: the first part you insert is fixed
-automatically, so everything else lands relative to it.</p>
+mates. A component that is <b>fixed</b> won't move, and nothing mated to it can pull it: the
+first part you insert is fixed automatically, so everything else lands relative to it. Unfix
+a part and any mate that had nowhere to give settles straight away.</p>
 
 <h3>Mates</h3>
 <p>Both mates work by <b>picking faces</b>, one on each part. Choose the mate, click the face
@@ -630,11 +631,25 @@ rather than doing something surprising.</p>
 </table>
 <p>Faces are recovered from the part's own geometry, so a hole reads as a hole and its
 diameter is reported back when the mate lands. If both parts are fixed, nothing can move and
-the mate says so; if only one is fixed, the free one moves whichever you picked first.</p>
-<p><b>Mates are applied, not remembered.</b> Each one puts the part where you asked, once —
-it doesn't stay as a relation, so moving a part afterwards moves it for good and won't drag
-its partners along. Treat assemblies as a way to lay parts out and check how they sit rather
-than as a solved assembly environment.</p>
+the mate says so; otherwise the part whose face you picked first is the one that travels.</p>
+
+<h3>Mates hold</h3>
+<p>A mate is a <b>relation, not a one-off move</b>. Once it's on, it stays true: drag the part
+afterwards and it slides within whatever freedoms the mate leaves it, rather than coming
+loose. A pin mated concentric into a hole runs up and down that hole and spins in it, but
+will not come out sideways. Add a coincident mate on its end face as well and it's located
+outright, with only the spin left.</p>
+<p>Dragging a part <b>tows its neighbours</b>. The part under the cursor keeps its ground and
+anything mated to it that isn't fixed follows along, so a stack moves as a stack. Typing a
+position into the panel works the same way, and the boxes are corrected to where the part
+actually ended up — what the mates allow beats what you typed.</p>
+<p>Every mate is listed under <b>Mates</b> in the tree, with an × to delete it; deleting one
+leaves the parts where they are. A mate that can't currently be met — usually because both
+its parts have been fixed — is marked with a <b>!</b> and named in the status bar, along with
+how far out it is. If a new mate can't be met alongside the ones already there, it is refused
+and nothing moves, rather than half-applied.</p>
+<p>Mates are saved with the assembly. Reopening the file replays the relations and solves the
+positions from them, so a mated assembly comes back mated.</p>
 
 <h2 id="keys">Keyboard</h2>
 <table>
@@ -655,8 +670,9 @@ than as a solved assembly environment.</p>
 <h2 id="limits">Known limits</h2>
 <p>Stated plainly, so nothing surprises you mid-part:</p>
 <ul>
-  <li><b>No constraint solver yet.</b> Dimensions apply one at a time and can disturb each
-      other. See the note under <a href="#dims">Dimensions</a>.</li>
+  <li><b>No constraint solver in sketches yet.</b> Dimensions apply one at a time and can
+      disturb each other. See the note under <a href="#dims">Dimensions</a>. (Assembly mates
+      <em>are</em> solved together — that solver doesn't work on sketch geometry.)</li>
   <li><b>No perpendicular constraint.</b> Horizontal, vertical, parallel, equal,
       concentric and coincident are in; perpendicular isn't yet.</li>
   <li><b>STL imports are faceted.</b> A mesh has no true surfaces, so an imported STL
@@ -664,8 +680,9 @@ than as a solved assembly environment.</p>
   <li><b>The parameter panel is outside undo.</b></li>
   <li><b>Desktop only</b>, by design.</li>
   <li><b>No autosave.</b> The tab is the only copy until you save.</li>
-  <li><b>Assembly mates are applied, not solved.</b> Concentric and coincident put a part
-      where you ask, once; they aren't kept as relations, and there are no joints.</li>
+  <li><b>Only two assembly mates.</b> Concentric and coincident hold as real relations and
+      are solved together, but distance, angle, parallel and the rest aren't there yet, and
+      neither are joints or sub-assemblies.</li>
 </ul>
 
 <h2 id="about">About</h2>

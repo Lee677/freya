@@ -5488,8 +5488,8 @@ const CSG = (function(){
   }
 
   /* ============================ PROPERTIES PANEL ============================ */
-  let propsEl=null, propsFeat=null, draftFeat=null, draftOriginalState=null;
-  function closeProps(){if(propsEl){propsEl.remove();propsEl=null;propsFeat=null;draftFeat=null;draftOriginalState=null;if(typeof updateHelp==='function')updateHelp();}}
+  let propsEl=null, propsFeat=null, draftFeat=null, draftOriginalState=null, propsComp=null;
+  function closeProps(){if(propsEl){propsEl.remove();propsEl=null;propsFeat=null;draftFeat=null;draftOriginalState=null;propsComp=null;if(typeof updateHelp==='function')updateHelp();}}
   
   function openProps(f){
     if(propsFeat && propsFeat.id !== f.id) closeProps();
@@ -5767,12 +5767,24 @@ const CSG = (function(){
               } else if (data && data.type==='assembly') {  // an assembly file
                   features=[];rollbackIndex=0;selId=null;editing=null;demoActive=false;
                   clearAsm();
-                  asm={components:[],mates:data.mates||[]};
+                  asm={components:[],mates:[]};
                   setDocMode('asm');
+                  /* Component ids are reissued on load, so the mates'
+                     references have to be rewritten to match or every relation
+                     in the file would point at nothing. */
+                  const idMap=new Map();
                   for(const comp of (data.components||[])){
-                      comp.id=cuid++;
+                      const was=comp.id; comp.id=cuid++; idMap.set(was,comp.id);
                       asm.components.push(comp); buildComponent(comp);
                   }
+                  for(const m of (data.mates||[])){
+                      if(!m||!m.a||!m.b)continue;
+                      const a=idMap.get(m.a.comp), b=idMap.get(m.b.comp);
+                      if(a==null||b==null)continue;
+                      m.a.comp=a; m.b.comp=b; m.id=mateUid++;
+                      asm.mates.push(m);
+                  }
+                  reportSolve(solveMates({}));   // the file records the relations; the positions follow
                   refreshAsmUI(); fitAll();
               } else throw new Error('unrecognised');
           } catch(err) { alert('Invalid file'); }
@@ -6560,6 +6572,7 @@ const CSG = (function(){
   function removeComponent(comp){
     const i=asm.components.indexOf(comp); if(i<0)return;
     cancelMate(true);            // its highlights hang off the meshes about to go
+    dropMatesFor(comp);          // a relation to a part that's gone is no relation
     for(const m of asmMeshes[i]){scene.remove(m);m.geometry.dispose();}
     for(const s of asmShapes[i]){try{s.delete();}catch(_){}}
     asm.components.splice(i,1);asmMeshes.splice(i,1);asmShapes.splice(i,1);
@@ -6608,7 +6621,35 @@ const CSG = (function(){
       });
       tree.appendChild(el);
     });
+    /* Mates are part of the document now, so they have to be visible and
+       deletable — a relation you can't find is a relation you can't undo. */
+    if(asm.mates.length){
+      const h=document.createElement('div');
+      h.className='tree-sect'; h.textContent='Mates';
+      tree.appendChild(h);
+      asm.mates.forEach(m=>{
+        const el=document.createElement('div');
+        el.className='feat'+(m.unmet?' errored':'');
+        el.title=mateLabel(m)+(m.unmet?' — cannot be met as the parts are fixed':'');
+        el.innerHTML=icHTML(m.kind==='concentric'?'coinc':'dplane')+
+          `<span class="fname">${esc(mateLabel(m))}</span>`+
+          (m.unmet?'<span class="ferr" title="this mate is not currently met">!</span>':'')+
+          '<button class="fx" title="Delete this mate">×</button>';
+        el.addEventListener('click',e=>{ if(e.target.classList.contains('fx'))removeMate(m); });
+        tree.appendChild(el);
+      });
+    }
     $('tree-pill').textContent=asm.components.length;
+  }
+  /* Write solved values back into the open panel. The box being typed in is
+     left alone — correcting it under the cursor would fight the typing. */
+  function syncCompProps(comp){
+    if(!propsEl||propsComp!==comp)return;
+    const ins=propsEl.querySelectorAll('input[type=number]');
+    const vals=[comp.t.x,comp.t.y,comp.t.z,comp.t.rx,comp.t.ry,comp.t.rz];
+    ins.forEach((inp,i)=>{ if(i>=vals.length||inp===document.activeElement)return;
+      const v=(i<3)?+toDisp(vals[i]).toFixed(4):+vals[i].toFixed(3);
+      if(+inp.value!==v)inp.value=v; });
   }
   function openCompProps(comp){
     closeProps();
@@ -6617,14 +6658,23 @@ const CSG = (function(){
       <div class="props-foot"><button id="pc-del" class="btn-ghost btn-danger">Remove</button><button id="pc-close" class="btn-primary">Close</button></div>`;
     viewport.appendChild(el);propsEl=el;
     const body=el.querySelector('#pbody'),add=x=>body.appendChild(x);
-    const upd=()=>applyCompTransform(comp);
+    /* Type a number and the mates still win — the same hold as dragging, so
+       the part goes where you asked as far as its relations allow and the
+       boxes are corrected to where it actually landed. */
+    const upd=()=>{ applyCompTransform(comp);
+      if(asm.mates.length){
+        reportSolve(solveMates({prefer:comp.id})); syncCompProps(comp); refreshAsmTree();
+      } };
     add(fieldNumber('Position X',comp.t.x,0.5,null,null,'units',v=>{comp.t.x=v;upd();}));
     add(fieldNumber('Position Y',comp.t.y,0.5,null,null,'units',v=>{comp.t.y=v;upd();}));
     add(fieldNumber('Position Z',comp.t.z,0.5,null,null,'units',v=>{comp.t.z=v;upd();}));
     add(fieldNumber('Rotate X',comp.t.rx,15,null,null,'deg',v=>{comp.t.rx=v;upd();}));
     add(fieldNumber('Rotate Y',comp.t.ry,15,null,null,'deg',v=>{comp.t.ry=v;upd();}));
     add(fieldNumber('Rotate Z',comp.t.rz,15,null,null,'deg',v=>{comp.t.rz=v;upd();}));
-    add(fieldCheck('Fixed in place',comp.fixed,v=>{comp.fixed=v;refreshAsmTree();}));
+    add(fieldCheck('Fixed in place',comp.fixed,v=>{comp.fixed=v;
+      if(!v&&asm.mates.length){reportSolve(solveMates({}));syncCompProps(comp);}
+      refreshAsmTree();}));
+    propsComp=comp;
     el.querySelector('#pc-close').addEventListener('click',closeProps);
     el.querySelector('#pc-del').addEventListener('click',()=>{closeProps();removeComponent(comp);});
   }
@@ -6808,38 +6858,167 @@ const CSG = (function(){
     applyMate(mateSel.a,f,mateSel.kind);
   }
   function compById(id){ return asm.components.find(c=>c.id===id)||null; }
-  function applyMate(fa,fb,kind){
-    let A=fa,B=fb, ca=compById(fa.compId), cb=compById(fb.compId);
-    if(!ca||!cb)return cancelMate(true);
-    if(ca.fixed&&cb.fixed){ setHint('Both parts are fixed — unfix one to mate it'); return cancelMate(true); }
-    if(ca.fixed){ A=fb;B=fa; const t2=ca; ca=cb; cb=t2; }   // the free part is the one that moves
-    const t=ca.t;
-    const q=new THREE.Quaternion().setFromEuler(new THREE.Euler(t.rx*D2R,t.ry*D2R,t.rz*D2R,'XYZ'));
-    const T=new THREE.Vector3(t.x,t.y,t.z);
-    // where should A's face end up pointing?
-    const aim=(kind==='concentric')
-      ? (A.d.dot(B.d)<0?B.d.clone().negate():B.d.clone())   // axes: nearest of the two senses
-      : B.d.clone().negate();                               // flat faces meet nose to nose
-    const qfix=new THREE.Quaternion().setFromUnitVectors(A.d.clone().normalize(),aim.normalize());
-    const q2=qfix.clone().multiply(q);
-    // spin about the picked point so the face stays where the user grabbed it
-    const pLocal=A.p.clone().sub(T).applyQuaternion(q.clone().invert());
-    const T2=A.p.clone().sub(pLocal.clone().applyQuaternion(q2));
-    if(kind==='concentric'){
-      const off=B.p.clone().sub(A.p);
-      T2.add(off.sub(aim.clone().multiplyScalar(off.dot(aim))));   // close the gap across the axis
-    } else {
-      T2.addScaledVector(B.d,B.p.clone().sub(A.p).dot(B.d));       // slide onto B's plane
+
+  /* ---- the mate solver ------------------------------------------------------
+     A mate is a relation, not a one-off move, so something has to keep it true
+     as parts get dragged about. This is Gauss-Seidel projection: walk the
+     mates, work out the rigid correction each one wants, give a share of it to
+     whichever ends are free to move, and go round again. One pass is exact for
+     a single mate; the loop is what reconciles a set of them. Fixed parts never
+     move, which is what stops an assembly drifting off instead of settling.
+
+     Every mate stores its two faces in the components' OWN coordinates, so the
+     relation survives the parts moving, the file being saved and reopened, and
+     the component being rebuilt. World positions are derived, never stored. */
+  /* Converged means converged, not "close enough to see": the loop drops by
+     about two-thirds a pass, so buying three more decimal places costs a
+     handful of passes. The angle floor sits near 3e-8 on real geometry, which
+     is what keeps 1e-6 from reading as a permanent failure. */
+  const MATE_TOL_LIN=1e-5, MATE_TOL_ANG=1e-6;   // mm and radians
+  let mateUid=1;
+  function compQuat(c){ return new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(c.t.rx*D2R,c.t.ry*D2R,c.t.rz*D2R,'XYZ')); }
+  function compPos(c){ return new THREE.Vector3(c.t.x,c.t.y,c.t.z); }
+  function setCompTransform(c,q,t){
+    const rd=v=>Math.abs(v)<1e-9?0:Math.round(v*1e6)/1e6;
+    const e=new THREE.Euler().setFromQuaternion(q,'XYZ');
+    c.t.rx=rd(e.x/D2R);c.t.ry=rd(e.y/D2R);c.t.rz=rd(e.z/D2R);
+    c.t.x=rd(t.x);c.t.y=rd(t.y);c.t.z=rd(t.z);
+    applyCompTransform(c);
+  }
+  /* the stored face, in world, as the component sits right now */
+  function endWorld(end){
+    const c=compById(end.comp); if(!c)return null;
+    const q=compQuat(c);
+    return {comp:c, r:end.r,
+      p:new THREE.Vector3(end.p[0],end.p[1],end.p[2]).applyQuaternion(q).add(compPos(c)),
+      d:new THREE.Vector3(end.d[0],end.d[1],end.d[2]).applyQuaternion(q).normalize()};
+  }
+  function mateError(m){
+    const A=endWorld(m.a),B=endWorld(m.b);
+    if(!A||!B)return {ang:0,lin:0};
+    const g=A.p.clone().sub(B.p);
+    if(m.kind==='concentric'){
+      // axes: parallel either way round, and no gap across the axis
+      const ang=Math.acos(Math.min(1,Math.abs(A.d.dot(B.d))));
+      return {ang,lin:g.sub(B.d.clone().multiplyScalar(g.dot(B.d))).length()};
     }
-    const rd=v=>Math.abs(v)<1e-9?0:Math.round(v*1e4)/1e4;
-    const eu=new THREE.Euler().setFromQuaternion(q2,'XYZ');
-    t.x=rd(T2.x);t.y=rd(T2.y);t.z=rd(T2.z);
-    t.rx=rd(eu.x/D2R);t.ry=rd(eu.y/D2R);t.rz=rd(eu.z/D2R);
-    applyCompTransform(ca);
+    // flat faces: normals nose to nose, and no gap along them
+    return {ang:Math.acos(Math.max(-1,Math.min(1,-A.d.dot(B.d)))), lin:Math.abs(g.dot(B.d))};
+  }
+  /* Rotate a component about a world pivot, then shift it. Rigid corrections
+     always take this shape, which is why one mate resolves in one pass. */
+  function moveComp(c,R,pivot,Tv){
+    const q=compQuat(c), t=compPos(c);
+    setCompTransform(c, R.clone().multiply(q),
+      t.sub(pivot).applyQuaternion(R).add(pivot).add(Tv));
+  }
+  function mateStep(m,lock,relax,prefer){
+    const A=endWorld(m.a),B=endWorld(m.b); if(!A||!B)return;
+    const aFree=!A.comp.fixed&&!lock.has(A.comp.id);
+    const bFree=!B.comp.fixed&&!lock.has(B.comp.id);
+    if(!aFree&&!bFree)return;                    // nothing here can give
+    const aim=(m.kind==='concentric')
+      ? (A.d.dot(B.d)<0?B.d.clone().negate():B.d.clone())   // nearest of the two senses
+      : B.d.clone().negate();
+    const R=new THREE.Quaternion().setFromUnitVectors(A.d,aim);
+    const g=B.p.clone().sub(A.p);
+    const Tv=(m.kind==='concentric')
+      ? g.clone().sub(aim.clone().multiplyScalar(g.dot(aim)))   // close the gap across the axis
+      : B.d.clone().multiplyScalar(g.dot(B.d));                 // slide onto B's plane
+    /* The two shares always sum to one, which is what makes a single pass
+       close the gap exactly however it is split. Both free and neither
+       preferred is an even half each. The part under the cursor is preferred
+       and keeps most of its ground, so dragging it tows its neighbours instead
+       of being dragged back by them. */
+    let wa=aFree&&bFree?0.5:(aFree?1:0);
+    if(aFree&&bFree&&prefer!=null){
+      if(A.comp.id===prefer)wa=0.12; else if(B.comp.id===prefer)wa=0.88;
+    }
+    const I=new THREE.Quaternion(), wb=1-wa;
+    if(aFree&&wa>0)moveComp(A.comp,I.clone().slerp(R,wa*relax),A.p,Tv.clone().multiplyScalar(wa*relax));
+    if(bFree&&wb>0)moveComp(B.comp,I.clone().slerp(R.clone().invert(),wb*relax),B.p,Tv.clone().multiplyScalar(-wb*relax));
+  }
+  function liveMates(){ return asm.mates.filter(m=>compById(m.a.comp)&&compById(m.b.comp)); }
+  function solveMates(opts){
+    opts=opts||{};
+    const lock=opts.lock||new Set(), live=liveMates();
+    if(!live.length)return {ok:true,ang:0,lin:0,bad:null};
+    /* Under-relax once there is more than one mate: at full step each pass
+       undoes a share of the last one and a closed chain can ring instead of
+       settling. Slower per pass, far fewer passes overall. */
+    const relax=live.length>1?0.7:1;
+    const iters=opts.iters||300;          // the early-out is what keeps this cheap
+    let worst={ang:0,lin:0}, bad=null;
+    for(let k=0;k<iters;k++){
+      for(const m of live)mateStep(m,lock,relax,opts.prefer);
+      worst={ang:0,lin:0}; bad=null;
+      for(const m of live){ const e=mateError(m);
+        m.unmet=(e.ang>MATE_TOL_ANG||e.lin>MATE_TOL_LIN);
+        if(e.ang>worst.ang)worst.ang=e.ang;
+        if(e.lin>worst.lin)worst.lin=e.lin;
+        if(m.unmet)bad=bad||m; }
+      if(!bad)break;
+    }
+    return {ok:!bad,ang:worst.ang,lin:worst.lin,bad};
+  }
+  /* A solve that couldn't finish leaves the parts as close as it could get and
+     says which relation it had to break — silently half-satisfying a mate is
+     the one outcome nobody can debug. */
+  function reportSolve(r){
+    if(!r||r.ok)return r;
+    setHint(mateLabel(r.bad)+' can\'t be met — '+r.lin.toFixed(2)+
+      ' units out. Unfix a part, or delete the mate.');
+    return r;
+  }
+  function snapAsmT(){ return asm.components.map(c=>({id:c.id,t:Object.assign({},c.t)})); }
+  function restoreAsmT(s){ for(const r of s){ const c=compById(r.id);
+    if(c){ Object.assign(c.t,r.t); applyCompTransform(c); } } }
+  function mateLabel(m){
+    const a=compById(m.a.comp),b=compById(m.b.comp);
+    return (m.kind==='concentric'?'Concentric':'Coincident')+
+      ' · '+(a?a.name:'?')+' ↔ '+(b?b.name:'?');
+  }
+  function removeMate(m){
+    const i=asm.mates.indexOf(m); if(i<0)return;
+    asm.mates.splice(i,1);
+    setHint(mateLabel(m)+' removed — the parts stay where they are');
+    refreshAsmUI();
+  }
+  function dropMatesFor(comp){
+    asm.mates=asm.mates.filter(m=>m.a.comp!==comp.id&&m.b.comp!==comp.id);
+  }
+  /* Turn two picked faces into a stored relation and let the solver place the
+     parts. The face the user picked first is the one that should move, so its
+     partner is held for that first solve only — after that both ends are as
+     free as being unfixed makes them. */
+  function applyMate(fa,fb,kind){
+    const ca=compById(fa.compId), cb=compById(fb.compId);
+    if(!ca||!cb)return cancelMate(true);
+    if(ca.fixed&&cb.fixed){ setHint('Both parts are fixed — unfix one to mate them'); return cancelMate(true); }
+    const local=(f,mesh)=>({comp:f.compId,r:f.r,seed:f.seed,
+      mi:(asmMeshes[asm.components.indexOf(compById(f.compId))]||[]).indexOf(f.mesh),
+      p:(()=>{const c=compById(f.compId),q=compQuat(c).invert();
+        return f.p.clone().sub(compPos(c)).applyQuaternion(q).toArray();})(),
+      d:f.d.clone().applyQuaternion(compQuat(compById(f.compId)).invert()).normalize().toArray()});
+    const m={id:mateUid++,kind,a:local(fa),b:local(fb)};
+    const snap=snapAsmT();
+    asm.mates.push(m);
+    /* Hold the second-picked part for the first solve so the part whose face
+       was picked first is the one that travels — that is what the hint
+       promised while the faces were being chosen. */
+    const first=solveMates({lock:new Set(ca.fixed?[]:[cb.id])});
+    const r=first.ok?first:solveMates({});
+    if(!r.ok){
+      asm.mates.pop(); restoreAsmT(snap);
+      setHint('That mate can\'t be met with the others already on these parts — remove one first');
+      mateSel=null; clearMateHi(); canvas.style.cursor='default'; refreshAsmUI();
+      return;
+    }
     asmSel=ca.id; mateSel=null; clearMateHi(); canvas.style.cursor='default';
     setHint(kind==='concentric'
-      ? ca.name+' is concentric with '+cb.name+' (Ø'+(2*B.r).toFixed(2)+')'
-      : ca.name+' sits flush against '+cb.name);
+      ? ca.name+' is concentric with '+cb.name+' (Ø'+(2*fb.r).toFixed(2)+') — the mate holds from now on'
+      : ca.name+' sits flush against '+cb.name+' — the mate holds from now on');
     refreshAsmUI();
   }
   const ACMD={
@@ -6847,7 +7026,10 @@ const CSG = (function(){
     demo    :{ic:'iso',  label:'Insert pillow-block demo',fn:()=>addComponent(DEMO_PART,'pillow-block')},
     pos     :{ic:'edit', label:'Position…',   fn:()=>{const c=selComp();if(c)openCompProps(c);}},
     fix     :{ic:'suppress',label:'Fix / unfix',fn:()=>{const c=selComp();
-                if(c){c.fixed=!c.fixed;refreshAsmTree();setHint(c.name+(c.fixed?' fixed':' free'));}}},
+                if(c){c.fixed=!c.fixed;setHint(c.name+(c.fixed?' fixed':' free'));
+                  // freeing a part can let a mate that had nowhere to give settle
+                  if(!c.fixed&&asm.mates.length)reportSolve(solveMates({}));
+                  refreshAsmTree();}}},
     remove  :{ic:'del',  label:'Remove',      fn:()=>{const c=selComp();if(c)removeComponent(c);}},
     m_conc  :{ic:'coinc',  label:'Concentric — pick two round faces',fn:()=>startMate('concentric')},
     m_face  :{ic:'dplane', label:'Coincident — pick two flat faces', fn:()=>startMate('coincident')}
@@ -6934,11 +7116,20 @@ const CSG = (function(){
       if(e.shiftKey){ t.y=Math.round((s.y+d.y)*10)/10; }
       else { t.x=Math.round((s.x+d.x)*10)/10; t.z=Math.round((s.z+d.z)*10)/10; }
       applyCompTransform(asmDrag.comp);
+      /* The cursor sets this part's position outright, then the mates get to
+         answer: against a fixed part they pull it back onto whatever freedoms
+         they leave, so a pin mated into a hole slides along the hole instead
+         of coming out of it, while a free neighbour is towed along instead. */
+      if(asm.mates.length){ solveMates({prefer:asmDrag.comp.id}); asmDrag.moved=true; }
     }
     return false;
   }
   function asmPointerUp(){
-    if(asmDrag){asmDrag=null;controls.enableRotate=true;return false;}
+    if(asmDrag){
+      // one last unheld pass so anything that had to give, gives
+      if(asmDrag.moved){ reportSolve(solveMates({})); refreshAsmTree(); }
+      asmDrag=null;controls.enableRotate=true;return false;
+    }
     return true;
   }
   /* transformed copies for export (rotations XYZ then translation, like the meshes) */
@@ -7346,6 +7537,7 @@ const CSG = (function(){
     addComponent, setDocMode, buildPartShapes, asmTransformedShapes, removeComponent,
     startMate, cancelMate, fitFace, faceRegion, applyMate, applyCompTransform,
     get mateSel(){ return mateSel; }, perimeterHit,
+    solveMates, mateError, removeMate, endWorld, mateLabel, openCompProps,
     editSketch, finishSketch, defineState, lockedEnts, sketchHandles, updateTraceLabels,
     get editing(){ return editing; }, get tool(){ return tool; }, set tool(v){ tool=v; dockSel(); },
     snap(){ renderer.render(scene, camera); return renderer.domElement.toDataURL('image/jpeg', 0.85); }
