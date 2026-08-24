@@ -36,7 +36,7 @@
 <script>
 /* Mobile gate. freyacad steers with a mouse, a keyboard and a big screen, so a
  * phone or tablet gets a friendly front door instead of an app it cannot
- * drive — and is spared the ~11 MB kernel download. The flag is honoured by
+ * drive — and is spared the ~13 MB kernel download. The flag is honoured by
  * the kernel loader and by a bail-out at the top of the app script; the
  * html class shows #gate and hides #app (see the gate styles). iPadOS calls
  * itself a Mac, hence the maxTouchPoints test. */
@@ -68,7 +68,7 @@ if(!window.THREE){
 <script type="module">
   /* Open CASCADE (the kernel FreeCAD uses) compiled to WASM — real B-rep
    * solids, so fillets are genuine kernel blend surfaces, not mesh tricks.
-   * The .wasm is ~48 MB raw (~11 MB compressed over the wire) and too big for
+   * The .wasm is ~50 MB raw (~13 MB brotli over the wire) and too big for
    * Cloudflare Pages' per-file limit, so it comes from a CDN and is cached by
    * the browser after the first visit. All modelling still runs locally. */
   const SOURCES = [
@@ -9152,7 +9152,7 @@ const CSG = (function(){
   }
   if(window.OCCT){ boot(); }
   else {
-    setHint('Loading the Open CASCADE kernel — ~11 MB, first visit only…');
+    setHint('Loading the Open CASCADE kernel — ~13 MB, first visit only…');
     window.addEventListener('kernel-ready', boot, { once:true });
   }
 
@@ -9187,7 +9187,7 @@ const CSG = (function(){
           return (two?'WebGL2':'WebGL')+(r?' · '+r.slice(0,20):'');
         }catch(_){ return 'WebGL'; }
       })()],
-      ['OPEN CASCADE KERNEL (11 MB)','FETCHING'],
+      ['OPEN CASCADE KERNEL (13 MB)','FETCHING'],
       ['B-REP BOOLEAN ENGINE','STANDBY'],
       ['CURRENT LINES OF CODE','<span id="boot-loc">counting…</span>'],
       ['STEP AP214 WRITER','STANDBY'],
