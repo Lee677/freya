@@ -4140,6 +4140,7 @@ const CSG = (function(){
     editing=feature; selId=feature.id; tool='line'; chain=null; draftPts=[]; draftStage=0; draftA=null;
     selectedEdges=[]; hoveredEdge=null; closeEdgeMenu();
     setMode('sketch');
+    dockSel();     // the dock is being shown: apply the saved layout to it now
     // rebuild BEFORE the camera move: OCCT is synchronous and with a real part
     // the rebuild blocks the main thread for most of a second — started after
     // animateToFrame it ate the whole flight and the view just snapped flat.
@@ -7107,45 +7108,61 @@ const CSG = (function(){
     {name:'View',            ids:['normal','iso','fit','proj']}
   ];
   function cloneLayout(L){ return L.map(s=>({name:s.name,ids:s.ids.slice()})); }
+  /* Menu layouts live in localStorage, so they survive a refresh, a new tab and
+     a restart. What is stored is a record, not a bare list:
+
+       {v:2, layout:[…], hidden:[…]}
+
+     because "hidden" used to be inferred as "not in the layout", and that
+     cannot tell a tool the user deliberately removed from a tool the app
+     gained afterwards. Inferring it meant new tools were invisible to anyone
+     who had customised; adopting the difference meant tools they had removed
+     came back. Storing the intent settles both. A bare array is the older
+     format and is read, upgraded and rewritten on the spot. */
+  const LAYOUT_V=2;
   function loadMenu(m){
+    let saved=null, savedHidden=null, legacy=false;
     try{ const raw=localStorage.getItem(m.key);
-      if(raw){ const L=JSON.parse(raw);
-        if(Array.isArray(L)&&L.length&&L.every(x=>x&&Array.isArray(x.ids)))m.layout=L; }
+      if(raw){ const P=JSON.parse(raw);
+        if(Array.isArray(P)){ saved=P; legacy=true; }
+        else if(P&&Array.isArray(P.layout)){
+          saved=P.layout; savedHidden=Array.isArray(P.hidden)?P.hidden:null; }
+        if(saved&&!(saved.length&&saved.every(x=>x&&Array.isArray(x.ids))))saved=null;
+      }
     }catch(_){ }
-    if(!m.layout)m.layout=cloneLayout(m.def);
-    adoptNewCommands(m);
+    m.layout=saved||cloneLayout(m.def);
+    const adopted=adoptNewCommands(m,savedHidden);
     markHidden(m);
+    if(saved&&(legacy||adopted))writeMenu(m);   // upgrade in place, once
+    try{ localStorage.removeItem(m.key+'-seen'); }catch(_){ }   // short-lived earlier attempt
   }
-  /* A saved layout hides every command it doesn't list, so a tool added to the
-     app after the user last customised their menus would be invisible to them
-     and to nobody else — which is exactly how the new rectangle variants went
-     missing. Remember which commands the user has already been offered; adopt
-     anything genuinely new once, into the section the defaults put it in. */
-  function adoptNewCommands(m){
-    const all=Object.keys(m.cmds), seenKey=m.key+'-seen';
-    let seen=null;
-    try{ const raw=localStorage.getItem(seenKey); if(raw)seen=JSON.parse(raw); }catch(_){ }
-    if(!Array.isArray(seen)){        // first run: whatever is laid out has been seen
-      seen=[]; m.layout.forEach(s=>s.ids.forEach(i=>seen.push(i)));
-    }
-    const fresh=all.filter(k=>seen.indexOf(k)<0);
-    if(fresh.length){
-      fresh.forEach(k=>{
-        const home=m.def.find(s=>s.ids.indexOf(k)>=0);
-        const sec=(home&&m.layout.find(s=>s.name===home.name))||m.layout[m.layout.length-1];
-        if(sec&&sec.ids.indexOf(k)<0)sec.ids.push(k);
-      });
-      try{ localStorage.setItem(m.key,JSON.stringify(m.layout)); }catch(_){ }
-    }
-    try{ localStorage.setItem(seenKey,JSON.stringify(all)); }catch(_){ }
+  /* Anything the app knows about that is neither laid out nor on the record of
+     what the user removed is new since they last customised, so it is adopted
+     once into the section the defaults give it. */
+  function adoptNewCommands(m,savedHidden){
+    const known=new Set();
+    m.layout.forEach(s=>s.ids.forEach(i=>known.add(i)));
+    (savedHidden||[]).forEach(i=>known.add(i));
+    const fresh=Object.keys(m.cmds).filter(k=>!known.has(k));
+    fresh.forEach(k=>{
+      const home=m.def.find(s=>s.ids.indexOf(k)>=0);
+      const sec=(home&&m.layout.find(s=>s.name===home.name))||m.layout[m.layout.length-1];
+      if(sec&&sec.ids.indexOf(k)<0)sec.ids.push(k);
+    });
+    return fresh.length>0;
   }
   function markHidden(m){
     const seen=new Set(); m.layout.forEach(sec=>sec.ids.forEach(i=>seen.add(i)));
     m.hidden=Object.keys(m.cmds).filter(k=>!seen.has(k));
   }
+  function writeMenu(m){
+    try{ localStorage.setItem(m.key,JSON.stringify({v:LAYOUT_V,layout:m.layout,hidden:m.hidden})); }
+    catch(_){ }
+  }
   function saveMenu(m){
-    try{ localStorage.setItem(m.key,JSON.stringify(m.layout)); }catch(_){ }
-    markHidden(m); syncDockVisibility();
+    markHidden(m);          // record what was removed, not just what was kept
+    writeMenu(m);
+    syncDockVisibility();
   }
   function syncDockVisibility(){
     const d=$('dock'); if(!d)return;
@@ -9335,6 +9352,9 @@ const CSG = (function(){
     // every tool change lands here (dock, menus, keyboard) — a live line run
     // must not survive into another tool and quietly extend an old entity
     if(tool!=='line'&&tool!=='cline'&&tool!=='spline'&&chain){chain=null;}
+    /* hiding was only applied when the customise dialog saved, so a dock loaded
+       from storage showed removed tools until the first click on one */
+    syncDockVisibility();
     syncRotateGate(); syncCursor(); if(tool!=='select')clearSketchSel(); redrawDraft(null);updateHint();
     if(mode==='sketch')ensureSketchProps();   // the panel follows the tool in hand
   }
