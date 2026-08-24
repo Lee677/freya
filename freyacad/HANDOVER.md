@@ -368,6 +368,28 @@ the overlay iframe.
     `wireFromSegs` can take real curves, a sketch fillet could become a true arc edge, which
     would be a small, contained improvement.
 
+33. **Shortcuts go through `keyFor(id)`, never a literal key test.** `KEY_DEF` holds the
+    defaults, `keyOverrides` (localStorage `fcad-keys`) holds only what the user changed, and
+    the handler compares `comboOf(e)` against `keyFor(id)`. Adding a rebindable command means
+    adding it to `KEY_CMDS` and matching on `keyFor`, not on `e.key`.
+    Three details that are easy to get wrong, and two of them bit:
+    * A command with **no** key must map to a sentinel `comboOf` can never return. `''` matches
+      comboOf's own empty return when a bare modifier is pressed, and a plain space matches the
+      space bar — both were tried, the second shipped briefly in this session's working copy
+      and would have made Space fire whichever command had been unbound. It is `'<none>'`.
+    * Shift is only part of a combo for **non-character** keys. Include it for letters and
+      Shift+D reads as a different key from D, so the dimension shortcut stops working with
+      caps lock on.
+    * The view keys (iso/normal-to/ortho) are matched on the whole combo *outside* the
+      Ctrl-only branch. Left inside it, rebinding one to a plain letter would make it
+      unreachable.
+    The recorder in the dialog listens in the **capture** phase, or the key being recorded also
+    fires the command it is bound to; and its listener must be removed when the dialog closes,
+    which is why `close()` does more than `ov.remove()`.
+    Taking a key from another command clears that command's override — and if the key taken was
+    that command's own default, it is set to "no key" instead, otherwise it would silently take
+    the key straight back.
+
 ## Biggest thing still missing
 
 **A real constraint solver *for sketches*.** Dimensions are applied one at a time, so

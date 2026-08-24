@@ -287,6 +287,24 @@ if(!window.THREE){
   .cust-chip:hover{border-color:var(--g-blue)}
   .cust-chip.drag{opacity:.35}
   .cust-foot{display:flex;gap:8px;align-items:center;margin-top:14px}
+  /* the Keyboard tab: one row per command, its key on the right */
+  .key-tbl{display:flex;flex-direction:column;gap:4px;grid-column:1/-1;
+    max-height:46vh;overflow-y:auto;padding-right:4px}
+  .key-row{display:flex;align-items:center;gap:10px;background:var(--panel-2);
+    border:1px solid var(--line-soft);border-radius:7px;padding:7px 10px}
+  .key-name{flex:1;display:flex;flex-direction:column;line-height:1.35;min-width:0}
+  .key-name b{font-size:12.5px;font-weight:600}
+  .key-name span{font-size:10.5px;color:var(--muted-2)}
+  .key-btn{min-width:104px;text-align:center;background:var(--panel);color:var(--fg);
+    border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer;
+    font-family:var(--mono);font-size:11.5px}
+  .key-btn:hover{border-color:var(--g-blue)}
+  .key-btn.changed{border-color:var(--g-blue);color:var(--g-blue)}
+  .key-btn.rec{border-color:var(--g-yellow);color:var(--g-yellow);
+    background:rgba(251,188,5,.10)}
+  .key-clear{background:none;border:0;color:var(--muted-2);font-size:11px;
+    cursor:pointer;padding:4px 2px}
+  .key-clear:hover{color:var(--fg);text-decoration:underline}
   #boxsel{position:absolute;z-index:30;display:none;pointer-events:none;
     border:1px dashed var(--cyan);background:rgba(66,133,244,.09);border-radius:2px}
 
@@ -7791,6 +7809,62 @@ const CSG = (function(){
     try{ localStorage.setItem('fcad-ui-scale',String(v)); }catch(_){ }
   }
   setUiScale(uiScale());
+
+  /* ---- keyboard shortcuts ----------------------------------------------------
+     Rebindable, the way SolidWorks and FreeCAD both allow. Only commands are
+     offered: Escape, Delete, Enter, Backspace, the arrows, F1, F2 and Ctrl+Z/Y
+     stay put, because they are conventions rather than preferences and letting
+     someone rebind Escape is how you strand them in a modal state.
+
+     A combo is normalised to a string like '1', 'd' or 'ctrl+7'. Shift is only
+     part of it for non-character keys — otherwise Shift+D would read as a
+     different key from D, and pressing the dimension shortcut with caps lock on
+     would silently stop working. */
+  const KEY_DEF={line:'1',rect:'2',circle:'3',polygon:'4',spline:'5',dim:'d',
+                 fit:'f',iso:'ctrl+7',normal:'ctrl+8',ortho:'ctrl+5'};
+  const KEY_CMDS=[
+    {id:'line',   label:'Line',            where:'Sketch'},
+    {id:'rect',   label:'Rectangle',       where:'Sketch'},
+    {id:'circle', label:'Circle',          where:'Sketch'},
+    {id:'polygon',label:'Polygon',         where:'Sketch'},
+    {id:'spline', label:'Spline',          where:'Sketch'},
+    {id:'dim',    label:'Dimension',       where:'Sketch and drawing'},
+    {id:'fit',    label:'Fit to view',     where:'Model and assembly'},
+    {id:'iso',    label:'Isometric view',  where:'Anywhere'},
+    {id:'normal', label:'Normal to',       where:'Anywhere'},
+    {id:'ortho',  label:'Perspective / orthographic', where:'Anywhere'}
+  ];
+  let keyOverrides={};
+  try{ const s=JSON.parse(localStorage.getItem('fcad-keys')||'{}');
+       if(s&&typeof s==='object')keyOverrides=s; }catch(_){ }
+  function saveKeys(){ try{ localStorage.setItem('fcad-keys',JSON.stringify(keyOverrides)); }catch(_){ } }
+  /* An empty override means "this command has no key" — it must never compare
+     equal to anything, and '' would match comboOf's own empty return when a bare
+     modifier is pressed. */
+  const KEY_NONE='<none>';   // comboOf can never return this
+  function keyFor(id){
+    const v=keyOverrides[id];
+    if(v==='')return KEY_NONE;
+    return v!=null?v:KEY_DEF[id];
+  }
+  function comboOf(e){
+    const k=e.key;
+    if(!k||/^(Control|Shift|Alt|Meta)$/.test(k))return '';
+    const chr=k.length===1;
+    return (e.ctrlKey||e.metaKey?'ctrl+':'')+(e.altKey?'alt+':'')+
+           (e.shiftKey&&!chr?'shift+':'')+k.toLowerCase();
+  }
+  const COMBO_NAME={ctrl:'Ctrl',alt:'Alt',shift:'Shift',arrowup:'↑',arrowdown:'↓',
+                   arrowleft:'←',arrowright:'→',' ':'Space',escape:'Esc'};
+  function comboLabel(c){
+    if(!c||c===KEY_NONE)return 'none';
+    return c.split('+').map(p=>COMBO_NAME[p]||(p.length===1?p.toUpperCase():p.replace(/^./,m=>m.toUpperCase()))).join('+');
+  }
+  function keyOwner(combo,except){
+    for(const c of KEY_CMDS) if(c.id!==except&&keyFor(c.id)===combo)return c;
+    return null;
+  }
+
   const MENUS={
     sketch:{title:'Sketch menu',cmds:CMD, def:DEFAULT_LAYOUT,      key:'fcad-sketch-layout',layout:null,hidden:[]},
     model :{title:'Model menu', cmds:MCMD,def:DEFAULT_MODEL_LAYOUT,key:'fcad-model-layout', layout:null,hidden:[]},
@@ -7836,14 +7910,62 @@ const CSG = (function(){
     let dragId=null;
     function renderTabs(){
       tabs.innerHTML='';
-      Object.keys(MENUS).forEach(k=>{
+      Object.keys(MENUS).concat(['keys']).forEach(k=>{
         const b=document.createElement('button');
-        b.className='cust-tab'+(k===key?' on':''); b.textContent=MENUS[k].title;
+        b.className='cust-tab'+(k===key?' on':'');
+        b.textContent=(k==='keys')?'Keyboard':MENUS[k].title;
         b.addEventListener('click',()=>{key=k;renderTabs();render();});
         tabs.appendChild(b);
       });
     }
+    /* Shortcuts are edited live rather than into the `work` copy: they are not
+       part of a menu layout, and Cancel is about the layout you were dragging.
+       Same reasoning as the size control above it. */
+    let recording=null;
+    const hintEl=ov.querySelector('.cust-hint'), resetEl=ov.querySelector('#cust-reset');
+    const HINT_MENU=hintEl.textContent;
+    function renderKeys(){
+      hintEl.textContent='Click a shortcut and press the key you want. One key belongs to one '+
+        'command, so taking a key gives it up wherever it was. Esc cancels recording.';
+      resetEl.textContent='Reset all shortcuts';
+      cols.innerHTML='';
+      const tbl=document.createElement('div'); tbl.className='key-tbl';
+      for(const c of KEY_CMDS){
+        const row=document.createElement('div'); row.className='key-row';
+        const nm=document.createElement('div'); nm.className='key-name';
+        nm.innerHTML='<b>'+c.label+'</b><span>'+c.where+'</span>';
+        const btn=document.createElement('button');
+        btn.className='key-btn'+(recording===c.id?' rec':'')+
+          (keyOverrides[c.id]!=null?' changed':'');
+        btn.textContent=recording===c.id?'press a key…':comboLabel(keyFor(c.id));
+        btn.addEventListener('click',()=>{ recording=(recording===c.id?null:c.id); renderKeys(); });
+        const clr=document.createElement('button');
+        clr.className='key-clear'; clr.textContent='reset'; clr.title='back to the default';
+        clr.addEventListener('click',()=>{ delete keyOverrides[c.id]; saveKeys(); renderKeys(); });
+        row.appendChild(nm); row.appendChild(btn); row.appendChild(clr);
+        tbl.appendChild(row);
+      }
+      cols.appendChild(tbl);
+    }
+    /* Capture phase, so the key being recorded cannot also fire the command it
+       is bound to while you are rebinding it. */
+    function grabKey(e){
+      if(!recording)return;
+      if(e.key==='Escape'){ recording=null; renderKeys(); e.preventDefault(); e.stopPropagation(); return; }
+      const c=comboOf(e); if(!c)return;
+      e.preventDefault(); e.stopPropagation();
+      const clash=keyOwner(c,recording);
+      if(clash)delete keyOverrides[clash.id];      // one key, one command
+      if(c===KEY_DEF[recording])delete keyOverrides[recording];
+      else keyOverrides[recording]=c;
+      if(clash&&KEY_DEF[clash.id]===c)keyOverrides[clash.id]='';   // it cannot keep it either
+      recording=null; saveKeys(); renderKeys();
+    }
+    document.addEventListener('keydown',grabKey,true);
     function render(){
+      if(key==='keys')return renderKeys();
+      hintEl.textContent=HINT_MENU; resetEl.textContent='Reset this menu';
+      recording=null;
       const W=work[key], cmds=MENUS[key].cmds;
       cols.innerHTML='';
       W.secs.concat([{name:'Hidden',ids:W.hidden,hide:true}]).forEach(g=>{
@@ -7877,7 +7999,8 @@ const CSG = (function(){
       });
     }
     renderTabs(); render();
-    const close=()=>ov.remove();
+    // the recorder outlives the dialog unless it is taken off again
+    const close=()=>{ document.removeEventListener('keydown',grabKey,true); ov.remove(); };
     ov.querySelector('#cust-cancel').addEventListener('click',close);
     ov.querySelector('#cust-ok').addEventListener('click',()=>{
       Object.keys(MENUS).forEach(k=>{ MENUS[k].layout=cloneLayout(work[k].secs); saveMenu(MENUS[k]); });
@@ -7885,6 +8008,8 @@ const CSG = (function(){
       close(); setHint('Menu layout saved');
     });
     ov.querySelector('#cust-reset').addEventListener('click',()=>{
+      if(key==='keys'){ keyOverrides={}; saveKeys(); renderKeys();
+        setHint('Shortcuts back to their defaults'); return; }
       work[key]={secs:cloneLayout(MENUS[key].def),hidden:[]}; render();
     });
     ov.addEventListener('click',e=>{ if(e.target===ov)close(); });
@@ -9910,20 +10035,28 @@ const CSG = (function(){
 
   window.addEventListener('keydown',e=>{
     if(/INPUT|TEXTAREA/.test(e.target.tagName))return;
-    // undo/redo first — they work in every mode
+    const combo=comboOf(e);
+    // undo/redo first — they work in every mode, and are deliberately fixed
     if((e.ctrlKey||e.metaKey)&&!e.altKey){
       const k=e.key.toLowerCase();
       if(k==='z'&&!e.shiftKey){e.preventDefault();undo();return;}
       if(k==='y'||(k==='z'&&e.shiftKey)){e.preventDefault();redo();return;}
-      if(e.key==='7'){e.preventDefault();viewIso();return;}         // as in SolidWorks
-      if(e.key==='8'){e.preventDefault();viewNormalTo();return;}
-      if(e.key==='5'){e.preventDefault();setProjection(!orthoOn);return;}
+    }
+    /* The view commands are rebindable, so they are matched on the whole combo
+       rather than from inside a Ctrl-only branch — otherwise rebinding one to a
+       plain letter would leave it unreachable. Defaults are Ctrl+7/8/5, as in
+       SolidWorks. */
+    if(docMode!=='draw'){
+      if(combo===keyFor('iso')){e.preventDefault();viewIso();return;}
+      if(combo===keyFor('normal')){e.preventDefault();viewNormalTo();return;}
+      if(combo===keyFor('ortho')){e.preventDefault();setProjection(!orthoOn);return;}
     }
     if(e.key==='F1'){e.preventDefault();openManual();return;}
     if(e.key==='Escape'&&mateSel){e.preventDefault();cancelMate();return;}
     if(docMode==='draw'){
       // a sheet does not orbit, zoom or fit — those keys belong to the model
-      if(/^Arrow|^[fF]$/.test(e.key)||((e.ctrlKey||e.metaKey)&&/^[578]$/.test(e.key)))return;
+      if(/^Arrow/.test(e.key)||combo===keyFor('fit')||
+         combo===keyFor('iso')||combo===keyFor('normal')||combo===keyFor('ortho'))return;
     }
     if(!e.ctrlKey&&!e.metaKey&&!e.altKey&&/^Arrow(Left|Right|Up|Down)$/.test(e.key)){
       e.preventDefault();
@@ -9958,10 +10091,12 @@ const CSG = (function(){
         }
         else if((tool==='line'||tool==='cline'||tool==='spline')&&chain){ chain=null; redrawDraft(null); }
         else deleteSketchSel();}
-      else if(e.key==='1'){tool='line';dockSel();}else if(e.key==='2'){tool='rect';dockSel();}
-      else if(e.key==='3'){tool='circle';dockSel();}else if(e.key==='4'){tool='polygon';dockSel();}
-      else if(e.key==='5'){tool='spline';dockSel();}
-      else if(e.key.toLowerCase()==='d'){e.preventDefault();tool='dim';dockSel();setHint('Dimension: click a line, circle or rectangle edge, then type a value');}
+      else if(combo===keyFor('line')){tool='line';dockSel();}
+      else if(combo===keyFor('rect')){tool='rect';dockSel();}
+      else if(combo===keyFor('circle')){tool='circle';dockSel();}
+      else if(combo===keyFor('polygon')){tool='polygon';dockSel();}
+      else if(combo===keyFor('spline')){tool='spline';dockSel();}
+      else if(combo===keyFor('dim')){e.preventDefault();tool='dim';dockSel();setHint('Dimension: click a line, circle or rectangle edge, then type a value');}
     } else if(docMode==='draw'){
       if(e.key==='Escape'){ if(!cancelDrawDim())setDocMode(drawReturn); }
       else if(e.key==='Delete'||e.key==='Backspace'){
@@ -9971,14 +10106,14 @@ const CSG = (function(){
           renderSheet(); setHint('Dimension removed');
         } else { const v=draw.views.find(x=>x.id===drawSel); if(v)removeDrawView(v); }
       }
-      else if(e.key.toLowerCase()==='d')startDrawDim();
+      else if(combo===keyFor('dim'))startDrawDim();
     } else if(docMode==='asm'){
       if((e.key==='Delete'||e.key==='Backspace')&&asmSel){const c2=asm.components.find(x=>x.id===asmSel);if(c2)removeComponent(c2);}
-      else if(e.key.toLowerCase()==='f')fitAll();
+      else if(combo===keyFor('fit'))fitAll();
     } else {
       if((e.key==='Delete'||e.key==='Backspace')&&selId){deleteFeature(selId);}
       else if(e.key==='F2'&&selId){const f=features.find(x=>x.id===selId); if(f){e.preventDefault();startRename(f);}}
-      else if(e.key.toLowerCase()==='f')fitAll();
+      else if(combo===keyFor('fit'))fitAll();
     }
   });
   // the Pointer points; every drawing tool aims
@@ -10042,6 +10177,7 @@ const CSG = (function(){
     dimHit, dimResolve, dimApply, polyCorners, cornerAt, applyCorner,
     get cornerSel(){ return cornerSel; }, set cornerSel(v){ cornerSel=v; },
     ensureSketchProps, setCornerTreatment, setCornerSize,
+    openCustomise, keyFor, comboOf, KEY_CMDS,
     get docMode(){ return docMode; },
     get asm(){ return asm; },
     get asmShapes(){ return asmShapes; },
