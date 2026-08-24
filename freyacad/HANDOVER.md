@@ -348,6 +348,26 @@ the overlay iframe.
     leaves a dim pointing at a side that no longer exists and it would otherwise go on
     spending a degree of freedom.
 
+32. **Per-corner fillets are a third list beside `dims` and `cons`, and must be reindexed
+    like them.** `sk.corners` holds `{ent, idx, kind, r}`; `applyCorner(sk, L, closed, ei)`
+    takes the entity index so a record can be found, and `cornerPoly` asks per corner what it
+    gets. The sketch-wide `fillet`/`chamfer` is the default and a record overrides it —
+    including `kind:'none'`, which is the only way to say "this one stays square" against a
+    sketch-wide fillet. Absence of a record means inherit, so a sketch with no exceptions
+    carries no `corners` at all.
+    Three things to keep true: `dropDimsFor` and `shiftPointRefs` must move corner records the
+    same way they move dims, or a record ends up describing whichever entity or point slid
+    into the vacated slot; every sketch record handed to the kernel has to copy `corners`
+    across (there are three such copies — two in `applyFeature`, one in the contour picker),
+    and forgetting one shows up as the preview and the solid disagreeing; and
+    `entityDisplayPath` builds a one-entity sketch to draw a rect or polygon, so it has to
+    renumber that entity's records to index 0 or they are not found.
+    A stitched loop spans several entities and has no single `ei`, so it passes null and takes
+    the sketch-wide setting — a real limit, worth lifting if anyone asks.
+    Note the rounding arc is still tessellated into ~14 segments, as it always was; now that
+    `wireFromSegs` can take real curves, a sketch fillet could become a true arc edge, which
+    would be a small, contained improvement.
+
 ## Biggest thing still missing
 
 **A real constraint solver *for sketches*.** Dimensions are applied one at a time, so

@@ -280,9 +280,24 @@ solid. The camera flies round to look straight at it and the drawing tools appea
       drop points on them and <a href="#dims">dimension to them</a>.</li>
   <li><b>The status chip</b> — a live count of what's still loose.</li>
 </ul>
-<p>To round or bevel every corner of the profile at once, right-click and pick
+<p>To round or bevel <b>every</b> corner of the profile at once, right-click and pick
 <b>Sketch corners…</b> (with the other sketch entity tools) — a fillet/chamfer control
 appears for just that job, and stays out of the way otherwise.</p>
+<p>To treat <b>one</b> corner on its own, click it with the pointer. A ring marks the corner
+you picked and the panel gains a <b>This corner</b> section above the sketch-wide one:</p>
+<table>
+  <tr><th>Choice</th><th>What it does</th></tr>
+  <tr><td><b>As sketch</b></td><td>The default — this corner follows whatever the whole
+    sketch is set to. Picking it again removes the exception.</td></tr>
+  <tr><td><b>Square</b></td><td>Leaves this corner sharp <em>even though</em> the sketch is
+    set to round or bevel. This is the one you can't express any other way.</td></tr>
+  <tr><td><b>Fillet</b> / <b>Bevel</b></td><td>This corner gets its own radius or bevel,
+    whatever the rest of the sketch does. A size box appears under it.</td></tr>
+</table>
+<p>So a plate with three rounded corners and one square one is a sketch-wide fillet plus one
+corner set to Square, and a plate where every corner differs is four separate settings. The
+ends of an open run are not corners and are never offered. A corner setting travels with its
+point: move the point and it follows, delete the point or the shape and it goes too.</p>
 <h3>The right-click menu, and rearranging it</h3>
 <p>Right-clicking in a sketch gives four groups: <b>Sketch</b> (Finish, Finish + extrude,
 Cancel) first, since finishing is the commonest reason to open it; then <b>Sketch

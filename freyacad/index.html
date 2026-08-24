@@ -295,6 +295,11 @@ if(!window.THREE){
   .props-head{display:flex;align-items:center;gap:9px;padding:12px 14px;border-bottom:1px solid var(--line-soft);background:linear-gradient(180deg,rgba(66,133,244,.08),transparent)}
   .props-head .fi{color:var(--g-blue);text-shadow:0 0 8px var(--g-blue)}
   .props-head h3{font-size:13px;font-weight:600;flex:1}
+  /* a quiet divider between "this corner" and the sketch-wide default, so it is
+     obvious which control the number under it belongs to */
+  .props-sub{font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--muted-2);padding:12px 14px 4px;border-top:1px solid var(--line-soft);margin-top:6px}
+  .props-sub:first-child{border-top:0;margin-top:0}
   .props-body{padding:13px 14px;display:flex;flex-direction:column;gap:13px;max-height:62vh;overflow-y:auto}
   .props-foot{display:flex;gap:8px;padding:11px 14px;border-top:1px solid var(--line-soft);background:#0c1015}
   .props-foot button{flex:1;justify-content:center}
@@ -1557,16 +1562,22 @@ const CSG = (function(){
      is about closed profiles for the kernel. Open polylines have no loop but
      must still be drawn, and a corner treatment that fails on a short segment
      must not take the whole entity off screen with it. */
-  function entityDisplayPath(sk,e){
+  function entityDisplayPath(sk,e,ei){
+    if(ei==null)ei=sk.entities?sk.entities.indexOf(e):null;
     try{
       // a spline is drawn as its curve; corner treatment is for corners, and a
       // spline hasn't got any
       if(isSpline(e))return {pts:splinePts(e),closed:!!e.closed};
       if(e.type==='poly'){
-        const pts=applyCorner(sk,e.pts,!!e.closed);
+        const pts=applyCorner(sk,e.pts,!!e.closed,ei);
         if(pts&&pts.length>=2)return {pts:pts,closed:!!e.closed};
       } else {
-        const L=entityLoops(Object.assign({},sk,{entities:[e]}))[0];
+        /* One entity in a sketch of its own — so its corner records have to be
+           renumbered to entity 0 or they would not be found. */
+        const solo=Object.assign({},sk,{entities:[e]});
+        if(sk.corners&&ei!=null)
+          solo.corners=sk.corners.filter(c=>c.ent===ei).map(c=>({ent:0,idx:c.idx,kind:c.kind,r:c.r}));
+        const L=entityLoops(solo)[0];
         if(L&&L.length>=2)return {pts:L,closed:true};
       }
     }catch(_){ /* fall through to the raw points */ }
@@ -1796,42 +1807,44 @@ const CSG = (function(){
   function polyArea(p){let a=0;for(let i=0;i<p.length;i++){const q=p[(i+1)%p.length];a+=p[i].x*q.y-q.x*p[i].y;}return a/2;}
   function pointInPoly(pt,poly){let c=false;for(let i=0,j=poly.length-1;i<poly.length;j=i++){const xi=poly[i].x,yi=poly[i].y,xj=poly[j].x,yj=poly[j].y;if(((yi>pt.y)!==(yj>pt.y))&&(pt.x<(xj-xi)*(pt.y-yi)/(yj-yi)+xi))c=!c;}return c;}
 
-  function filletPoly(pts,r,closed){
-    if(r<=0||pts.length<3)return pts.slice();
-    const n=pts.length,out=[];
-    for(let i=0;i<n;i++){
-      if(!closed&&(i===0||i===n-1)){out.push(pts[i]);continue;}
-      const A=pts[(i-1+n)%n],B=pts[i],C=pts[(i+1)%n];
-      const v1=[A.x-B.x,A.y-B.y],v2=[C.x-B.x,C.y-B.y];
-      const l1=Math.hypot(v1[0],v1[1]),l2=Math.hypot(v2[0],v2[1]);
-      if(l1<1e-6||l2<1e-6){out.push(B);continue;}
-      const u1=[v1[0]/l1,v1[1]/l1],u2=[v2[0]/l2,v2[1]/l2];
-      let ang=Math.acos(Math.max(-1,Math.min(1,u1[0]*u2[0]+u1[1]*u2[1])));
-      if(ang<1e-3||Math.abs(ang-Math.PI)<1e-3){out.push(B);continue;}
-      const t=Math.min(r/Math.tan(ang/2),l1*0.49,l2*0.49);
-      const rr=t*Math.tan(ang/2);
-      const p1=[B.x+u1[0]*t,B.y+u1[1]*t],p2=[B.x+u2[0]*t,B.y+u2[1]*t];
-      let bis=[u1[0]+u2[0],u1[1]+u2[1]];const bl=Math.hypot(bis[0],bis[1])||1;bis=[bis[0]/bl,bis[1]/bl];
-      const cd=rr/Math.sin(ang/2),C0=[B.x+bis[0]*cd,B.y+bis[1]*cd];
-      let a1=Math.atan2(p1[1]-C0[1],p1[0]-C0[0]),a2=Math.atan2(p2[1]-C0[1],p2[0]-C0[0]);
-      let da=a2-a1;while(da>Math.PI)da-=2*Math.PI;while(da<-Math.PI)da+=2*Math.PI;
-      const segs=Math.max(2,Math.ceil(Math.abs(da)/(Math.PI/14)));
-      for(let s=0;s<=segs;s++){const a=a1+da*s/segs;out.push({x:C0[0]+rr*Math.cos(a),y:C0[1]+rr*Math.sin(a)});}
+  /* What one corner turns into: the points of a rounding arc, the two points of
+     a bevel, or the corner itself left alone. Split out of the old whole-loop
+     filletPoly/chamferPoly so that every corner can carry its own treatment —
+     three rounded corners and a square one on the same plate, which is how
+     SolidWorks and FreeCAD both do it. */
+  function cornerPts(A,B,C,spec){
+    if(!spec||!(spec.r>0))return [B];
+    const v1=[A.x-B.x,A.y-B.y],v2=[C.x-B.x,C.y-B.y];
+    const l1=Math.hypot(v1[0],v1[1]),l2=Math.hypot(v2[0],v2[1]);
+    if(l1<1e-6||l2<1e-6)return [B];
+    if(spec.kind==='chamfer'){
+      const t1=Math.min(spec.r,l1*0.49),t2=Math.min(spec.r,l2*0.49);
+      return [{x:B.x+v1[0]/l1*t1,y:B.y+v1[1]/l1*t1},
+              {x:B.x+v2[0]/l2*t2,y:B.y+v2[1]/l2*t2}];
     }
+    const u1=[v1[0]/l1,v1[1]/l1],u2=[v2[0]/l2,v2[1]/l2];
+    const ang=Math.acos(Math.max(-1,Math.min(1,u1[0]*u2[0]+u1[1]*u2[1])));
+    if(ang<1e-3||Math.abs(ang-Math.PI)<1e-3)return [B];
+    const t=Math.min(spec.r/Math.tan(ang/2),l1*0.49,l2*0.49);
+    const rr=t*Math.tan(ang/2);
+    const p1=[B.x+u1[0]*t,B.y+u1[1]*t],p2=[B.x+u2[0]*t,B.y+u2[1]*t];
+    let bis=[u1[0]+u2[0],u1[1]+u2[1]];const bl=Math.hypot(bis[0],bis[1])||1;bis=[bis[0]/bl,bis[1]/bl];
+    const cd=rr/Math.sin(ang/2),C0=[B.x+bis[0]*cd,B.y+bis[1]*cd];
+    let a1=Math.atan2(p1[1]-C0[1],p1[0]-C0[0]),a2=Math.atan2(p2[1]-C0[1],p2[0]-C0[0]);
+    let da=a2-a1;while(da>Math.PI)da-=2*Math.PI;while(da<-Math.PI)da+=2*Math.PI;
+    const segs=Math.max(2,Math.ceil(Math.abs(da)/(Math.PI/14)));
+    const out=[];
+    for(let s=0;s<=segs;s++){const a=a1+da*s/segs;out.push({x:C0[0]+rr*Math.cos(a),y:C0[1]+rr*Math.sin(a)});}
     return out;
   }
-  function chamferPoly(pts,d,closed){
-    if(d<=0||pts.length<3)return pts.slice();
-    const n=pts.length,out=[];
+  // `at(i)` decides what corner i gets; the ends of an open run are never touched
+  function cornerPoly(pts,closed,at){
+    const n=pts.length; if(n<3)return pts.slice();
+    const out=[];
     for(let i=0;i<n;i++){
       if(!closed&&(i===0||i===n-1)){out.push(pts[i]);continue;}
-      const A=pts[(i-1+n)%n],B=pts[i],C=pts[(i+1)%n];
-      const v1=[A.x-B.x,A.y-B.y],v2=[C.x-B.x,C.y-B.y];
-      const l1=Math.hypot(v1[0],v1[1]),l2=Math.hypot(v2[0],v2[1]);
-      if(l1<1e-6||l2<1e-6){out.push(B);continue;}
-      const t1=Math.min(d,l1*0.49),t2=Math.min(d,l2*0.49);
-      out.push({x:B.x+v1[0]/l1*t1,y:B.y+v1[1]/l1*t1});
-      out.push({x:B.x+v2[0]/l2*t2,y:B.y+v2[1]/l2*t2});
+      const seg=cornerPts(pts[(i-1+n)%n],pts[i],pts[(i+1)%n],at(i));
+      for(const q of seg)out.push(q);
     }
     return out;
   }
@@ -1921,23 +1934,22 @@ const CSG = (function(){
   }
   function entityLoops(sk){
     const loops=[];
-    for(const e of sk.entities){
+    sk.entities.forEach((e,ei)=>{
       if(e.type==='circle'){
         const segs=Math.min(180,Math.max(72,Math.ceil(e.r*16))),L=[];
         for(let i=0;i<segs;i++){const a=i/segs*Math.PI*2;L.push({x:e.c.x+e.r*Math.cos(a),y:e.c.y+e.r*Math.sin(a)});}
         loops.push(L);
       } else if(e.type==='polygon'){
-        const L=[];for(let i=0;i<e.sides;i++){const a=e.rot+i/e.sides*Math.PI*2;L.push({x:e.c.x+e.r*Math.cos(a),y:e.c.y+e.r*Math.sin(a)});}
-        loops.push(applyCorner(sk,L,true));
+        loops.push(applyCorner(sk,polyCorners(e),true,ei));
       } else if(e.type==='rect'){
         const L=[{x:e.a.x,y:e.a.y},{x:e.b.x,y:e.a.y},{x:e.b.x,y:e.b.y},{x:e.a.x,y:e.b.y}];
-        loops.push(applyCorner(sk,L,true));
+        loops.push(applyCorner(sk,L,true,ei));
       } else if(isSpline(e) && e.closed && e.pts.length>=3){
         loops.push(splinePts(e));            // the curve itself is the profile
       } else if(e.type==='poly' && e.closed && e.pts.length>=3){
-        loops.push(applyCorner(sk,e.pts,true));
+        loops.push(applyCorner(sk,e.pts,true,ei));
       }
-    }
+    });
     // and the profiles that only exist because two runs meet at both ends
     for(const st of stitchLoops(sk))
       loops.push(st.curved?st.pts:applyCorner(sk,st.pts,true));
@@ -2015,10 +2027,35 @@ const CSG = (function(){
     const s=spans[spans.length-1];                 // the last point of an open run
     return {x:3*(s[3].x-s[2].x),y:3*(s[3].y-s[2].y)};
   }
-  function applyCorner(sk,L,closed){
-    if(sk.fillet>0)return filletPoly(L,sk.fillet,closed);
-    if(sk.chamfer>0)return chamferPoly(L,sk.chamfer,closed);
-    return L.slice();
+  /* The sketch-wide setting is the default; `sk.corners` overrides it corner by
+     corner. A record with kind 'none' is how you say "leave this one square"
+     against a sketch-wide fillet — without it there would be no way to express
+     the exception, only the rule. */
+  function sketchDefaultCorner(sk){
+    if(sk.fillet>0)return {kind:'fillet',r:sk.fillet};
+    if(sk.chamfer>0)return {kind:'chamfer',r:sk.chamfer};
+    return null;
+  }
+  function cornerOverride(sk,ei,idx){
+    if(!sk.corners||ei==null)return undefined;
+    for(const c of sk.corners) if(c.ent===ei&&c.idx===idx)
+      return (c.kind==='none')?null:{kind:c.kind,r:c.r};
+    return undefined;
+  }
+  function cornerSpec(sk,ei,idx){
+    const o=cornerOverride(sk,ei,idx);
+    return (o===undefined)?sketchDefaultCorner(sk):o;
+  }
+  /* `ei` is the entity the points came from, so a per-corner setting can be
+     looked up. A stitched loop spans several entities and has no single one, so
+     it passes null and takes the sketch-wide setting. */
+  function applyCorner(sk,L,closed,ei){
+    const anyPer=!!(sk.corners&&sk.corners.length&&ei!=null);
+    if(!anyPer){
+      const g=sketchDefaultCorner(sk);
+      return g?cornerPoly(L,closed,()=>g):L.slice();
+    }
+    return cornerPoly(L,closed,i=>cornerSpec(sk,ei,i));
   }
   function ccw(p){return polyArea(p)>0?p:p.slice().reverse();}
   function cw(p){return polyArea(p)<0?p:p.slice().reverse();}
@@ -2314,8 +2351,8 @@ const CSG = (function(){
   OCK.sketchLoops = function(sk, zoff){
     const frame = sk.frame;
     const items = [];
-    for(const e of sk.entities){
-      if(e.construction) continue;      // reference geometry: never becomes a face
+    sk.entities.forEach((e, ei)=>{
+      if(e.construction) return;        // reference geometry: never becomes a face
       if(e.type === 'circle'){
         const segs = 24, poly = [];
         for(let i = 0; i < segs; i++){ const a = i/segs*2*Math.PI; poly.push({x: e.c.x + e.r*Math.cos(a), y: e.c.y + e.r*Math.sin(a)}); }
@@ -2323,7 +2360,7 @@ const CSG = (function(){
       } else {
         let L = null, curved = false, segs = null;
         if(e.type === 'polygon'){
-          L = []; for(let i = 0; i < e.sides; i++){ const a = e.rot + i/e.sides*Math.PI*2; L.push({x: e.c.x + e.r*Math.cos(a), y: e.c.y + e.r*Math.sin(a)}); }
+          L = polyCorners(e);
         } else if(e.type === 'rect'){
           L = [{x:e.a.x,y:e.a.y},{x:e.b.x,y:e.a.y},{x:e.b.x,y:e.b.y},{x:e.a.x,y:e.b.y}];
         } else if(isSpline(e) && e.closed && e.pts.length >= 3){
@@ -2332,15 +2369,15 @@ const CSG = (function(){
         } else if(e.type === 'poly' && e.closed && e.pts.length >= 3){
           L = e.pts;
         }
-        if(!L) continue;
-        if(!curved) L = applyCorner(sk, L, true);
+        if(!L) return;
+        if(!curved) L = applyCorner(sk, L, true, ei);
         const SG = segs;                      // a corner treatment would invalidate them
         items.push({ poly: L, area: Math.abs(polyArea(L)),
           mk: (hole)=> SG
             ? OCK.wireFromSegs(orientSegs(SG, L, hole), frame, zoff)
             : OCK.wireFromPts(hole ? cw(L) : ccw(L), frame, zoff) });
       }
-    }
+    });
     /* A profile stitched from several runs is a profile like any other once it
        is closed — the kernel is handed the same kind of wire and never learns
        it came from two entities rather than one. */
@@ -3353,7 +3390,7 @@ const CSG = (function(){
     }
     if(f.type==='extrude'||f.type==='cut'){
       const sd=sketchData[f.sketchId]; if(!sd)throw new Error('needs a sketch');
-      const sk={entities:sd.sk.entities,fillet:sd.sk.fillet,chamfer:sd.sk.chamfer,frame:sd.frame};
+      const sk={entities:sd.sk.entities,fillet:sd.sk.fillet,chamfer:sd.sk.chamfer,corners:sd.sk.corners,frame:sd.frame};
       if(f.type==='extrude'){
         const shp=OCK.extrude(sk,f.depth,{symmetric:f.symmetric,flip:f.flip,contours:f.contours});
         if(f.merge && resultShapes.length) pendOp('merge',shp,f);
@@ -3368,7 +3405,7 @@ const CSG = (function(){
     }
     if(f.type==='revolve'){
       const sd=sketchData[f.sketchId]; if(!sd)throw new Error('needs a sketch');
-      const sk={entities:sd.sk.entities,fillet:sd.sk.fillet,chamfer:sd.sk.chamfer,frame:sd.frame};
+      const sk={entities:sd.sk.entities,fillet:sd.sk.fillet,chamfer:sd.sk.chamfer,corners:sd.sk.corners,frame:sd.frame};
       const shp=OCK.revolve(sk,f.angle,resolveAxis(f.axis),f.contours);
       if(f.operation==='cut'){ if(!resultShapes.length)throw new Error('nothing to cut'); pendOp('cut',shp,f); }
       else if(f.merge && resultShapes.length) pendOp('merge',shp,f);
@@ -3913,6 +3950,37 @@ const CSG = (function(){
   let dimPick=null;                          // first half of a two-click dimension
   let sketchCursor=null;                     // last cursor position in sketch UV
   let sketchSel=null;                        // {entIdx,seg?} picked with the Pointer
+  let cornerSel=null;                        // {ent,idx} — one corner, for its own fillet
+  /* The corner under the cursor, if there is one. Only corners that can
+     actually be treated are offered: the two ends of an open run are not
+     corners at all, and a spline hasn't got any. */
+  function cornerAt(p){
+    if(!editing)return null;
+    const tol=Math.max(0.5,controls.sph.radius*0.035);
+    let best=null,bd=tol;
+    editing.entities.forEach((e,ei)=>{
+      let L=null;
+      if(e.type==='rect')L=[{x:e.a.x,y:e.a.y},{x:e.b.x,y:e.a.y},{x:e.b.x,y:e.b.y},{x:e.a.x,y:e.b.y}];
+      else if(e.type==='polygon')L=polyCorners(e);
+      else if(e.type==='poly'&&!e.spline&&e.pts.length>=3)L=e.pts;
+      if(!L)return;
+      for(let i=0;i<L.length;i++){
+        if(e.type==='poly'&&!e.closed&&(i===0||i===L.length-1))continue;
+        const d=Math.hypot(L[i].x-p.x,L[i].y-p.y);
+        if(d<bd){bd=d;best={ent:ei,idx:i};}
+      }
+    });
+    return best;
+  }
+  // where a selected corner actually sits, for drawing a marker on it
+  function cornerPoint(sk,ref){
+    const e=sk.entities[ref.ent]; if(!e)return null;
+    let L=null;
+    if(e.type==='rect')L=[{x:e.a.x,y:e.a.y},{x:e.b.x,y:e.a.y},{x:e.b.x,y:e.b.y},{x:e.a.x,y:e.b.y}];
+    else if(e.type==='polygon')L=polyCorners(e);
+    else if(e.type==='poly')L=e.pts;
+    return (L&&L[ref.idx])?L[ref.idx]:null;
+  }
   let splineRig=true;                        // show a selected spline's control polygon
   let pendingDim=null;                       // dimension awaiting its value, drawn greyed
 
@@ -3922,7 +3990,7 @@ const CSG = (function(){
   function syncRotateGate(){
     controls.enableRotate = (mode!=='sketch') ? true : (tool==='select');
   }
-  function clearSketchSel(){ if(sketchSel||boxSel){ sketchSel=null; boxSel=null; drawSketchSel(); } }
+  function clearSketchSel(){ if(sketchSel||boxSel||cornerSel){ sketchSel=null; boxSel=null; cornerSel=null; drawSketchSel(); } }
   /* ---- rubber-band selection ----------------------------------------------
      Drag a box over empty space with the Pointer to take several things at
      once, then Delete (or pick the eraser) to remove the lot. Window select,
@@ -4000,6 +4068,17 @@ const CSG = (function(){
           new THREE.LineBasicMaterial({color:0x35d4e6,depthTest:false,transparent:true,opacity:1}));
         bl.renderOrder=10; selGroupSk.add(bl);
       }
+    }
+    if(cornerSel){                    // a ring on the corner whose settings are showing
+      const q=cornerPoint(editing,cornerSel);
+      if(q){
+        const R=Math.max(0.35,controls.sph.radius*0.022), pts=[];
+        for(let i=0;i<=24;i++){ const a=i/24*Math.PI*2;
+          pts.push(worldFromSketch(editing.frame,q.x+R*Math.cos(a),q.y+R*Math.sin(a))); }
+        const ring=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+          new THREE.LineBasicMaterial({color:0xFBBC05,depthTest:false,transparent:true,opacity:1}));
+        ring.renderOrder=12; selGroupSk.add(ring);
+      } else cornerSel=null;          // its entity or point went away
     }
     /* SolidWorks marks a mirror line with little ticks; ours does the same
        while Mirror is picking or Dynamic mirror is armed, so the axis in force
@@ -4678,6 +4757,17 @@ const CSG = (function(){
 
   function sketchClick(p){
     if(tool==='select'){                     // pick a line to act on; empty space clears
+      /* A corner wins the pick over the line it sits on — the lines either side
+         of it are always reachable a little further along, whereas the corner
+         is only ever at this one spot. */
+      const c=cornerAt(p);
+      if(c){
+        cornerSel=c; sketchSel=null;
+        drawSketchSel(); ensureSketchProps();
+        setHint('Corner selected — give it its own fillet or bevel in the panel');
+        return;
+      }
+      cornerSel=null;
       const hit=dimHit(p);
       sketchSel=(hit&&hit.entIdx!=null)?{entIdx:hit.entIdx,seg:hit.kind==='seg'?hit.seg:null}:null;
       drawSketchSel(); ensureSketchProps();
@@ -4925,6 +5015,12 @@ const CSG = (function(){
         else if(c.ent>ei)c.ent+=delta;
       });
     }
+    // and so do per-corner fillets and bevels, or they would end up describing
+    // whichever entity happened to slide into the vacated slot
+    if(sk.corners){
+      sk.corners=sk.corners.filter(c=>c.ent!==ei);
+      sk.corners.forEach(c=>{ if(c.ent>ei)c.ent+=delta; });
+    }
   }
   // is a dimension label right under this sketch point? (box-select must not
   // start on top of one — dragging a dimension repositions its leader)
@@ -4976,6 +5072,11 @@ const CSG = (function(){
     }
     for(const c of sk.cons||[]){ bump(c.a); bump(c.b);
       if(c.entIdx===ei&&c.seg>=from)c.seg+=delta; }
+    if(sk.corners){
+      // a removed point takes its corner treatment with it
+      if(delta<0) sk.corners=sk.corners.filter(c=>!(c.ent===ei&&c.idx===from));
+      sk.corners.forEach(c=>{ if(c.ent===ei&&c.idx>=from)c.idx+=delta; });
+    }
   }
   /* The handle array has to be exactly as long as the point list before any
      splice: a sparse array splices at its END when the index is past it, which
@@ -6731,7 +6832,7 @@ const CSG = (function(){
     if(!['extrude','cut','revolve','rcut'].includes(f.type))return;
     const sd=sketchData[f.sketchId]; if(!sd)return;
     let regs; try{ regs=OCK.regions({entities:sd.sk.entities,fillet:sd.sk.fillet,
-      chamfer:sd.sk.chamfer,frame:sd.frame},0); }catch(_){ return; }
+      chamfer:sd.sk.chamfer,corners:sd.sk.corners,frame:sd.frame},0); }catch(_){ return; }
     if(!regs||regs.length<2)return;              // one region: nothing to choose
     const lab=document.createElement('div');
     lab.className='note'; lab.style.marginBottom='4px';
@@ -6866,7 +6967,8 @@ const CSG = (function(){
     const wantSides=(tool==='polygon');
     const selEnt=(sketchSel&&f.entities[sketchSel.entIdx])||null;
     const wantConstr=!!selEnt;
-    if(!wantCorners&&!wantSides&&!wantConstr){ if(propsFeat===f)closeProps(); return; }
+    const wantOne=!!(cornerSel&&f.entities[cornerSel.ent]);
+    if(!wantCorners&&!wantSides&&!wantConstr&&!wantOne){ if(propsFeat===f)closeProps(); return; }
     closeProps();propsFeat=f;
     const el=document.createElement('aside');el.className='props';
     el.innerHTML=`<div class="props-head">${icHTML('sketch')}<h3>${f.name}</h3></div><div class="props-body" id="pbody"></div>`;
@@ -6878,7 +6980,26 @@ const CSG = (function(){
     if(wantSides){
       body.appendChild(fieldNumber('Polygon sides',polygonSides,1,3,20,'',v=>{polygonSides=Math.max(3,Math.round(v));}));
     }
-    if(wantCorners){
+    if(wantOne){
+      /* This corner only. It reads "as the sketch does" until you say otherwise,
+         and 'Square' is a real choice rather than the absence of one — that is
+         what lets a single corner stay sharp against a sketch-wide fillet. */
+      const cur=cornerOverride(f,cornerSel.ent,cornerSel.idx);
+      const now=(cur===undefined)?'inherit':(cur===null?'none':cur.kind);
+      const lab=document.createElement('div');
+      lab.className='props-sub'; lab.textContent='This corner';
+      body.appendChild(lab);
+      body.appendChild(fieldSeg('Treatment',
+        [{l:'As sketch',v:'inherit'},{l:'Square',v:'none'},{l:'Fillet',v:'fillet'},{l:'Bevel',v:'chamfer'}],
+        now, v=>{ setCornerTreatment(cornerSel,v); rebuild(); ensureSketchProps(); }));
+      if(cur&&cur.r>0)
+        body.appendChild(fieldNumber(cur.kind==='fillet'?'Radius':'Bevel size',cur.r,0.25,0.01,null,'units',
+          v=>{ setCornerSize(cornerSel,v); rebuild(); }));
+      const rest=document.createElement('div');
+      rest.className='props-sub'; rest.textContent='Whole sketch';
+      body.appendChild(rest);
+    }
+    if(wantCorners||wantOne){
       const mode=fieldSeg('Corner treatment',[{l:'None',v:'none'},{l:'Fillet',v:'fillet'},{l:'Chamfer',v:'chamfer'}],f.fillet>0?'fillet':f.chamfer>0?'chamfer':'none',v=>{
         if(v==='none'){f.fillet=0;f.chamfer=0;} else if(v==='fillet'){f.chamfer=0;if(f.fillet<=0)f.fillet=0.5;} else {f.fillet=0;if(f.chamfer<=0)f.chamfer=0.5;}
         rebuild();redrawSketchPropsValue();
@@ -6887,6 +7008,25 @@ const CSG = (function(){
       const valWrap=document.createElement('div');valWrap.id='corner-val';body.appendChild(valWrap);
       redrawSketchPropsValue();
     }
+  }
+  /* Per-corner records live beside dims and constraints and are reindexed with
+     them (dropDimsFor, shiftPointRefs). 'inherit' is stored as the absence of a
+     record, so a sketch with no exceptions carries no baggage. */
+  function setCornerTreatment(ref,kind){
+    const f=editing; if(!f)return;
+    pushUndo('corner treatment');
+    if(!f.corners)f.corners=[];
+    const at=f.corners.findIndex(c=>c.ent===ref.ent&&c.idx===ref.idx);
+    if(kind==='inherit'){ if(at>=0)f.corners.splice(at,1); if(!f.corners.length)delete f.corners; return; }
+    const prev=(at>=0)?f.corners[at]:null;
+    const r=(prev&&prev.r>0)?prev.r:(f.fillet>0?f.fillet:(f.chamfer>0?f.chamfer:0.5));
+    const rec={ent:ref.ent,idx:ref.idx,kind:kind,r:(kind==='none'?0:r)};
+    if(at>=0)f.corners[at]=rec; else f.corners.push(rec);
+  }
+  function setCornerSize(ref,v){
+    const f=editing; if(!f||!f.corners)return;
+    const c=f.corners.find(c=>c.ent===ref.ent&&c.idx===ref.idx);
+    if(c)c.r=Math.max(0.001,v);
   }
   function redrawSketchPropsValue(){
     const w=$('corner-val');if(!w)return;w.innerHTML='';const f=editing;if(!f)return;
@@ -9899,7 +10039,9 @@ const CSG = (function(){
     get camera(){return camera}, setProjection, get orthoOn(){return orthoOn}, controls, fitAll,
     OCK, featureEdges,
     get checkpoints(){ return checkpoints.map(c=>({i:c.i, bodies:c.shapes.length, key:c.key})); },
-    dimHit, dimResolve, dimApply, polyCorners,
+    dimHit, dimResolve, dimApply, polyCorners, cornerAt, applyCorner,
+    get cornerSel(){ return cornerSel; }, set cornerSel(v){ cornerSel=v; },
+    ensureSketchProps, setCornerTreatment, setCornerSize,
     get docMode(){ return docMode; },
     get asm(){ return asm; },
     get asmShapes(){ return asmShapes; },
