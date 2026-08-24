@@ -46,6 +46,13 @@
     || /Android|iPhone|iPod|Windows Phone|BlackBerry|Mobi/i.test(ua)
     || /iPad/.test(ua)
     || (/Macintosh|Mac OS/.test(ua) && navigator.maxTouchPoints > 1);
+  /* A tablet is not a phone. An iPad (or any touch device with a real screen)
+     drives the app fine now that the canvas speaks touch — one finger orbits,
+     two fingers pan and zoom, a long press right-clicks, and an Apple Pencil
+     is a precision pointer. The gate keeps only the genuinely thumb-sized out:
+     the shortest screen side under ~600 CSS px is a phone, and iPad Mini's is
+     744. */
+  if(mobile && Math.min(screen.width||0, screen.height||0) >= 600) mobile = false;
   if(mobile){
     window.__MOBILE_GATE = true;
     document.documentElement.className += ' mobile-gate';
@@ -162,6 +169,17 @@ if(!window.THREE){
      z-index above the canvas, an opaque desk behind it, and the canvas itself
      hidden while the mode is open. Half-covering it was what left a grid
      floating over the drawing. */
+  /* Touch. The canvas owns every gesture that lands on it — without
+     touch-action:none the browser answers a pinch with page zoom and never
+     sends the pointermoves; the callout/user-select pair stops iPadOS opening
+     a text-selection bubble on the long press that is our right-click. The
+     Delete button exists because a tablet has no Delete key; .touch is stamped
+     on <html> at boot on coarse-pointer devices. */
+  .viewport canvas,#navcube,#sheet{touch-action:none;-webkit-touch-callout:none;
+    -webkit-user-select:none;user-select:none}
+  .toolbar button,.dock button,.menu,.tree-col{touch-action:manipulation}
+  #btn-del{display:none}
+  html.touch #btn-del{display:inline-flex}
   .sheet-wrap{position:absolute;inset:0;overflow:auto;background:#11161c;display:none;
     z-index:14;align-items:center;justify-content:center;padding:26px}
   .sheet-wrap.on{display:flex}
@@ -581,9 +599,10 @@ if(!window.THREE){
   <div class="g-eyebrow">freyacad &middot; wrong-sized workshop</div>
   <h1>This bench doesn&rsquo;t fold down to phone size.</h1>
   <p>freyacad is a full parametric CAD bench &mdash; a real solid-modelling kernel, sketches,
-    fillets, booleans &mdash; and it steers with a mouse, a keyboard and a monitor&rsquo;s worth
-    of elbow room. On a touchscreen it would be all thumbs. <b>Literally.</b></p>
-  <p>Open it on a <b>PC or a Mac</b> and the whole workshop will be set up and waiting for you.</p>
+    fillets, booleans &mdash; and it needs a screen with elbow room. On a phone it would be
+    all thumbs. <b>Literally.</b></p>
+  <p>Open it on a <b>PC, a Mac or an iPad</b> and the whole workshop will be set up and
+    waiting for you.</p>
   <a class="g-home" href="/">&larr; The rest of freya.co.nz works fine on your phone</a>
   <div class="g-small">also: you were just spared an 11&nbsp;MB CAD-kernel download. you&rsquo;re welcome.</div>
 </div>
@@ -669,6 +688,7 @@ if(!window.THREE){
       <button id="btn-iso" class="btn-ghost" title="Isometric view (Ctrl+7)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 1.7 14 5v6l-6 3.3L2 11V5z"/><path d="M2 5l6 3.2L14 5M8 8.2V14.3"/></svg><span class="lbl">Iso</span></button>
       <button id="btn-fitall" class="btn-ghost" title="Fit everything in view (F)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg><span class="lbl">Fit</span></button>
       <button id="btn-proj" class="btn-ghost" title="Perspective — converging, depth-cued (Ctrl+5)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.2 3.2h11.6L11.6 12.8H4.4z"/><path d="M4.4 12.8 2.2 3.2M11.6 12.8 13.8 3.2"/></svg><span class="lbl">Persp</span></button>
+      <button id="btn-del" class="btn-ghost" title="Delete the selection">✕</button>
       <button id="btn-undo" class="btn-ghost" title="Undo (Ctrl+Z)" disabled>↶</button>
       <button id="btn-redo" class="btn-ghost" title="Redo (Ctrl+Y)" disabled>↷</button>
       <button id="btn-labels" class="btn-ghost" title="Show or hide button and menu labels — icons only">Aa</button>
@@ -966,6 +986,100 @@ const CSG = (function(){
   };
   Controls.prototype.setIso=function(){ this.fb=null;this.lockDir=null;this.up.set(0,1,0); this.sph.set(this.sph.radius,1.0,0.82); this.enableRotate=true; this.update(); };
   const controls=new Controls(camera,canvas);
+
+  /* ---- touch: two fingers navigate, a long press right-clicks --------------
+     The grammar every tablet app shares: one finger (or the Pencil) does what
+     the mouse pointer does, two fingers pan and pinch-zoom, press and hold
+     opens the right-click menu. A Pencil reports pointerType 'pen' and takes
+     the precise path untouched.
+
+     This listens on the viewport in the CAPTURE phase, which is the only
+     placement that works: pointer capture retargets a drag to the canvas, but
+     retargeted events still run ancestors' capture listeners first, so the
+     second finger can be swallowed here before the sketch handlers ever see
+     it. Everything below the canvas's own listeners stays exactly as it was.
+
+     Two facts make this safe against the app's own handlers. Sketch CLICKS
+     dispatch on pointerup behind a 5 px movement guard, so a pinch — whose
+     fingers move — never places geometry. And drags arm on pointerdown but
+     take effect on pointermove, so when a second finger lands the armed drag
+     can be taken back whole (cancelAppGesture restores the pushUndo snapshot)
+     before anything has moved. */
+  let lastCoarse=false;      // the last pointer to go down was a finger
+  (function(){
+    const tp=new Map();      // active touch pointers on the app surfaces
+    let pinch=null;          // {mx,my,d} of the current two-finger gesture
+    let lpT=null, lpPt=null, lpSwallow=null;
+    const killLP=()=>{ if(lpT){clearTimeout(lpT);lpT=null;} };
+    const mid=()=>{ const a=[...tp.values()];
+      return {mx:(a[0].x+a[1].x)/2, my:(a[0].y+a[1].y)/2,
+              d:Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y)}; };
+    document.addEventListener('pointerdown',e=>{
+      lastCoarse=(e.pointerType==='touch');
+      if(e.pointerType!=='touch')return;
+      const surf=e.target===canvas||e.target.id==='navcube'||
+                 (e.target.closest&&e.target.closest('#sheet-wrap'));
+      if(!surf)return;
+      tp.set(e.pointerId,{x:e.clientX,y:e.clientY});
+      if(tp.size===2){
+        killLP();
+        if(typeof cancelAppGesture==='function')cancelAppGesture();
+        pinch=mid();
+        e.stopPropagation();
+      } else if(tp.size>2){
+        e.stopPropagation();               // a third finger joins nothing
+      } else if(e.target===canvas||(e.target.closest&&e.target.closest('#sheet-wrap'))){
+        // arm the long press — it dies on movement, a second finger, or lift
+        lpPt={x:e.clientX,y:e.clientY,t:e.target,id:e.pointerId};
+        killLP();
+        lpT=setTimeout(()=>{
+          lpT=null;
+          if(pinch||tp.size!==1)return;
+          lpSwallow=lpPt.id;               // the lift must not read as a click
+          if(typeof cancelAppGesture==='function')cancelAppGesture();
+          lpPt.t.dispatchEvent(new MouseEvent('contextmenu',
+            {clientX:lpPt.x,clientY:lpPt.y,bubbles:true,cancelable:true}));
+        },520);
+      }
+    },true);
+    document.addEventListener('pointermove',e=>{
+      if(e.pointerType!=='touch')return;
+      const t=tp.get(e.pointerId); if(!t)return;
+      t.x=e.clientX; t.y=e.clientY;
+      /* the canvas contextmenu handler has its own 5 px guard against drags,
+         so the long press must give up at the same line or the two disagree */
+      if(lpT&&Math.hypot(e.clientX-lpPt.x,e.clientY-lpPt.y)>5)killLP();
+      if(pinch&&tp.size>=2){
+        e.stopPropagation();
+        const m=mid();
+        controls._pan(m.mx-pinch.mx, m.my-pinch.my);
+        if(m.d>1&&pinch.d>1)
+          controls.sph.radius=Math.max(controls.minR,
+            Math.min(controls.maxR, controls.sph.radius*pinch.d/m.d));
+        controls.update();
+        if(typeof flashOrigin==='function'&&controls.fb)flashOrigin();
+        pinch=m;
+      }
+    },true);
+    const end=e=>{
+      if(e.pointerType!=='touch')return;
+      if(!tp.has(e.pointerId))return;
+      tp.delete(e.pointerId);
+      killLP();
+      if(pinch){
+        e.stopPropagation();
+        /* One finger may still be down when the pinch ends. It armed nothing
+           (its down was swallowed or cancelled), so it must not suddenly
+           orbit — navigation waits for a fresh touch. */
+        if(tp.size<2){ pinch=null; controls._s=0; }
+      } else if(lpSwallow===e.pointerId){
+        e.stopPropagation();               // the menu is open; this lift is spent
+        lpSwallow=null;
+      }
+    };
+    document.addEventListener('pointerup',end,true);
+    document.addEventListener('pointercancel',end,true);
+  })();
 
   /* ---- materials & rendering mode ---- */
   let renderLights = [];
@@ -4090,6 +4204,7 @@ const CSG = (function(){
     rebuildDimLabels();
     updateDatumVis();
     if(typeof updateHelp==='function')updateHelp();
+    if(typeof scheduleAutosave==='function')scheduleAutosave();
   }
 
   /* ---- pickable edges ---- */
@@ -5373,7 +5488,7 @@ const CSG = (function(){
   function dimNearHit(p){ return dimNear(p)>=0; }
   function dimNear(p){
     if(!editing||!editing.dims)return -1;
-    const tol=Math.max(0.8,controls.sph.radius*0.05);
+    const tol=Math.max(0.8,controls.sph.radius*0.05)*(lastCoarse?1.6:1);
     let best=-1,bd=tol;
     editing.dims.forEach((d,i)=>{
       const g=dimResolve(editing,d); if(!g)return;
@@ -5965,12 +6080,12 @@ const CSG = (function(){
           if(d<bd){bd=d; best={entIdx:ei,kind:'seg',seg:i};} }
       }
     });
-    const tol=Math.max(0.6, controls.sph.radius*0.04);
+    const tol=Math.max(0.6, controls.sph.radius*0.04)*(lastCoarse?1.8:1);
     if(best && bd<tol) return best;
     /* Nothing of the sketch's own under the cursor — try the plane traces, which
        are dimensionable too. Tighter tolerance than the sketch lines, and only
        ever reached second, so a trace lying under a line can't steal the pick. */
-    const tolT=Math.max(0.35, controls.sph.radius*0.022);
+    const tolT=Math.max(0.35, controls.sph.radius*0.022)*(lastCoarse?1.8:1);
     let bt=null, btd=tolT;
     for(const L of traceSnapUV){
       let t=(p.x-L.u0)*L.du+(p.y-L.v0)*L.dv;
@@ -7461,6 +7576,75 @@ const CSG = (function(){
     else if(f.chamfer>0)w.appendChild(fieldNumber('Chamfer size',f.chamfer,0.25,0,null,'units',v=>{f.chamfer=v;rebuild();}));
   }
 
+  /* ---- autosave -----------------------------------------------------------
+     The manual used to say "the tab is the only copy", and on iPadOS that is
+     not a caveat but a countdown: Safari evicts background tabs, and coming
+     back to a reloaded page meant coming back to nothing. So the open document
+     rides in localStorage — debounced off rebuild(), which every change passes
+     through, and flushed the moment the page loses visibility, because
+     eviction gives no later chance. Restore happens at boot, before the demo
+     pref gets a say: work in hand beats a brochure.
+
+     Two guards. Payloads over ~4.5 MB are skipped (a part carrying an embedded
+     STEP can exceed the localStorage quota, and a failed setItem must never
+     take the app down), and a payload that will not parse is discarded rather
+     than retried forever. */
+  const AUTOSAVE_KEY='fcad-autosave';
+  let autosaveT=null;
+  function autosavePayload(){
+    const m=(docMode==='draw')?drawReturn:docMode;
+    if(m==='asm')
+      return {mode:'asm', demo:demoActive||0,
+              data:{type:'assembly',components:asm.components,mates:asm.mates}};
+    return {mode:'part', demo:demoActive||0, data:features};
+  }
+  function autosaveNow(){
+    autosaveT=null;
+    if(ckptOff)return;                     // the engine is borrowed; state is not ours
+    try{
+      const p=autosavePayload();
+      if(p.mode==='part'&&!p.data.length){ localStorage.removeItem(AUTOSAVE_KEY); return; }
+      const txt=JSON.stringify(p);
+      if(txt.length>4.5e6)return;          // over quota territory: keep the last good one
+      localStorage.setItem(AUTOSAVE_KEY,txt);
+    }catch(_){ /* quota, private mode — autosave is a net, not a promise */ }
+  }
+  function scheduleAutosave(){
+    if(autosaveT)clearTimeout(autosaveT);
+    autosaveT=setTimeout(autosaveNow,1200);
+  }
+  window.addEventListener('pagehide',autosaveNow);
+  document.addEventListener('visibilitychange',()=>{ if(document.hidden)autosaveNow(); });
+  function restoreAutosave(){
+    let p=null;
+    try{ p=JSON.parse(localStorage.getItem(AUTOSAVE_KEY)||'null'); }catch(_){ }
+    if(!p||!p.mode||!p.data)return false;
+    /* A demo the user only LOOKED at is not their work — booting into "restored
+       unsaved work" that is really the brochure would teach people to distrust
+       the message. An edited demo is their work, and comes back still knowing
+       which demo it grew from. */
+    if(p.demo){
+      /* A part demo compares exactly. An assembly demo's stored form differs
+         from its registry form, so it cannot be compared — those boot fresh,
+         which forfeits autosave for edits made INSIDE a demo assembly. Rare,
+         and better than restoring the pristine jet engine as "your work". */
+      if(p.mode==='asm')return false;
+      try{
+        const d=demoByKey(p.demo);
+        if(d&&d.data&&JSON.stringify(d.data)===JSON.stringify(p.data))return false;
+      }catch(_){ }
+    }
+    try{
+      loadDocData(p.data);
+      if(p.demo)demoActive=p.demo;
+      setHint('Restored your unsaved work — Save it to a file to keep it for good');
+      return true;
+    }catch(_){
+      try{ localStorage.removeItem(AUTOSAVE_KEY); }catch(__){}
+      return false;
+    }
+  }
+
   /* ============================ STL EXPORT & SAVE / LOAD ============================ */
   function exportSTL(){
     const srcGeoms = docMode==='asm' ? asmTransformedGeoms() : resultGeoms;
@@ -7499,6 +7683,14 @@ const CSG = (function(){
       reader.onload = e => {
           try {
               const data = JSON.parse(e.target.result);
+              loadDocData(data);
+          } catch(err) { alert('Invalid file'); }
+      };
+      reader.readAsText(file);
+  }
+  /* One document from parsed JSON — a part list or an assembly record. Shared
+     by the Open button and the autosave restore, which must not drift apart. */
+  function loadDocData(data){
               if (Array.isArray(data)) {                    // a part file
                   if (docMode==='asm') { clearAsm(); setDocMode('part'); }
                   features = data;      // checkpoints stay: see loadDemo
@@ -7533,9 +7725,6 @@ const CSG = (function(){
                   reportSolve(solveMates({}));   // the file records the relations; the positions follow
                   refreshAsmUI(); fitAll();
               } else throw new Error('unrecognised');
-          } catch(err) { alert('Invalid file'); }
-      };
-      reader.readAsText(file);
   }
   /* A STEP or STL from the Open button becomes an import feature in the tree —
      bytes and all — so the part saves, reopens and replays like anything else.
@@ -7646,7 +7835,7 @@ const CSG = (function(){
       if(docMode==='asm'){ asmPointerDown(e); return; }
       if(mode==='sketch'&&editing&&tool==='select'&&e.button===0){
         const p=pointerToSketch(e);
-        if(p){ const tol=Math.max(0.6,controls.sph.radius*0.04);
+        if(p){ const tol=Math.max(0.6,controls.sph.radius*0.04)*(lastCoarse?1.8:1);
           /* A spline handle beats everything: it only exists while its spline
              is selected, it sits away from the curve, and it is the one thing
              there you cannot get at any other way. */
@@ -7898,6 +8087,23 @@ const CSG = (function(){
       }
     }
   });
+  /* Take back whatever a first finger armed, before a two-finger gesture or a
+     long press takes over. Every armed state below either has not moved
+     anything yet (a grab before its first pointermove) or has a snapshot to
+     restore (pushUndo at grab time), so cancelling here is exact. */
+  function cancelAppGesture(){
+    if(dragVtx){
+      const snap=undoStack.pop();
+      if(snap){ applyState(snap); refreshUndoUI(); }
+      dragVtx=null; dragSnapPt=null; dragJoins=null; redrawHandles();
+    }
+    if(boxDrag){ boxDrag=null; drawBox(); }
+    if(typeof asmDrag!=='undefined'&&asmDrag&&typeof asmPointerUp==='function')asmPointerUp();
+    if(typeof sheetDrag!=='undefined'&&sheetDrag)sheetDrag=null;
+    if(typeof projDrag!=='undefined'&&projDrag){ projDrag=null; if(typeof renderSheet==='function')renderSheet(); }
+    if(typeof dimDrag!=='undefined'&&dimDrag)dimDrag=null;
+    controls._s=0;
+  }
   canvas.addEventListener('pointerleave',()=>{
     const tc=$('tool-cursor'); if(tc)tc.style.display='none';
     if(mode==='sketch'&&editing){ hoverSnap=null; drawSnapMark(); redrawDraft(null); }
@@ -9813,7 +10019,7 @@ const CSG = (function(){
         if(d<bd){bd=d;best={view:v.id,x:q.x,y:q.y,sx:p.x,sy:p.y,d};}
       }
     }
-    return (best&&best.d<=4)?best:null;      // 4 mm of paper
+    return (best&&best.d<=(lastCoarse?7:4))?best:null;   // mm of paper; fingers get more
   }
   /* The sheet has three tools now and they are mutually exclusive, so there is
      one switch rather than three that have to remember to turn each other off. */
@@ -9962,7 +10168,7 @@ const CSG = (function(){
         if(d<bd){bd=d;best={view:v.id,x:c.x,y:c.y,r:c.r,sx:p.x,sy:p.y,sr:c.r*s,d};}
       }
     }
-    return (best&&best.d<=3)?best:null;      // 3 mm of paper
+    return (best&&best.d<=(lastCoarse?6:3))?best:null;   // mm of paper; fingers get more
   }
   function hasCentreMark(view,x,y){
     return (draw.marks||[]).some(m=>m.kind==='centre'&&m.view===view&&
@@ -9982,7 +10188,7 @@ const CSG = (function(){
         if(d<bd){bd=d;best={view:v.id,a:ax.a,b:ax.b,sa:A,sb:B,d};}
       }
     }
-    return (best&&best.d<=3)?best:null;      // 3 mm of paper
+    return (best&&best.d<=(lastCoarse?6:3))?best:null;   // mm of paper; fingers get more
   }
   function hasCentreline(view,a,b){
     return (draw.marks||[]).some(m=>m.kind==='line'&&m.view===view&&
@@ -10455,6 +10661,11 @@ const CSG = (function(){
     collapsed.clear();
     if(shutAll)parentsWithSketches().forEach(f=>collapsed.add(f.id));
     refreshTree();
+  });
+  /* The Delete key, for hands that don't have one. The window keydown handler
+     already knows what Delete means in every mode, so the button asks it. */
+  $('btn-del').addEventListener('click',()=>{
+    window.dispatchEvent(new KeyboardEvent('keydown',{key:'Delete',bubbles:true}));
   });
   $('btn-undo').addEventListener('click',undo);
   $('btn-redo').addEventListener('click',redo);
@@ -10991,7 +11202,12 @@ const CSG = (function(){
     snap(){ renderer.render(scene, camera); return renderer.domElement.toDataURL('image/jpeg', 0.85); }
   };
 
+  /* Coarse-pointer devices get the Delete button (they have no Delete key).
+     maxTouchPoints catches a touch laptop whose primary pointer is fine. */
+  if((window.matchMedia&&matchMedia('(any-pointer: coarse)').matches)||navigator.maxTouchPoints>0)
+    document.documentElement.classList.add('touch');
   function boot(){
+    if(restoreAutosave()){ updateHelp(); refreshDemoTgl(); return; }
     if(demoPref()){ bootDemo(); }
     else { rebuild(); setHint('Click a plane to start a sketch · right-click for all commands'); }
     updateHelp(); refreshDemoTgl();

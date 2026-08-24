@@ -88,6 +88,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line-soft);
   <div class="grp">Interface</div>
   <a href="#layout">The layout</a>
   <a href="#navigate">Getting around</a>
+  <a href="#touch">On an iPad</a>
   <a href="#views">Views &amp; projection</a>
   <div class="grp">Sketching</div>
   <a href="#sketch">Making a sketch</a>
@@ -265,6 +266,33 @@ drop back with <kbd>Ctrl</kbd>+<kbd>8</kbd>.</p>
 </ul>
 <p>Both cameras share one orbit, so the swap holds your position and framing — only the
 projection changes.</p>
+
+<h2 id="touch">freyacad on an iPad</h2>
+<p>Open the same address on an iPad (or any large tablet) and the whole workshop comes with
+it — the real kernel, the same files. The controls translate the obvious way:</p>
+<table>
+  <tr><th>Mouse</th><th>Touch</th></tr>
+  <tr><td>Left-drag to orbit</td><td><b>One finger</b> orbits</td></tr>
+  <tr><td>Right-drag / wheel</td><td><b>Two fingers</b> pan; <b>pinch</b> zooms</td></tr>
+  <tr><td>Right-click menus</td><td><b>Press and hold</b></td></tr>
+  <tr><td>Click, drag, sketch</td><td>A finger works; an <b>Apple Pencil</b> is better</td></tr>
+  <tr><td>Delete key</td><td>The <b>&#10005;</b> button by Undo</td></tr>
+</table>
+<p>The Pencil behaves as a precision pointer: sketching, dragging handles and picking
+dimensions all take its exact tip, and on iPads that support Pencil hover the same glow that
+follows the mouse follows the Pencil. Fingers get a slightly bigger snap radius, because a
+fingertip is honest about being one.</p>
+<p><b>Your work survives the tab.</b> The open document is kept continuously in the
+browser's own storage, so if iPadOS reloads the tab — or you close it by accident, on any
+machine — freyacad comes back up with your unsaved work and says so. That is a net, not an
+archive: <b>Save</b> still writes the real file, and a part carrying very large imports is
+too big for the net and relies on saving. A demo you only looked at is not treated as work.</p>
+<div class="note">
+  <span class="tag">Worth knowing</span>
+  <p>A drawing sheet is still not part of the document, on any machine — leave the tab with
+  a drawing open and the sheet is rebuilt from the model when you return, without its
+  dimensions. Export or print sheets you care about.</p>
+</div>
 
 <h2 id="sketch">Making a sketch</h2>
 <p><b>Add → Sketch</b>, then pick a plane: Top, Front, Right, or a flat face of an existing
@@ -1022,8 +1050,8 @@ three view keys — can all be changed under <b>Customise tools… → Keyboard<
       concentric and coincident are in; perpendicular isn't yet.</li>
   <li><b>STL imports are faceted.</b> A mesh has no true surfaces, so an imported STL
       can be viewed, placed and exported but not filleted or chamfered.</li>
-  <li><b>Desktop only</b>, by design.</li>
-  <li><b>No autosave.</b> The tab is the only copy until you save.</li>
+  <li><b>Phones stay outside</b>, by design. iPads and other large tablets work — see
+      <a href="#touch">freyacad on an iPad</a>.</li>
   <li><b>Drawings are linear dimensions only.</b> No diameter, radius or angular dimensions,
       no notes or balloons, no section or detail views, and the sheet isn't saved with the
       part. Centre marks and centrelines <em>are</em> there — see

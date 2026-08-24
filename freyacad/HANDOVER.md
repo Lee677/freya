@@ -36,8 +36,15 @@ looks like the deploy failed when it did not.
 
 **The job in progress** is closing the gap to SolidWorks and FreeCAD, working through
 `FEATURE-MATRIX.html` **cheapest first**. The matrix carries a token estimate per gap and
-`dev/matrix_done.py` ticks a row and recomputes the tallies. As of this writing: **41 ✅ ·
-3 ◐ · 31 ✗**, 34 gaps, ~7.27M tokens. The working agreement has been: one item at a time,
+`dev/matrix_done.py` ticks a row and recomputes the tallies. As of this writing: **42 ✅ ·
+3 ◐ · 31 ✗**, 34 gaps, ~7.27M tokens (the 42nd row is tablet support, added done).
+
+**freyacad also runs on an iPad now.** Phones still get the gate; anything with a ≥600 px
+short side gets the app, with one finger orbiting, two fingers panning and pinch-zooming, a
+long press for the right-click menus, a Delete button on coarse-pointer devices, and an
+Apple Pencil as a precision pointer. The document autosaves to localStorage against
+iPadOS tab eviction (trap 37). Tested with emulated touch in Chromium; a real iPad has not
+touched it yet, so the first hands-on session is worth watching. The working agreement has been: one item at a time,
 each committed, deployed and reported before starting the next.
 
 The three scope rows — Mirror, linear pattern, circular pattern — were taken together as one
@@ -533,6 +540,42 @@ having a visible pane to paste into.
     a swept solid of section A along a path of length L has volume **A·L exactly**, on a
     straight path and round a mitred corner alike, because the wedge the mitre cuts off one leg
     is the wedge it adds to the other.
+
+37. **Touch is a capture-phase overlay, and three prior decisions made it cheap.** The whole
+    tablet grammar — one finger = the pointer, two fingers = pan/pinch, long press =
+    right-click — lives in one listener block on `document` in the CAPTURE phase, beside the
+    Controls. Ancestor capture listeners run before the target's own even when a drag is
+    pointer-captured to the canvas, so the second finger can be swallowed there before any
+    sketch handler sees it. Do not try to register the interceptor on the canvas itself: at
+    the target element, capture and bubble listeners fire in plain registration order, and
+    this block is parsed long after the handlers it must outrank.
+
+    What makes a pinch SAFE rather than merely possible: sketch clicks dispatch on
+    **pointerup behind a 5 px movement guard** (a pinch's fingers move, so it can never place
+    geometry), and drags **arm on pointerdown but only act on pointermove**, so
+    `cancelAppGesture` can take back an armed drag whole — it restores the pushUndo snapshot
+    — before anything has moved. Anything that changes either of those invariants breaks
+    two-finger navigation silently. The long press dies past 5 px for the same reason the
+    canvas contextmenu handler ignores drags past 5 px: the two guards must agree or a slow
+    press opens a menu the handler then refuses.
+
+    `lastCoarse` (was the last pointer a finger?) widens pick tolerances by ~1.8× for
+    fingers only — a Pencil reports pointerType 'pen' and keeps mouse precision. And
+    `touch-action:none` on the canvases is load-bearing: without it the browser answers the
+    pinch itself and the pointermoves never arrive.
+
+38. **Autosave exists because iPadOS evicts tabs, and its three rules matter.** The document
+    rides in localStorage, debounced 1.2 s off `rebuild()` (every change passes through
+    there) and flushed on `visibilitychange`/`pagehide`, because eviction gives no later
+    chance. On boot it restores before the demo pref gets a say. The rules: a payload over
+    ~4.5 MB is skipped (embedded STEP imports can exceed the quota, and the last good save
+    is better than a failed one); a **pristine demo is never restored as "your work"** —
+    part demos compare exactly against the registry and boot fresh on a match, assembly
+    demos always boot fresh (their stored form differs from the registry form, so edits to a
+    demo assembly forfeit the net — rare, documented); and `ckptOff` gates the save so
+    `buildPartShapes`' borrowed state is never written. Note `dev/verify-live.js` ends by
+    clearing the document, which empties the autosave — run it in a browser you care about
+    and your net is gone until the next edit.
 
 ## Biggest thing still missing
 
