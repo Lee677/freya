@@ -46,6 +46,13 @@
     || /Android|iPhone|iPod|Windows Phone|BlackBerry|Mobi/i.test(ua)
     || /iPad/.test(ua)
     || (/Macintosh|Mac OS/.test(ua) && navigator.maxTouchPoints > 1);
+  /* A tablet is not a phone. An iPad (or any touch device with a real screen)
+     drives the app fine now that the canvas speaks touch — one finger orbits,
+     two fingers pan and zoom, a long press right-clicks, and an Apple Pencil
+     is a precision pointer. The gate keeps only the genuinely thumb-sized out:
+     the shortest screen side under ~600 CSS px is a phone, and iPad Mini's is
+     744. */
+  if(mobile && Math.min(screen.width||0, screen.height||0) >= 600) mobile = false;
   if(mobile){
     window.__MOBILE_GATE = true;
     document.documentElement.className += ' mobile-gate';
@@ -162,9 +169,26 @@ if(!window.THREE){
      z-index above the canvas, an opaque desk behind it, and the canvas itself
      hidden while the mode is open. Half-covering it was what left a grid
      floating over the drawing. */
+  /* Touch. The canvas owns every gesture that lands on it — without
+     touch-action:none the browser answers a pinch with page zoom and never
+     sends the pointermoves; the callout/user-select pair stops iPadOS opening
+     a text-selection bubble on the long press that is our right-click. The
+     Delete button exists because a tablet has no Delete key; .touch is stamped
+     on <html> at boot on coarse-pointer devices. */
+  .viewport canvas,#navcube,#sheet{touch-action:none;-webkit-touch-callout:none;
+    -webkit-user-select:none;user-select:none}
+  .toolbar button,.dock button,.menu,.tree-col{touch-action:manipulation}
+  #btn-del{display:none}
+  html.touch #btn-del{display:inline-flex}
   .sheet-wrap{position:absolute;inset:0;overflow:auto;background:#11161c;display:none;
     z-index:14;align-items:center;justify-content:center;padding:26px}
   .sheet-wrap.on{display:flex}
+  /* ...and the same z-index that puts the paper over the canvas put it over the
+     floating dock as well, which is 10. The wrap covers the whole viewport, so
+     every button in the drawing dock — Dimension included — was sitting under a
+     sheet of paper and could not be clicked at all; the right-click menu was the
+     only way to reach a drawing command. The dock goes above the paper. */
+  #dock-draw{z-index:15}
   #sheet{background:#fff;box-shadow:0 10px 40px rgba(0,0,0,.55);flex:0 0 auto}
   #sheet .vw{cursor:grab}
   #sheet .vw.drag{cursor:grabbing}
@@ -575,9 +599,10 @@ if(!window.THREE){
   <div class="g-eyebrow">freyacad &middot; wrong-sized workshop</div>
   <h1>This bench doesn&rsquo;t fold down to phone size.</h1>
   <p>freyacad is a full parametric CAD bench &mdash; a real solid-modelling kernel, sketches,
-    fillets, booleans &mdash; and it steers with a mouse, a keyboard and a monitor&rsquo;s worth
-    of elbow room. On a touchscreen it would be all thumbs. <b>Literally.</b></p>
-  <p>Open it on a <b>PC or a Mac</b> and the whole workshop will be set up and waiting for you.</p>
+    fillets, booleans &mdash; and it needs a screen with elbow room. On a phone it would be
+    all thumbs. <b>Literally.</b></p>
+  <p>Open it on a <b>PC, a Mac or an iPad</b> and the whole workshop will be set up and
+    waiting for you.</p>
   <a class="g-home" href="/">&larr; The rest of freya.co.nz works fine on your phone</a>
   <div class="g-small">also: you were just spared an 11&nbsp;MB CAD-kernel download. you&rsquo;re welcome.</div>
 </div>
@@ -663,6 +688,7 @@ if(!window.THREE){
       <button id="btn-iso" class="btn-ghost" title="Isometric view (Ctrl+7)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 1.7 14 5v6l-6 3.3L2 11V5z"/><path d="M2 5l6 3.2L14 5M8 8.2V14.3"/></svg><span class="lbl">Iso</span></button>
       <button id="btn-fitall" class="btn-ghost" title="Fit everything in view (F)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg><span class="lbl">Fit</span></button>
       <button id="btn-proj" class="btn-ghost" title="Perspective — converging, depth-cued (Ctrl+5)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.2 3.2h11.6L11.6 12.8H4.4z"/><path d="M4.4 12.8 2.2 3.2M11.6 12.8 13.8 3.2"/></svg><span class="lbl">Persp</span></button>
+      <button id="btn-del" class="btn-ghost" title="Delete the selection">✕</button>
       <button id="btn-undo" class="btn-ghost" title="Undo (Ctrl+Z)" disabled>↶</button>
       <button id="btn-redo" class="btn-ghost" title="Redo (Ctrl+Y)" disabled>↷</button>
       <button id="btn-labels" class="btn-ghost" title="Show or hide button and menu labels — icons only">Aa</button>
@@ -724,6 +750,8 @@ if(!window.THREE){
     <button data-add="extrude" data-ic="extrude">Extrude boss</button>
     <button data-add="cut" data-ic="cut">Extrude cut</button>
     <button data-add="revolve" data-ic="revolve">Revolve boss</button>
+    <button data-add="sweep" data-ic="sweep">Swept boss</button>
+    <button data-add="swcut" data-ic="swcut">Swept cut</button>
     <button data-add="rcut" data-ic="rcut">Revolve cut</button>
     <button data-add="fillet" data-ic="fillet">Fillet</button>
     <button data-add="chamfer" data-ic="chamfer">Chamfer</button>
@@ -958,6 +986,100 @@ const CSG = (function(){
   };
   Controls.prototype.setIso=function(){ this.fb=null;this.lockDir=null;this.up.set(0,1,0); this.sph.set(this.sph.radius,1.0,0.82); this.enableRotate=true; this.update(); };
   const controls=new Controls(camera,canvas);
+
+  /* ---- touch: two fingers navigate, a long press right-clicks --------------
+     The grammar every tablet app shares: one finger (or the Pencil) does what
+     the mouse pointer does, two fingers pan and pinch-zoom, press and hold
+     opens the right-click menu. A Pencil reports pointerType 'pen' and takes
+     the precise path untouched.
+
+     This listens on the viewport in the CAPTURE phase, which is the only
+     placement that works: pointer capture retargets a drag to the canvas, but
+     retargeted events still run ancestors' capture listeners first, so the
+     second finger can be swallowed here before the sketch handlers ever see
+     it. Everything below the canvas's own listeners stays exactly as it was.
+
+     Two facts make this safe against the app's own handlers. Sketch CLICKS
+     dispatch on pointerup behind a 5 px movement guard, so a pinch — whose
+     fingers move — never places geometry. And drags arm on pointerdown but
+     take effect on pointermove, so when a second finger lands the armed drag
+     can be taken back whole (cancelAppGesture restores the pushUndo snapshot)
+     before anything has moved. */
+  let lastCoarse=false;      // the last pointer to go down was a finger
+  (function(){
+    const tp=new Map();      // active touch pointers on the app surfaces
+    let pinch=null;          // {mx,my,d} of the current two-finger gesture
+    let lpT=null, lpPt=null, lpSwallow=null;
+    const killLP=()=>{ if(lpT){clearTimeout(lpT);lpT=null;} };
+    const mid=()=>{ const a=[...tp.values()];
+      return {mx:(a[0].x+a[1].x)/2, my:(a[0].y+a[1].y)/2,
+              d:Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y)}; };
+    document.addEventListener('pointerdown',e=>{
+      lastCoarse=(e.pointerType==='touch');
+      if(e.pointerType!=='touch')return;
+      const surf=e.target===canvas||e.target.id==='navcube'||
+                 (e.target.closest&&e.target.closest('#sheet-wrap'));
+      if(!surf)return;
+      tp.set(e.pointerId,{x:e.clientX,y:e.clientY});
+      if(tp.size===2){
+        killLP();
+        if(typeof cancelAppGesture==='function')cancelAppGesture();
+        pinch=mid();
+        e.stopPropagation();
+      } else if(tp.size>2){
+        e.stopPropagation();               // a third finger joins nothing
+      } else if(e.target===canvas||(e.target.closest&&e.target.closest('#sheet-wrap'))){
+        // arm the long press — it dies on movement, a second finger, or lift
+        lpPt={x:e.clientX,y:e.clientY,t:e.target,id:e.pointerId};
+        killLP();
+        lpT=setTimeout(()=>{
+          lpT=null;
+          if(pinch||tp.size!==1)return;
+          lpSwallow=lpPt.id;               // the lift must not read as a click
+          if(typeof cancelAppGesture==='function')cancelAppGesture();
+          lpPt.t.dispatchEvent(new MouseEvent('contextmenu',
+            {clientX:lpPt.x,clientY:lpPt.y,bubbles:true,cancelable:true}));
+        },520);
+      }
+    },true);
+    document.addEventListener('pointermove',e=>{
+      if(e.pointerType!=='touch')return;
+      const t=tp.get(e.pointerId); if(!t)return;
+      t.x=e.clientX; t.y=e.clientY;
+      /* the canvas contextmenu handler has its own 5 px guard against drags,
+         so the long press must give up at the same line or the two disagree */
+      if(lpT&&Math.hypot(e.clientX-lpPt.x,e.clientY-lpPt.y)>5)killLP();
+      if(pinch&&tp.size>=2){
+        e.stopPropagation();
+        const m=mid();
+        controls._pan(m.mx-pinch.mx, m.my-pinch.my);
+        if(m.d>1&&pinch.d>1)
+          controls.sph.radius=Math.max(controls.minR,
+            Math.min(controls.maxR, controls.sph.radius*pinch.d/m.d));
+        controls.update();
+        if(typeof flashOrigin==='function'&&controls.fb)flashOrigin();
+        pinch=m;
+      }
+    },true);
+    const end=e=>{
+      if(e.pointerType!=='touch')return;
+      if(!tp.has(e.pointerId))return;
+      tp.delete(e.pointerId);
+      killLP();
+      if(pinch){
+        e.stopPropagation();
+        /* One finger may still be down when the pinch ends. It armed nothing
+           (its down was swallowed or cancelled), so it must not suddenly
+           orbit — navigation waits for a fresh touch. */
+        if(tp.size<2){ pinch=null; controls._s=0; }
+      } else if(lpSwallow===e.pointerId){
+        e.stopPropagation();               // the menu is open; this lift is spent
+        lpSwallow=null;
+      }
+    };
+    document.addEventListener('pointerup',end,true);
+    document.addEventListener('pointercancel',end,true);
+  })();
 
   /* ---- materials & rendering mode ---- */
   let renderLights = [];
@@ -1642,10 +1764,12 @@ const CSG = (function(){
      inline rather than as files under models/ so the Demo menu still works when
      index.html is opened straight off the disk with no server behind it.
 
-     Neither uses a circular pattern: cpattern copies every shape built so far,
-     not just the feature above it, so patterning a flute would clone the whole
-     hull with it. Four-fold symmetry comes instead from two mirrored loops in
-     one sketch, repeated on the perpendicular plane. */
+     Neither uses a circular pattern. When they were built, cpattern could only
+     copy every shape built so far, so patterning a flute cloned the whole hull
+     with it (trap 22). A pattern can be scoped to chosen features now, but the
+     models were left alone: four-fold symmetry from two mirrored loops in one
+     sketch, repeated on the perpendicular plane, is one extrude and no booleans
+     at all, which is still the cheaper way to draw it. */
   const DEMO_LANTERN=[{"id": 1, "type": "sketch", "name": "Hull profile", "plane": {"kind": "datum", "name": "Front"}, "entities": [{"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 0, "y": -14}, {"x": 7.5, "y": -13}, {"x": 11, "y": -8}, {"x": 9.5, "y": -2}, {"x": 12.5, "y": 6}, {"x": 9, "y": 14}, {"x": 4.5, "y": 20}, {"x": 1.6, "y": 26}, {"x": 0, "y": 31}]}, {"type": "poly", "closed": false, "pts": [{"x": 0, "y": 31}, {"x": 0, "y": -14}]}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 2, "type": "revolve", "name": "Hull", "sketchId": 1, "angle": 360, "axis": "v", "operation": "add", "merge": true, "segments": 64, "suppressed": false}, {"id": 3, "type": "sketch", "name": "Flutes A", "plane": {"kind": "datum", "name": "Front"}, "entities": [{"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 9, "y": 0}, {"x": 15.5, "y": 2.5}, {"x": 18, "y": 6}, {"x": 14, "y": 8.5}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 14, "y": 8.5}, {"x": 14.5, "y": 5}, {"x": 12.5, "y": 2}, {"x": 9, "y": 1.6}]}, {"type": "poly", "closed": false, "pts": [{"x": 9, "y": 1.6}, {"x": 9, "y": 0}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -9, "y": 0}, {"x": -15.5, "y": 2.5}, {"x": -18, "y": 6}, {"x": -14, "y": 8.5}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -14, "y": 8.5}, {"x": -14.5, "y": 5}, {"x": -12.5, "y": 2}, {"x": -9, "y": 1.6}]}, {"type": "poly", "closed": false, "pts": [{"x": -9, "y": 1.6}, {"x": -9, "y": 0}]}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 4, "type": "extrude", "name": "Flutes A", "sketchId": 3, "depth": 2.4, "symmetric": true, "flip": false, "merge": true, "suppressed": false}, {"id": 5, "type": "sketch", "name": "Flutes B", "plane": {"kind": "datum", "name": "Right"}, "entities": [{"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 9, "y": 0}, {"x": 15.5, "y": 2.5}, {"x": 18, "y": 6}, {"x": 14, "y": 8.5}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 14, "y": 8.5}, {"x": 14.5, "y": 5}, {"x": 12.5, "y": 2}, {"x": 9, "y": 1.6}]}, {"type": "poly", "closed": false, "pts": [{"x": 9, "y": 1.6}, {"x": 9, "y": 0}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -9, "y": 0}, {"x": -15.5, "y": 2.5}, {"x": -18, "y": 6}, {"x": -14, "y": 8.5}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -14, "y": 8.5}, {"x": -14.5, "y": 5}, {"x": -12.5, "y": 2}, {"x": -9, "y": 1.6}]}, {"type": "poly", "closed": false, "pts": [{"x": -9, "y": 1.6}, {"x": -9, "y": 0}]}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 6, "type": "extrude", "name": "Flutes B", "sketchId": 5, "depth": 2.4, "symmetric": true, "flip": false, "merge": true, "suppressed": false}, {"id": 7, "type": "sketch", "name": "Fins A", "plane": {"kind": "datum", "name": "Front"}, "entities": [{"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 6, "y": -13}, {"x": 16, "y": -15.5}, {"x": 22, "y": -13}, {"x": 24, "y": -7}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 24, "y": -7}, {"x": 17, "y": -8}, {"x": 11, "y": -9.5}, {"x": 6, "y": -9}]}, {"type": "poly", "closed": false, "pts": [{"x": 6, "y": -9}, {"x": 6, "y": -13}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -6, "y": -13}, {"x": -16, "y": -15.5}, {"x": -22, "y": -13}, {"x": -24, "y": -7}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -24, "y": -7}, {"x": -17, "y": -8}, {"x": -11, "y": -9.5}, {"x": -6, "y": -9}]}, {"type": "poly", "closed": false, "pts": [{"x": -6, "y": -9}, {"x": -6, "y": -13}]}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 8, "type": "extrude", "name": "Fins A", "sketchId": 7, "depth": 1.8, "symmetric": true, "flip": false, "merge": true, "suppressed": false}, {"id": 9, "type": "sketch", "name": "Fins B", "plane": {"kind": "datum", "name": "Right"}, "entities": [{"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 6, "y": -13}, {"x": 16, "y": -15.5}, {"x": 22, "y": -13}, {"x": 24, "y": -7}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 24, "y": -7}, {"x": 17, "y": -8}, {"x": 11, "y": -9.5}, {"x": 6, "y": -9}]}, {"type": "poly", "closed": false, "pts": [{"x": 6, "y": -9}, {"x": 6, "y": -13}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -6, "y": -13}, {"x": -16, "y": -15.5}, {"x": -22, "y": -13}, {"x": -24, "y": -7}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -24, "y": -7}, {"x": -17, "y": -8}, {"x": -11, "y": -9.5}, {"x": -6, "y": -9}]}, {"type": "poly", "closed": false, "pts": [{"x": -6, "y": -9}, {"x": -6, "y": -13}]}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 10, "type": "extrude", "name": "Fins B", "sketchId": 9, "depth": 1.8, "symmetric": true, "flip": false, "merge": true, "suppressed": false}, {"id": 11, "type": "sketch", "name": "Upper ports", "plane": {"kind": "datum", "name": "Right"}, "entities": [{"type": "circle", "c": {"x": 0, "y": 17}, "r": 2.2}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 12, "type": "cut", "name": "Upper ports", "sketchId": 11, "depth": 40, "through": true, "flip": true, "suppressed": false}, {"id": 13, "type": "sketch", "name": "Lower ports", "plane": {"kind": "datum", "name": "Front"}, "entities": [{"type": "circle", "c": {"x": 0, "y": 10}, "r": 2.6}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 14, "type": "cut", "name": "Lower ports", "sketchId": 13, "depth": 40, "through": true, "flip": true, "suppressed": false}, {"id": 15, "type": "sketch", "name": "Spire profile", "plane": {"kind": "datum", "name": "Front"}, "entities": [{"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 0, "y": 29}, {"x": 2.6, "y": 32}, {"x": 1.2, "y": 35}, {"x": 2.2, "y": 38}, {"x": 0, "y": 44}]}, {"type": "poly", "closed": false, "pts": [{"x": 0, "y": 44}, {"x": 0, "y": 29}]}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 16, "type": "revolve", "name": "Spire", "sketchId": 15, "angle": 360, "axis": "v", "operation": "add", "merge": true, "segments": 48, "suppressed": false}];
   const DEMO_ENGINE={"type": "assembly", "components": [{"id": 1, "name": "Nacelle", "features": [{"id": 1, "type": "sketch", "name": "Nacelle profile", "plane": {"kind": "datum", "name": "Front"}, "entities": [{"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 20, "y": 0}, {"x": 24, "y": 6}, {"x": 25, "y": 16}, {"x": 23, "y": 28}, {"x": 21, "y": 36}]}, {"type": "poly", "closed": false, "pts": [{"x": 21, "y": 36}, {"x": 19, "y": 36}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 19, "y": 36}, {"x": 20.5, "y": 28}, {"x": 21.5, "y": 16}, {"x": 21, "y": 6}, {"x": 18.5, "y": 0}]}, {"type": "poly", "closed": false, "pts": [{"x": 18.5, "y": 0}, {"x": 20, "y": 0}]}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 2, "type": "revolve", "name": "Nacelle", "sketchId": 1, "angle": 360, "axis": "v", "operation": "add", "merge": true, "segments": 72, "suppressed": false}], "t": {"x": 0, "y": 0, "z": 0, "rx": 0, "ry": 0, "rz": -90}, "fixed": true}, {"id": 2, "name": "Shaft", "features": [{"id": 1, "type": "sketch", "name": "Shaft", "plane": {"kind": "datum", "name": "Top"}, "entities": [{"type": "circle", "c": {"x": 0, "y": 0}, "r": 2.4}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 2, "type": "extrude", "name": "Shaft", "sketchId": 1, "depth": 40, "symmetric": false, "flip": false, "merge": true, "suppressed": false}], "t": {"x": -1, "y": 0, "z": 0, "rx": 0, "ry": 0, "rz": -90}, "fixed": false}, {"id": 3, "name": "Fan", "features": [{"id": 1, "type": "sketch", "name": "Hub", "plane": {"kind": "datum", "name": "Top"}, "entities": [{"type": "circle", "c": {"x": 0, "y": 0}, "r": 6}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 2, "type": "extrude", "name": "Hub", "sketchId": 1, "depth": 3.0, "symmetric": false, "flip": false, "merge": true, "suppressed": false}, {"id": 3, "type": "sketch", "name": "Blades", "plane": {"kind": "datum", "name": "Top"}, "entities": [{"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 5.4926, "y": 0.5491}, {"x": 9.5319, "y": 1.0828}, {"x": 13.1204, "y": 3.8243}, {"x": 14.7441, "y": 9.4267}]}, {"type": "poly", "closed": false, "pts": [{"x": 14.7441, "y": 9.4267}, {"x": 15.089, "y": 8.8641}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 15.089, "y": 8.8641}, {"x": 13.3219, "y": 3.0494}, {"x": 9.5923, "y": 0.1347}, {"x": 5.4926, "y": -0.5491}]}, {"type": "poly", "closed": false, "pts": [{"x": 5.4926, "y": -0.5491}, {"x": 5.4926, "y": 0.5491}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 4.3238, "y": 3.4315}, {"x": 7.4333, "y": 6.0643}, {"x": 8.97, "y": 10.3106}, {"x": 7.307, "y": 15.9015}]}, {"type": "poly", "closed": false, "pts": [{"x": 7.307, "y": 15.9015}, {"x": 7.9014, "y": 15.6147}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 7.9014, "y": 15.6147}, {"x": 9.5585, "y": 9.7676}, {"x": 7.9967, "y": 5.2993}, {"x": 4.9175, "y": 2.5076}]}, {"type": "poly", "closed": false, "pts": [{"x": 4.9175, "y": 2.5076}, {"x": 4.3238, "y": 3.4315}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 1.7822, "y": 5.2244}, {"x": 2.9747, "y": 9.1203}, {"x": 1.9717, "y": 13.5234}, {"x": -2.4499, "y": 17.3277}]}, {"type": "poly", "closed": false, "pts": [{"x": -2.4499, "y": 17.3277}, {"x": -1.7949, "y": 17.4077}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -1.7949, "y": 17.4077}, {"x": 2.7603, "y": 13.3847}, {"x": 3.8622, "y": 8.7814}, {"x": 2.7812, "y": 4.7682}]}, {"type": "poly", "closed": false, "pts": [{"x": 2.7812, "y": 4.7682}, {"x": 1.7822, "y": 5.2244}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -1.3252, "y": 5.3586}, {"x": -2.4283, "y": 9.2808}, {"x": -5.6526, "y": 12.4426}, {"x": -11.4291, "y": 13.2524}]}, {"type": "poly", "closed": false, "pts": [{"x": -11.4291, "y": 13.2524}, {"x": -10.9212, "y": 13.6739}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -10.9212, "y": 13.6739}, {"x": -4.9142, "y": 12.7523}, {"x": -1.4985, "y": 9.4754}, {"x": -0.2382, "y": 5.5149}]}, {"type": "poly", "closed": false, "pts": [{"x": -0.2382, "y": 5.5149}, {"x": -1.3252, "y": 5.3586}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -4.0119, "y": 3.7915}, {"x": -7.0604, "y": 6.4946}, {"x": -11.4822, "y": 7.4114}, {"x": -16.7795, "y": 4.9696}]}, {"type": "poly", "closed": false, "pts": [{"x": -16.7795, "y": 4.9696}, {"x": -16.5802, "y": 5.5988}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -16.5802, "y": 5.5988}, {"x": -11.0285, "y": 8.0711}, {"x": -6.3834, "y": 7.1611}, {"x": -3.1819, "y": 4.5106}]}, {"type": "poly", "closed": false, "pts": [{"x": -3.1819, "y": 4.5106}, {"x": -4.0119, "y": 3.7915}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -5.4248, "y": 1.0206}, {"x": -9.4509, "y": 1.6465}, {"x": -13.6664, "y": 0.0271}, {"x": -16.8026, "y": -4.891}]}, {"type": "poly", "closed": false, "pts": [{"x": -16.8026, "y": -4.891}, {"x": -16.9751, "y": -4.254}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -16.9751, "y": -4.254}, {"x": -13.6413, "y": 0.8274}, {"x": -9.2417, "y": 2.5732}, {"x": -5.1154, "y": 2.0743}]}, {"type": "poly", "closed": false, "pts": [{"x": -5.1154, "y": 2.0743}, {"x": -5.4248, "y": 1.0206}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -5.1154, "y": -2.0743}, {"x": -8.8407, "y": -3.7244}, {"x": -11.5115, "y": -7.3658}, {"x": -11.491, "y": -13.1987}]}, {"type": "poly", "closed": false, "pts": [{"x": -11.491, "y": -13.1987}, {"x": -11.9805, "y": -12.7561}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -11.9805, "y": -12.7561}, {"x": -11.9231, "y": -6.679}, {"x": -9.1657, "y": -2.8317}, {"x": -5.4248, "y": -1.0206}]}, {"type": "poly", "closed": false, "pts": [{"x": -5.4248, "y": -1.0206}, {"x": -5.1154, "y": -2.0743}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -3.1819, "y": -4.5106}, {"x": -5.4237, "y": -7.9128}, {"x": -5.7018, "y": -12.4201}, {"x": -2.5311, "y": -17.316}]}, {"type": "poly", "closed": false, "pts": [{"x": -2.5311, "y": -17.316}, {"x": -3.1822, "y": -17.2082}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -3.1822, "y": -17.2082}, {"x": -6.4194, "y": -12.0649}, {"x": -6.1798, "y": -7.3376}, {"x": -4.0119, "y": -3.7915}]}, {"type": "poly", "closed": false, "pts": [{"x": -4.0119, "y": -3.7915}, {"x": -3.1819, "y": -4.5106}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -0.2382, "y": -5.5149}, {"x": -0.2847, "y": -9.589}, {"x": 1.9181, "y": -13.5311}, {"x": 7.2325, "y": -15.9355}]}, {"type": "poly", "closed": false, "pts": [{"x": 7.2325, "y": -15.9355}, {"x": 6.6265, "y": -16.1969}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 6.6265, "y": -16.1969}, {"x": 1.1224, "y": -13.6202}, {"x": -1.2318, "y": -9.5138}, {"x": -1.3252, "y": -5.3586}]}, {"type": "poly", "closed": false, "pts": [{"x": -1.3252, "y": -5.3586}, {"x": -0.2382, "y": -5.5149}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 2.7812, "y": -4.7682}, {"x": 4.9447, "y": -8.2207}, {"x": 8.9291, "y": -10.3461}, {"x": 14.6997, "y": -9.4957}]}, {"type": "poly", "closed": false, "pts": [{"x": 14.6997, "y": -9.4957}, {"x": 14.3313, "y": -10.0432}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 14.3313, "y": -10.0432}, {"x": 8.3079, "y": -10.8512}, {"x": 4.1073, "y": -8.6695}, {"x": 1.7822, "y": -5.2244}]}, {"type": "poly", "closed": false, "pts": [{"x": 1.7822, "y": -5.2244}, {"x": 2.7812, "y": -4.7682}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 4.9175, "y": -2.5076}, {"x": 8.6042, "y": -4.2424}, {"x": 13.1052, "y": -3.8762}, {"x": 17.5, "y": -0.041}]}, {"type": "poly", "closed": false, "pts": [{"x": 17.5, "y": -0.041}, {"x": 17.486, "y": -0.7008}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 17.486, "y": -0.7008}, {"x": 12.8557, "y": -4.6371}, {"x": 8.1424, "y": -5.0726}, {"x": 4.3238, "y": -3.4315}]}, {"type": "poly", "closed": false, "pts": [{"x": 4.3238, "y": -3.4315}, {"x": 4.9175, "y": -2.5076}]}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 4, "type": "extrude", "name": "Blades", "sketchId": 3, "depth": 2.0999999999999996, "symmetric": false, "flip": false, "merge": true, "suppressed": false}, {"id": 5, "type": "sketch", "name": "Bore", "plane": {"kind": "datum", "name": "Top"}, "entities": [{"type": "circle", "c": {"x": 0, "y": 0}, "r": 2.6}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 6, "type": "cut", "name": "Bore", "sketchId": 5, "depth": 40, "through": true, "flip": true, "suppressed": false}], "t": {"x": 5, "y": 0, "z": 0, "rx": 0, "ry": 0, "rz": -90}, "fixed": false}, {"id": 4, "name": "Compressor", "features": [{"id": 1, "type": "sketch", "name": "Hub", "plane": {"kind": "datum", "name": "Top"}, "entities": [{"type": "circle", "c": {"x": 0, "y": 0}, "r": 8}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 2, "type": "extrude", "name": "Hub", "sketchId": 1, "depth": 2.6, "symmetric": false, "flip": false, "merge": true, "suppressed": false}, {"id": 3, "type": "sketch", "name": "Blades", "plane": {"kind": "datum", "name": "Top"}, "entities": [{"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 7.343, "y": 0.4996}, {"x": 9.5724, "y": 0.9308}, {"x": 11.5384, "y": 2.8081}, {"x": 12.4729, "y": 6.3582}]}, {"type": "poly", "closed": false, "pts": [{"x": 12.4729, "y": 6.3582}, {"x": 12.7338, "y": 5.818}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 12.7338, "y": 5.818}, {"x": 11.6888, "y": 2.096}, {"x": 9.6174, "y": 0.0683}, {"x": 7.343, "y": -0.4996}]}, {"type": "poly", "closed": false, "pts": [{"x": 7.343, "y": -0.4996}, {"x": 7.343, "y": 0.4996}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 6.3991, "y": 3.6362}, {"x": 8.2206, "y": 4.992}, {"x": 9.1773, "y": 7.5364}, {"x": 8.4789, "y": 11.1404}]}, {"type": "poly", "closed": false, "pts": [{"x": 8.4789, "y": 11.1404}, {"x": 8.9485, "y": 10.7669}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 8.9485, "y": 10.7669}, {"x": 9.6218, "y": 6.96}, {"x": 8.6353, "y": 4.2344}, {"x": 6.8326, "y": 2.7359}]}, {"type": "poly", "closed": false, "pts": [{"x": 6.8326, "y": 2.7359}, {"x": 6.3991, "y": 3.6362}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 4.1877, "y": 6.0525}, {"x": 5.2406, "y": 8.0644}, {"x": 4.9986, "y": 10.7719}, {"x": 2.8057, "y": 13.716}]}, {"type": "poly", "closed": false, "pts": [{"x": 2.8057, "y": 13.716}, {"x": 3.3907, "y": 13.5832}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 3.3907, "y": 13.5832}, {"x": 5.6491, "y": 10.4455}, {"x": 5.9429, "y": 7.5617}, {"x": 4.9689, "y": 5.4295}]}, {"type": "poly", "closed": false, "pts": [{"x": 4.9689, "y": 5.4295}, {"x": 4.1877, "y": 6.0525}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 1.1469, "y": 7.2701}, {"x": 1.2226, "y": 9.5396}, {"x": -0.1702, "y": 11.874}, {"x": -3.4233, "y": 13.575}]}, {"type": "poly", "closed": false, "pts": [{"x": -3.4233, "y": 13.575}, {"x": -2.8386, "y": 13.7092}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -2.8386, "y": 13.7092}, {"x": 0.5576, "y": 11.8621}, {"x": 2.0735, "y": 9.3914}, {"x": 2.1211, "y": 7.0477}]}, {"type": "poly", "closed": false, "pts": [{"x": 2.1211, "y": 7.0477}, {"x": 1.1469, "y": 7.2701}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -2.1211, "y": 7.0477}, {"x": -3.0376, "y": 9.1253}, {"x": -5.3053, "y": 10.6242}, {"x": -8.9743, "y": 10.7453}]}, {"type": "poly", "closed": false, "pts": [{"x": -8.9743, "y": 10.7453}, {"x": -8.5057, "y": 11.12}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -8.5057, "y": 11.12}, {"x": -4.6444, "y": 10.9293}, {"x": -2.2067, "y": 9.361}, {"x": -1.1469, "y": 7.2701}]}, {"type": "poly", "closed": false, "pts": [{"x": -1.1469, "y": 7.2701}, {"x": -2.1211, "y": 7.0477}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -4.9689, "y": 5.4295}, {"x": -6.6961, "y": 6.9037}, {"x": -9.3896, "y": 7.2702}, {"x": -12.7478, "y": 5.7874}]}, {"type": "poly", "closed": false, "pts": [{"x": -12.7478, "y": 5.7874}, {"x": -12.4881, "y": 6.3283}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -12.4881, "y": 6.3283}, {"x": -8.9265, "y": 7.8318}, {"x": -6.0497, "y": 7.4766}, {"x": -4.1877, "y": 6.0525}]}, {"type": "poly", "closed": false, "pts": [{"x": -4.1877, "y": 6.0525}, {"x": -4.9689, "y": 5.4295}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -6.8326, "y": 2.7359}, {"x": -9.0284, "y": 3.3147}, {"x": -11.6141, "y": 2.4763}, {"x": -13.9964, "y": -0.3168}]}, {"type": "poly", "closed": false, "pts": [{"x": -13.9964, "y": -0.3168}, {"x": -13.9971, "y": 0.2832}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -13.9971, "y": 0.2832}, {"x": -11.4406, "y": 3.1832}, {"x": -8.6946, "y": 4.1113}, {"x": -6.3991, "y": 3.6362}]}, {"type": "poly", "closed": false, "pts": [{"x": -6.3991, "y": 3.6362}, {"x": -6.8326, "y": 2.7359}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -7.343, "y": -0.4996}, {"x": -9.5724, "y": -0.9308}, {"x": -11.5384, "y": -2.8081}, {"x": -12.4729, "y": -6.3582}]}, {"type": "poly", "closed": false, "pts": [{"x": -12.4729, "y": -6.3582}, {"x": -12.7338, "y": -5.818}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -12.7338, "y": -5.818}, {"x": -11.6888, "y": -2.096}, {"x": -9.6174, "y": -0.0683}, {"x": -7.343, "y": 0.4996}]}, {"type": "poly", "closed": false, "pts": [{"x": -7.343, "y": 0.4996}, {"x": -7.343, "y": -0.4996}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -6.3991, "y": -3.6362}, {"x": -8.2206, "y": -4.992}, {"x": -9.1773, "y": -7.5364}, {"x": -8.4789, "y": -11.1404}]}, {"type": "poly", "closed": false, "pts": [{"x": -8.4789, "y": -11.1404}, {"x": -8.9485, "y": -10.7669}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -8.9485, "y": -10.7669}, {"x": -9.6218, "y": -6.96}, {"x": -8.6353, "y": -4.2344}, {"x": -6.8326, "y": -2.7359}]}, {"type": "poly", "closed": false, "pts": [{"x": -6.8326, "y": -2.7359}, {"x": -6.3991, "y": -3.6362}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -4.1877, "y": -6.0525}, {"x": -5.2406, "y": -8.0644}, {"x": -4.9986, "y": -10.7719}, {"x": -2.8057, "y": -13.716}]}, {"type": "poly", "closed": false, "pts": [{"x": -2.8057, "y": -13.716}, {"x": -3.3907, "y": -13.5832}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -3.3907, "y": -13.5832}, {"x": -5.6491, "y": -10.4455}, {"x": -5.9429, "y": -7.5617}, {"x": -4.9689, "y": -5.4295}]}, {"type": "poly", "closed": false, "pts": [{"x": -4.9689, "y": -5.4295}, {"x": -4.1877, "y": -6.0525}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -1.1469, "y": -7.2701}, {"x": -1.2226, "y": -9.5396}, {"x": 0.1702, "y": -11.874}, {"x": 3.4233, "y": -13.575}]}, {"type": "poly", "closed": false, "pts": [{"x": 3.4233, "y": -13.575}, {"x": 2.8386, "y": -13.7092}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 2.8386, "y": -13.7092}, {"x": -0.5576, "y": -11.8621}, {"x": -2.0735, "y": -9.3914}, {"x": -2.1211, "y": -7.0477}]}, {"type": "poly", "closed": false, "pts": [{"x": -2.1211, "y": -7.0477}, {"x": -1.1469, "y": -7.2701}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 2.1211, "y": -7.0477}, {"x": 3.0376, "y": -9.1253}, {"x": 5.3053, "y": -10.6242}, {"x": 8.9743, "y": -10.7453}]}, {"type": "poly", "closed": false, "pts": [{"x": 8.9743, "y": -10.7453}, {"x": 8.5057, "y": -11.12}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 8.5057, "y": -11.12}, {"x": 4.6444, "y": -10.9293}, {"x": 2.2067, "y": -9.361}, {"x": 1.1469, "y": -7.2701}]}, {"type": "poly", "closed": false, "pts": [{"x": 1.1469, "y": -7.2701}, {"x": 2.1211, "y": -7.0477}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 4.9689, "y": -5.4295}, {"x": 6.6961, "y": -6.9037}, {"x": 9.3896, "y": -7.2702}, {"x": 12.7478, "y": -5.7874}]}, {"type": "poly", "closed": false, "pts": [{"x": 12.7478, "y": -5.7874}, {"x": 12.4881, "y": -6.3283}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 12.4881, "y": -6.3283}, {"x": 8.9265, "y": -7.8318}, {"x": 6.0497, "y": -7.4766}, {"x": 4.1877, "y": -6.0525}]}, {"type": "poly", "closed": false, "pts": [{"x": 4.1877, "y": -6.0525}, {"x": 4.9689, "y": -5.4295}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 6.8326, "y": -2.7359}, {"x": 9.0284, "y": -3.3147}, {"x": 11.6141, "y": -2.4763}, {"x": 13.9964, "y": 0.3168}]}, {"type": "poly", "closed": false, "pts": [{"x": 13.9964, "y": 0.3168}, {"x": 13.9971, "y": -0.2832}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 13.9971, "y": -0.2832}, {"x": 11.4406, "y": -3.1832}, {"x": 8.6946, "y": -4.1113}, {"x": 6.3991, "y": -3.6362}]}, {"type": "poly", "closed": false, "pts": [{"x": 6.3991, "y": -3.6362}, {"x": 6.8326, "y": -2.7359}]}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 4, "type": "extrude", "name": "Blades", "sketchId": 3, "depth": 1.8199999999999998, "symmetric": false, "flip": false, "merge": true, "suppressed": false}, {"id": 5, "type": "sketch", "name": "Bore", "plane": {"kind": "datum", "name": "Top"}, "entities": [{"type": "circle", "c": {"x": 0, "y": 0}, "r": 2.6}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 6, "type": "cut", "name": "Bore", "sketchId": 5, "depth": 40, "through": true, "flip": true, "suppressed": false}], "t": {"x": 15, "y": 0, "z": 0, "rx": 0, "ry": 0, "rz": -90}, "fixed": false}, {"id": 5, "name": "Turbine", "features": [{"id": 1, "type": "sketch", "name": "Hub", "plane": {"kind": "datum", "name": "Top"}, "entities": [{"type": "circle", "c": {"x": 0, "y": 0}, "r": 9}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 2, "type": "extrude", "name": "Hub", "sketchId": 1, "depth": 2.8, "symmetric": false, "flip": false, "merge": true, "suppressed": false}, {"id": 3, "type": "sketch", "name": "Blades", "plane": {"kind": "datum", "name": "Top"}, "entities": [{"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 8.2617, "y": 0.5496}, {"x": 10.5639, "y": -0.1354}, {"x": 12.5934, "y": -2.5533}, {"x": 13.3188, "y": -6.9001}]}, {"type": "poly", "closed": false, "pts": [{"x": 13.3188, "y": -6.9001}, {"x": 13.0024, "y": -7.4792}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 13.0024, "y": -7.4792}, {"x": 12.4099, "y": -3.3327}, {"x": 10.509, "y": -1.0839}, {"x": 8.2617, "y": -0.5496}]}, {"type": "poly", "closed": false, "pts": [{"x": 8.2617, "y": -0.5496}, {"x": 8.2617, "y": 0.5496}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 7.06, "y": 4.3261}, {"x": 9.4168, "y": 4.7894}, {"x": 12.3375, "y": 3.5916}, {"x": 14.9998, "y": 0.0798}]}, {"type": "poly", "closed": false, "pts": [{"x": 14.9998, "y": 0.0798}, {"x": 14.9888, "y": -0.58}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 14.9888, "y": -0.58}, {"x": 12.5372, "y": 2.8162}, {"x": 9.809, "y": 3.924}, {"x": 7.5708, "y": 3.3528}]}, {"type": "poly", "closed": false, "pts": [{"x": 7.5708, "y": 3.3528}, {"x": 7.06, "y": 4.3261}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 4.2409, "y": 7.1115}, {"x": 6.1125, "y": 8.617}, {"x": 9.2552, "y": 8.9137}, {"x": 13.2446, "y": 7.0414}]}, {"type": "poly", "closed": false, "pts": [{"x": 13.2446, "y": 7.0414}, {"x": 13.5415, "y": 6.452}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 13.5415, "y": 6.452}, {"x": 9.7924, "y": 8.32}, {"x": 6.8619, "y": 8.033}, {"x": 5.1455, "y": 6.4871}]}, {"type": "poly", "closed": false, "pts": [{"x": 5.1455, "y": 6.4871}, {"x": 4.2409, "y": 7.1115}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 0.4503, "y": 8.2677}, {"x": 1.4078, "y": 10.4706}, {"x": 4.0527, "y": 12.1938}, {"x": 8.4552, "y": 12.3899}]}, {"type": "poly", "closed": false, "pts": [{"x": 8.4552, "y": 12.3899}, {"x": 8.992, "y": 12.006}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 8.992, "y": 12.006}, {"x": 4.8042, "y": 11.9177}, {"x": 2.3428, "y": 10.3018}, {"x": 1.5414, "y": 8.1353}]}, {"type": "poly", "closed": false, "pts": [{"x": 1.5414, "y": 8.1353}, {"x": 0.4503, "y": 8.2677}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -3.4435, "y": 7.53}, {"x": -3.6194, "y": 9.9255}, {"x": -2.0783, "y": 12.6804}, {"x": 1.7288, "y": 14.9}]}, {"type": "poly", "closed": false, "pts": [{"x": 1.7288, "y": 14.9}, {"x": 2.3825, "y": 14.8096}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 2.3825, "y": 14.8096}, {"x": -1.2845, "y": 12.7852}, {"x": -2.7131, "y": 10.2105}, {"x": -2.4158, "y": 7.9198}]}, {"type": "poly", "closed": false, "pts": [{"x": -2.4158, "y": 7.9198}, {"x": -3.4435, "y": 7.53}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -6.5485, "y": 5.0672}, {"x": -7.8174, "y": 7.1066}, {"x": -7.7331, "y": 10.2621}, {"x": -5.3936, "y": 13.9967}]}, {"type": "poly", "closed": false, "pts": [{"x": -5.3936, "y": 13.9967}, {"x": -4.7728, "y": 14.2204}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -4.7728, "y": 14.2204}, {"x": -7.079, "y": 10.7238}, {"x": -7.1474, "y": 7.7801}, {"x": -5.8196, "y": 5.8899}]}, {"type": "poly", "closed": false, "pts": [{"x": -5.8196, "y": 5.8899}, {"x": -6.5485, "y": 5.0672}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -8.1532, "y": 1.4435}, {"x": -10.2245, "y": 2.6596}, {"x": -11.6164, "y": 5.4929}, {"x": -11.2804, "y": 9.8869}]}, {"type": "poly", "closed": false, "pts": [{"x": -11.2804, "y": 9.8869}, {"x": -10.8346, "y": 10.3736}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -10.8346, "y": 10.3736}, {"x": -11.2517, "y": 6.2057}, {"x": -9.9443, "y": 3.5674}, {"x": -7.8901, "y": 2.5108}]}, {"type": "poly", "closed": false, "pts": [{"x": -7.8901, "y": 2.5108}, {"x": -8.1532, "y": 1.4435}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -7.8901, "y": -2.5108}, {"x": -10.2894, "y": -2.3966}, {"x": -12.8385, "y": -0.5347}, {"x": -14.583, "y": 3.5122}]}, {"type": "poly", "closed": false, "pts": [{"x": -14.583, "y": 3.5122}, {"x": -14.4144, "y": 4.1502}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -14.4144, "y": 4.1502}, {"x": -12.8468, "y": 0.266}, {"x": -10.4631, "y": -1.4625}, {"x": -8.1532, "y": -1.4435}]}, {"type": "poly", "closed": false, "pts": [{"x": -8.1532, "y": -1.4435}, {"x": -7.8901, "y": -2.5108}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -5.8196, "y": -5.8899}, {"x": -7.997, "y": -6.9038}, {"x": -11.1194, "y": -6.4398}, {"x": -14.5448, "y": -3.6672}]}, {"type": "poly", "closed": false, "pts": [{"x": -14.5448, "y": -3.6672}, {"x": -14.692, "y": -3.0239}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -14.692, "y": -3.0239}, {"x": -11.4989, "y": -5.7347}, {"x": -8.5849, "y": -6.1575}, {"x": -6.5485, "y": -5.0672}]}, {"type": "poly", "closed": false, "pts": [{"x": -6.5485, "y": -5.0672}, {"x": -5.8196, "y": -5.8899}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -2.4158, "y": -7.9198}, {"x": -3.8727, "y": -9.8294}, {"x": -6.8531, "y": -10.8696}, {"x": -11.1746, "y": -10.0065}]}, {"type": "poly", "closed": false, "pts": [{"x": -11.1746, "y": -10.0065}, {"x": -11.6039, "y": -9.5052}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -11.6039, "y": -9.5052}, {"x": -7.5167, "y": -10.4217}, {"x": -4.7401, "y": -9.4418}, {"x": -3.4435, "y": -7.53}]}, {"type": "poly", "closed": false, "pts": [{"x": -3.4435, "y": -7.53}, {"x": -2.4158, "y": -7.9198}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 1.5414, "y": -8.1353}, {"x": 1.1389, "y": -10.5032}, {"x": -1.0167, "y": -12.8093}, {"x": -5.2444, "y": -14.0534}]}, {"type": "poly", "closed": false, "pts": [{"x": -5.2444, "y": -14.0534}, {"x": -5.8574, "y": -13.8091}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -5.8574, "y": -13.8091}, {"x": -1.8125, "y": -12.7211}, {"x": 0.1907, "y": -10.5631}, {"x": 0.4503, "y": -8.2677}]}, {"type": "poly", "closed": false, "pts": [{"x": 0.4503, "y": -8.2677}, {"x": 1.5414, "y": -8.1353}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 5.1455, "y": -6.4871}, {"x": 5.8895, "y": -8.7709}, {"x": 5.0525, "y": -11.8146}, {"x": 1.8873, "y": -14.8808}]}, {"type": "poly", "closed": false, "pts": [{"x": 1.8873, "y": -14.8808}, {"x": 1.2309, "y": -14.9494}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 1.2309, "y": -14.9494}, {"x": 4.3069, "y": -12.1063}, {"x": 5.0778, "y": -9.2645}, {"x": 4.2409, "y": -7.1115}]}, {"type": "poly", "closed": false, "pts": [{"x": 4.2409, "y": -7.1115}, {"x": 5.1455, "y": -6.4871}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 7.5708, "y": -3.3528}, {"x": 9.291, "y": -5.0292}, {"x": 9.9643, "y": -8.1133}, {"x": 8.5865, "y": -12.2992}]}, {"type": "poly", "closed": false, "pts": [{"x": 8.5865, "y": -12.2992}, {"x": 8.0372, "y": -12.665}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 8.0372, "y": -12.665}, {"x": 9.4396, "y": -8.7181}, {"x": 8.8016, "y": -5.8436}, {"x": 7.06, "y": -4.3261}]}, {"type": "poly", "closed": false, "pts": [{"x": 7.06, "y": -4.3261}, {"x": 7.5708, "y": -3.3528}]}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 4, "type": "extrude", "name": "Blades", "sketchId": 3, "depth": 1.9599999999999997, "symmetric": false, "flip": false, "merge": true, "suppressed": false}, {"id": 5, "type": "sketch", "name": "Bore", "plane": {"kind": "datum", "name": "Top"}, "entities": [{"type": "circle", "c": {"x": 0, "y": 0}, "r": 2.6}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 6, "type": "cut", "name": "Bore", "sketchId": 5, "depth": 40, "through": true, "flip": true, "suppressed": false}], "t": {"x": 27, "y": 0, "z": 0, "rx": 0, "ry": 0, "rz": -90}, "fixed": false}, {"id": 6, "name": "Exhaust cone", "features": [{"id": 1, "type": "sketch", "name": "Cone profile", "plane": {"kind": "datum", "name": "Front"}, "entities": [{"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 0, "y": 0}, {"x": 6, "y": 1.5}, {"x": 5.5, "y": 6}, {"x": 3, "y": 10}, {"x": 0, "y": 13}]}, {"type": "poly", "closed": false, "pts": [{"x": 0, "y": 13}, {"x": 0, "y": 0}]}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0, "suppressed": false}, {"id": 2, "type": "revolve", "name": "Exhaust cone", "sketchId": 1, "angle": 360, "axis": "v", "operation": "add", "merge": true, "segments": 48, "suppressed": false}], "t": {"x": 31, "y": 0, "z": 0, "rx": 0, "ry": 0, "rz": -90}, "fixed": false}], "mates": []};
 
@@ -1899,6 +2023,95 @@ const CSG = (function(){
      CW, so a face built from these still cuts its holes the right way. */
   function orientSegs(segs,L,wantCW){
     return ((polyArea(L)<0)===!!wantCW)?segs:revSegs(segs);
+  }
+  /* The path of a sweep: one connected run through a sketch.
+     stitchLoops next door does the same joining for PROFILES, but it only ever
+     hands back closed loops — a profile that does not close is not a profile.
+     A path is the opposite case: usually open, a line up and then along, and
+     the run has to survive without a closing edge to prove it joined up. Same
+     endpoint tolerance, so a path and a profile agree on what "joined" means. */
+  function pathChain(sk){
+    const parts=[];
+    /* Lines from a point list, so a rounded corner reaches the kernel as the
+       arc the sketch shows rather than as the square corner underneath it. */
+    const lineSegs=(L,shut)=>{
+      const out=[];
+      for(let k=0;k+1<L.length;k++)out.push({line:[L[k],L[k+1]]});
+      if(shut)out.push({line:[L[L.length-1],L[0]]});
+      return out;
+    };
+    (sk.entities||[]).forEach((e,ei)=>{
+      if(e.construction)return;
+      if(e.type==='circle'){ parts.push({circle:e,closed:true}); return; }
+      if(e.type==='rect'||e.type==='polygon'){
+        const raw=(e.type==='rect')
+          ? [{x:e.a.x,y:e.a.y},{x:e.b.x,y:e.a.y},{x:e.b.x,y:e.b.y},{x:e.a.x,y:e.b.y}]
+          : polyCorners(e);
+        const L=applyCorner(sk,raw,true,ei);
+        parts.push({pts:L.concat([L[0]]),segs:lineSegs(L,true),closed:true});
+        return;
+      }
+      if(e.type!=='poly')return;
+      if(isSpline(e)){
+        const pts=splinePts(e);
+        if(pts.length<2)return;
+        parts.push({pts,segs:entSegs(e),closed:!!e.closed});
+        return;
+      }
+      const raw=(e.pts||[]).map(q=>({x:q.x,y:q.y}));
+      if(raw.length<2)return;
+      /* A sweep round a sharp corner comes out squared off, because that is
+         what OCCT's right-corner transition builds. Rounding the corner in the
+         PATH sketch is the proper answer and gives a real bend, so a sketch
+         fillet has to reach the path — sketchLoops does the same for profiles,
+         and a path that ignored it would show a rounded corner on screen and
+         sweep a square one. */
+      const L=applyCorner(sk,raw,!!e.closed,ei);
+      parts.push({pts:L,segs:lineSegs(L,!!e.closed),closed:!!e.closed});
+    });
+    if(!parts.length)throw new Error('the path sketch is empty');
+    const open=parts.filter(p=>!p.closed), shut=parts.filter(p=>p.closed);
+    if(!open.length){
+      if(shut.length>1)throw new Error('the path sketch has more than one closed shape — a path is one run');
+      return shut[0];
+    }
+    if(shut.length)throw new Error('the path sketch mixes a closed shape with an open run — it has to be one or the other');
+    if(open.length===1)return open[0];
+    const K=p=>Math.round(p.x/STITCH_TOL)+':'+Math.round(p.y/STITCH_TOL);
+    const ends=p=>[K(p.pts[0]),K(p.pts[p.pts.length-1])];
+    /* Start at a free end so the run comes out in order. A closed ring has no
+       free end, and starting anywhere on one is equally correct. */
+    const cnt=new Map();
+    for(const p of open)for(const k of ends(p))cnt.set(k,(cnt.get(k)||0)+1);
+    let cur=0, rev=false;
+    for(let i=0;i<open.length;i++){
+      const [a,b]=ends(open[i]);
+      if(cnt.get(a)===1){ cur=i; rev=false; break; }
+      if(cnt.get(b)===1){ cur=i; rev=true;  break; }
+    }
+    const used=open.map(()=>false);
+    let pts=[], segs=[];
+    for(;;){
+      used[cur]=true;
+      const P=open[cur];
+      const ps=rev?P.pts.slice().reverse():P.pts;
+      const ss=rev?revSegs(P.segs):P.segs;
+      pts = pts.length ? pts.concat(ps.slice(1)) : ps.slice();
+      segs = segs.concat(ss);
+      const tail=K(pts[pts.length-1]);
+      let nxt=-1,nrev=false;
+      for(let j=0;j<open.length;j++){
+        if(used[j])continue;
+        const [a,b]=ends(open[j]);
+        if(a===tail){ nxt=j; nrev=false; break; }
+        if(b===tail){ nxt=j; nrev=true;  break; }
+      }
+      if(nxt<0)break;
+      cur=nxt; rev=nrev;
+    }
+    if(used.some(u=>!u))
+      throw new Error('the path has to be one connected run — part of that sketch does not join the rest');
+    return {pts,segs,closed:K(pts[0])===K(pts[pts.length-1])};
   }
   function stitchLoops(sk){
     const paths=[];
@@ -2582,6 +2795,105 @@ const CSG = (function(){
     const ax = new oc.gp_Ax1_2(new oc.gp_Pnt_3(o.x, o.y, o.z), new oc.gp_Dir_4(dir.x, dir.y, dir.z));
     const solids = faces.map(f=>new oc.BRepPrimAPI_MakeRevol_1(f, ax, ang, true).Shape());
     if(!solids.length) return null;
+    return OCK.unionOne(solids);
+  };
+  OCK.pathWire = function(sk){
+    const c=pathChain(sk);
+    return c.circle ? OCK.circleWire(c.circle.c, c.circle.r, sk.frame, 0)
+                    : OCK.wireFromSegs(c.segs, sk.frame, 0);
+  };
+  /* One profile region swept along one spine.
+     RightCorner mitres a turn in the path, and measures exact: a circle of area
+     A swept along a path of length L comes out at A*L on a straight path, a
+     mitred corner, a filleted corner and a spline alike.
+     RoundCorner is the fallback and rounds the turn instead, which costs about
+     half a percent on a right angle — a different corner, not a wrong one.
+     BRepBuilderAPI_Transformed, which is OCCT's own default, is deliberately
+     NOT in this list: on any path with a corner it silently sweeps the first
+     leg and drops the rest, and it reports success while doing it. A 20+15 path
+     came back measuring exactly the first 20. */
+  const PIPE_MODES=['BRepBuilderAPI_RightCorner','BRepBuilderAPI_RoundCorner'];
+  function runPipe(oc, spine, profile, opt){
+    for(const mode of (opt.mode?[opt.mode]:PIPE_MODES)){
+      let mk=null;
+      try{
+        mk=new oc.BRepOffsetAPI_MakePipeShell(spine);
+        /* Corrected Frenet, not plain Frenet: plain Frenet flips the section
+           over at an inflection in the path, which puts a visible twist in a
+           swept bar for no reason the drawing can explain. */
+        mk.SetMode_1(false);
+        mk.SetTransitionMode(oc.BRepBuilderAPI_TransitionMode[mode]);
+        /* Both flags OFF, and this is not a detail. `WithContact` translates
+           the profile until it TOUCHES the spine — touching, not centred on it
+           — so a Ø4 tube swept round a Ø20 ring comes out swept about Ø24
+           instead. Measured: that torus reads 947.48 with contact on and
+           789.568 with it off, and 2*pi^2*R*r^2 is 789.568 exactly. Every
+           curved path was ~10% heavy until this came off, and it looked like a
+           kernel quirk rather than a flag. Sweep what was drawn. */
+        mk.Add_1(profile, false, false);
+        mk.Build(new oc.Message_ProgressRange_1());
+        if(mk.IsDone() && mk.MakeSolid()){
+          const shp=mk.Shape();
+          /* IsDone and MakeSolid both say yes on a shape with NO VOLUME. A bend
+             whose radius equals the profile's own half-width pinches the inside
+             of the tube to a line, and OCCT hands back a solid measuring zero
+             rather than refusing — which would reach the tree as a feature that
+             silently does nothing. Measure it. */
+          if(solidVolume(oc,shp)>1e-9) return shp;
+        }
+      }catch(_){ /* try the next mode */ }
+    }
+    return null;
+  }
+  function solidVolume(oc,shp){
+    try{
+      const g=new oc.GProp_GProps_1();
+      oc.BRepGProp.VolumeProperties_1(shp,g,1e-2,false,false);
+      return Math.abs(g.Mass());
+    }catch(_){ return 0; }
+  }
+  /* Sweep a profile sketch along a path sketch. Holes in the profile are swept
+     too and cut out of their region, so a tube is one contour with a hole in it
+     rather than two features. */
+  /* The profile is swept exactly where it was drawn, so a path that never
+     reaches the profile's plane sweeps it off into space and produces a shape
+     nobody asked for. Catching it here beats letting the user wonder. */
+  function checkPierce(profSk, pathSk){
+    const n=profSk.frame.n, o=profSk.frame.o;
+    let lo=Infinity, hi=-Infinity, span=0;
+    for(const e of (pathSk.entities||[])){
+      const pts = e.type==='circle' ? [{x:e.c.x+e.r,y:e.c.y},{x:e.c.x-e.r,y:e.c.y},
+                                       {x:e.c.x,y:e.c.y+e.r},{x:e.c.x,y:e.c.y-e.r}]
+                 : (e.pts||(e.a?[e.a,e.b]:[]));
+      for(const q of pts){
+        const p=fpt(pathSk.frame,q.x,q.y,0);
+        const d=p.clone().sub(o).dot(n);
+        lo=Math.min(lo,d); hi=Math.max(hi,d); span=Math.max(span,p.length());
+      }
+    }
+    if(!isFinite(lo))return;
+    const tol=Math.max(1e-6, span*1e-6);
+    if(lo>tol || hi<-tol)
+      throw new Error('the path never reaches the profile — draw the path so it starts at, or passes through, the plane the profile is on');
+  }
+  OCK.sweep = function(profSk, pathSk, opt){
+    const oc = OC(); opt = opt || {};
+    checkPierce(profSk, pathSk);
+    const spine = OCK.pathWire(pathSk);
+    const regs = OCK.regions(profSk, 0);
+    if(!regs.length) throw new Error('the profile sketch has no closed profile');
+    const pick = opt.contours;
+    const solids = [];
+    regs.forEach((g,i)=>{
+      if(pick && pick.length && pick.indexOf(i) < 0) return;
+      const body = runPipe(oc, spine, g.outer.mk(false), opt);
+      if(!body) throw new Error('the sweep failed — most often the path turns tighter than the profile is wide, or the profile does not sit on the path');
+      if(!g.holes.length){ solids.push(body); return; }
+      const tools = [];
+      for(const h of g.holes){ const t = runPipe(oc, spine, h.mk(false), opt); if(t) tools.push(t); }
+      solids.push(tools.length ? OCK.cutAll(body, tools) : body);
+    });
+    if(!solids.length) throw new Error('no contour selected');
     return OCK.unionOne(solids);
   };
   OCK.transformed = function(s, setup){
@@ -3392,6 +3704,76 @@ const CSG = (function(){
     }
     return spec;
   }
+  /* ---- what each feature contributed ---------------------------------------
+     A mirror or pattern scoped to chosen features needs those features' TOOL
+     shapes — the prism an extrude fused in, the prism a cut removed — not the
+     body they ended up inside. The tools are built already; this only keeps a
+     reference to each one under its feature's id for the length of the
+     rebuild, so a scoped copy can transform it and apply it again the way its
+     source applied it. That is the whole reason patterning a hole cuts more
+     holes instead of adding lumps.
+
+     Nothing here owns a shape. Booleans run non-destructive (trap 29), so a
+     tool outlives the boolean that consumed it, and the shapes are freed the
+     usual way — against the set the checkpoints still hold. */
+  let featTools=new Map();          // feature id -> [{shape, op:'merge'|'cut'}]
+  function resetFeatTools(){ featTools=new Map(); }
+  function noteTool(f,op,shape){
+    if(!f||!shape)return;
+    const a=featTools.get(f.id);
+    if(a)a.push({shape,op}); else featTools.set(f.id,[{shape,op}]);
+  }
+  /* Only a feature that contributes a shape can be copied. The fillet is the
+     interesting exclusion: it rounds edges of the body rather than adding
+     anything, so there is no tool to hand a pattern. */
+  const SCOPEABLE={extrude:1,cut:1,revolve:1,sweep:1,import:1,mirror:1,lpattern:1,cpattern:1};
+  const isScoped=f=>Array.isArray(f.scope)&&f.scope.length>0;
+  function scopeCands(f){
+    const i=features.findIndex(x=>x.id===f.id);
+    return features.slice(0,i<0?features.length:i).filter(x=>SCOPEABLE[x.type]);
+  }
+  /* Resolve f.scope to tools in TREE order, not the order they were ticked —
+     a boss has to be fused before a hole in the same scope is cut, which is
+     exactly what the tree already says. */
+  function scopeTools(f){
+    const want=new Set(f.scope), out=[];
+    let missing=null, suppressed=0;
+    for(const src of features){
+      if(!want.has(src.id))continue;
+      want.delete(src.id);
+      if(src.suppressed){ suppressed++; continue; }
+      const t=featTools.get(src.id);
+      if(!t||!t.length){ missing=missing||(src.name||src.type); continue; }
+      for(const e of t)out.push(e);
+    }
+    if(want.size)throw new Error('a feature it copies was deleted');
+    if(missing)throw new Error('"'+missing+'" builds no shape to copy');
+    if(!out.length)throw new Error(suppressed?'every feature it copies is suppressed'
+                                             :'pick at least one feature to copy');
+    return out;
+  }
+  /* One transform per instance, applied to every tool in the scope. Tools stay
+     outermost so all the copies of one boss end up adjacent, which is what
+     lets the next function fuse them in a single boolean. */
+  function scopedCopies(f,xf){
+    const tools=scopeTools(f), out=[];
+    for(const t of tools) for(const m of xf) out.push({op:t.op,shape:m(t.shape)});
+    return out;
+  }
+  /* Apply the copies in that order, one boolean per run of same-kind tools —
+     trap 26: what bills is the NUMBER of booleans, not their size, so eight
+     copies of one boss are one fuse. */
+  function applyCopies(copies){
+    let i=0;
+    while(i<copies.length){
+      const op=copies[i].op, run=[];
+      while(i<copies.length&&copies[i].op===op){ run.push(copies[i].shape); i++; }
+      if(op==='cut'){
+        resultShapes=OCK.subtractAllFrom(resultShapes,run);
+        if(!resultShapes.length)throw new Error('the copies removed the whole body');
+      } else resultShapes=OCK.unionAll(resultShapes.concat(run));
+    }
+  }
   function applyFeature(f){
     if(f.type==='sketch'){
       const frame = planeFrame(f.plane);
@@ -3403,6 +3785,7 @@ const CSG = (function(){
       // the file's bytes live in the feature, so the recipe replays offline
       flushPending();          // a new body must not join a batch that predates it
       const shp=OCK.importShape(f.fmt, f.data);
+      noteTool(f,'merge',shp);
       resultShapes.push(shp);
       return;
     }
@@ -3411,11 +3794,13 @@ const CSG = (function(){
       const sk={entities:sd.sk.entities,fillet:sd.sk.fillet,chamfer:sd.sk.chamfer,corners:sd.sk.corners,frame:sd.frame};
       if(f.type==='extrude'){
         const shp=OCK.extrude(sk,f.depth,{symmetric:f.symmetric,flip:f.flip,contours:f.contours});
+        noteTool(f,'merge',shp);
         if(f.merge && resultShapes.length) pendOp('merge',shp,f);
         else { flushPending(); resultShapes.push(shp); }
       } else {
         const depth = f.through ? 1000 : f.depth;
         const tool=OCK.extrude(sk,depth,{symmetric:f.through, flip:(!f.through&&f.flip), overhang:true, contours:f.contours});
+        noteTool(f,'cut',tool);
         if(!resultShapes.length)throw new Error('nothing to cut');
         pendOp('cut',tool,f);
       }
@@ -3425,7 +3810,27 @@ const CSG = (function(){
       const sd=sketchData[f.sketchId]; if(!sd)throw new Error('needs a sketch');
       const sk={entities:sd.sk.entities,fillet:sd.sk.fillet,chamfer:sd.sk.chamfer,corners:sd.sk.corners,frame:sd.frame};
       const shp=OCK.revolve(sk,f.angle,resolveAxis(f.axis),f.contours);
+      noteTool(f,f.operation==='cut'?'cut':'merge',shp);
       if(f.operation==='cut'){ if(!resultShapes.length)throw new Error('nothing to cut'); pendOp('cut',shp,f); }
+      else if(f.merge && resultShapes.length) pendOp('merge',shp,f);
+      else { flushPending(); resultShapes.push(shp); }
+      return;
+    }
+    if(f.type==='sweep'){
+      const sd=sketchData[f.sketchId]; if(!sd)throw new Error('needs a profile sketch');
+      if(f.pathId==null)throw new Error('needs a path — pick one in the panel');
+      if(f.pathId===f.sketchId)throw new Error('the profile and the path have to be two different sketches');
+      const pd=sketchData[f.pathId]; if(!pd)throw new Error('its path sketch was deleted');
+      const prof={entities:sd.sk.entities,fillet:sd.sk.fillet,chamfer:sd.sk.chamfer,
+                  corners:sd.sk.corners,frame:sd.frame};
+      const path={entities:pd.sk.entities,fillet:pd.sk.fillet,chamfer:pd.sk.chamfer,
+                  corners:pd.sk.corners,frame:pd.frame};
+      const shp=OCK.sweep(prof,path,{contours:f.contours});
+      noteTool(f,f.operation==='cut'?'cut':'merge',shp);
+      if(f.operation==='cut'){
+        if(!resultShapes.length)throw new Error('nothing to cut');
+        pendOp('cut',shp,f);
+      }
       else if(f.merge && resultShapes.length) pendOp('merge',shp,f);
       else { flushPending(); resultShapes.push(shp); }
       return;
@@ -3438,39 +3843,66 @@ const CSG = (function(){
       return;
     }
     if(f.type==='mirror'){
-      flushPending();          // it copies the body, so the body must be finished
+      flushPending();          // it copies built geometry, so the body must be finished
       if(!resultShapes.length)throw new Error('nothing to mirror');
       const pl=DATUM[f.plane];
+      if(isScoped(f)){
+        const copies=scopedCopies(f,[s=>OCK.mirror(s, pl.o, pl.n)]);
+        applyCopies(copies);
+        for(const c of copies)noteTool(f,c.op,c.shape);
+        return;
+      }
       const clones=resultShapes.map(s=>OCK.mirror(s, pl.o, pl.n));
+      for(const c of clones)noteTool(f,'merge',c);
       if(f.merge){ let all=resultShapes.slice(); for(const c of clones)all=OCK.unionInto(all,c); resultShapes=all; }
       else resultShapes=resultShapes.concat(clones);
       return;
     }
     if(f.type==='lpattern'){
-      flushPending();          // same again: a pattern copies the whole body
+      flushPending();          // same again: a pattern reads finished geometry
       if(!resultShapes.length)throw new Error('nothing to pattern');
       const dir={X:[1,0,0],Y:[0,1,0],Z:[0,0,1]}[f.dir];
+      const step=i=>[dir[0]*f.spacing*i,dir[1]*f.spacing*i,dir[2]*f.spacing*i];
+      if(isScoped(f)){
+        const xf=[];
+        for(let i=1;i<f.count;i++){ const v=step(i); xf.push(s=>OCK.translate(s,v)); }
+        const copies=scopedCopies(f,xf);
+        applyCopies(copies);
+        for(const c of copies)noteTool(f,c.op,c.shape);
+        return;
+      }
       const base=resultShapes.slice();const add=[];
       for(let i=1;i<f.count;i++){
-        const v=[dir[0]*f.spacing*i,dir[1]*f.spacing*i,dir[2]*f.spacing*i];
+        const v=step(i);
         for(const s of base) add.push(OCK.translate(s,v));
       }
+      for(const s of add)noteTool(f,'merge',s);
       resultShapes=f.merge?mergeAllShapes(base.concat(add)):base.concat(add);
       return;
     }
     if(f.type==='cpattern'){
       flushPending();
       if(!resultShapes.length)throw new Error('nothing to pattern');
-      const base=resultShapes.slice();const add=[];
       const total=Math.PI*2*(f.angle/360);
       const ax=resolveAxis(f.axis);
       let axv,pt=null;
       if(typeof ax==='object'&&ax.d){ axv=[ax.d.x,ax.d.y,ax.d.z]; pt=[ax.o.x,ax.o.y,ax.o.z]; }
       else axv={X:[1,0,0],Y:[0,1,0],Z:[0,0,1]}[ax]||[0,1,0];
+      const turn=i=>f.equal?total*i/f.count:total*i/(f.count-1||1);
+      if(isScoped(f)){
+        const xf=[];
+        for(let i=1;i<f.count;i++){ const a=turn(i); xf.push(s=>OCK.rotate(s,axv,a,pt)); }
+        const copies=scopedCopies(f,xf);
+        applyCopies(copies);
+        for(const c of copies)noteTool(f,c.op,c.shape);
+        return;
+      }
+      const base=resultShapes.slice();const add=[];
       for(let i=1;i<f.count;i++){
-        const a=f.equal?total*i/f.count:total*i/(f.count-1||1);
+        const a=turn(i);
         for(const s of base) add.push(OCK.rotate(s,axv,a,pt));
       }
+      for(const s of add)noteTool(f,'merge',s);
       resultShapes=f.merge?mergeAllShapes(base.concat(add)):base.concat(add);
       return;
     }
@@ -3666,6 +4098,15 @@ const CSG = (function(){
        would silently drop the preview. */
     let pfIdx=Infinity;
     if(propsFeat) for(let i=0;i<active.length;i++) if(active[i].id===propsFeat.id){ pfIdx=i; break; }
+    /* And never past a feature some mirror or pattern copies. A scoped copy
+       reuses that feature's TOOL shape, and the tool only exists if the
+       feature actually ran this time round — restore a checkpoint above it and
+       the pattern has nothing to copy. Cheaper than it looks: the floor is
+       almost always the feature just below the pattern anyway. */
+    let scopeFloor=Infinity;
+    { const pos=new Map(); keyed.forEach((f,i)=>pos.set(f.id,i));
+      for(const f of keyed) if(Array.isArray(f.scope)) for(const id of f.scope){
+        const i=pos.get(id); if(i!=null&&i<scopeFloor) scopeFloor=i; } }
     const keys=new Array(active.length).fill(null);
     try{
       const selKey=JSON.stringify(selectedEdges.map(e=>e.mid));
@@ -3687,7 +4128,8 @@ const CSG = (function(){
       ((c.i<keys.length && keys[c.i]!==null && keys[c.i]===c.key) ? alive : dead).push(c);
     let ck=null;
     if(!ckptOff)
-      for(let c=alive.length-1;c>=0;c--) if(alive[c].i<active.length && alive[c].i<pfIdx){ ck=alive[c]; break; }
+      for(let c=alive.length-1;c>=0;c--)
+        if(alive[c].i<active.length && alive[c].i<pfIdx && alive[c].i<scopeFloor){ ck=alive[c]; break; }
     const keep=ckptShapeSet(alive);
     const gone=new Set();
     for(const s of resultShapes) if(!keep.has(s)) gone.add(s);
@@ -3701,7 +4143,7 @@ const CSG = (function(){
     while(sketchOverlay.children.length){const c=sketchOverlay.children.pop();if(c.geometry)c.geometry.dispose();}
     while(previewOverlay.children.length){const c=previewOverlay.children.pop();c.geometry.dispose();}
 
-    resetPending();
+    resetPending(); resetFeatTools();
     for(let i=0; i<active.length; i++){
       let f = active[i];
       if (propsFeat && propsFeat.id === f.id && draftFeat) f = draftFeat;
@@ -3762,6 +4204,7 @@ const CSG = (function(){
     rebuildDimLabels();
     updateDatumVis();
     if(typeof updateHelp==='function')updateHelp();
+    if(typeof scheduleAutosave==='function')scheduleAutosave();
   }
 
   /* ---- pickable edges ---- */
@@ -5045,7 +5488,7 @@ const CSG = (function(){
   function dimNearHit(p){ return dimNear(p)>=0; }
   function dimNear(p){
     if(!editing||!editing.dims)return -1;
-    const tol=Math.max(0.8,controls.sph.radius*0.05);
+    const tol=Math.max(0.8,controls.sph.radius*0.05)*(lastCoarse?1.6:1);
     let best=-1,bd=tol;
     editing.dims.forEach((d,i)=>{
       const g=dimResolve(editing,d); if(!g)return;
@@ -5637,12 +6080,12 @@ const CSG = (function(){
           if(d<bd){bd=d; best={entIdx:ei,kind:'seg',seg:i};} }
       }
     });
-    const tol=Math.max(0.6, controls.sph.radius*0.04);
+    const tol=Math.max(0.6, controls.sph.radius*0.04)*(lastCoarse?1.8:1);
     if(best && bd<tol) return best;
     /* Nothing of the sketch's own under the cursor — try the plane traces, which
        are dimensionable too. Tighter tolerance than the sketch lines, and only
        ever reached second, so a trace lying under a line can't steal the pick. */
-    const tolT=Math.max(0.35, controls.sph.radius*0.022);
+    const tolT=Math.max(0.35, controls.sph.radius*0.022)*(lastCoarse?1.8:1);
     let bt=null, btd=tolT;
     for(const L of traceSnapUV){
       let t=(p.x-L.u0)*L.du+(p.y-L.v0)*L.dv;
@@ -6465,6 +6908,13 @@ const CSG = (function(){
   function sketchCount(){return features.filter(f=>f.type==='sketch').length+1;}
 
   function lastSketchId(){for(let i=Math.min(rollbackIndex,features.length)-1;i>=0;i--){if(features[i].type==='sketch')return features[i].id;}return null;}
+  // the sketch before a given one, which is a sweep's most likely path
+  function prevSketchId(id){
+    const ids=features.slice(0,Math.min(rollbackIndex,features.length))
+      .filter(x=>x.type==='sketch').map(x=>x.id);
+    const i=ids.indexOf(id);
+    return i>0?ids[i-1]:(ids.length&&ids[0]!==id?ids[0]:null);
+  }
   function defaults(type){
     const sid=lastSketchId();
     if(type==='extrude')return {id:nextId(),type:'extrude',name:'Extrude'+cnt('extrude'),sketchId:sid,depth:3,symmetric:false,flip:false,merge:true,suppressed:false};
@@ -6473,6 +6923,13 @@ const CSG = (function(){
     if(type==='fillet')return {id:nextId(),type:'fillet',name:'Fillet'+cnt('fillet'),kind:'fillet',r:0.5,propagate:true,seeds:selectedEdges.map(s=>({mid:s.mid.slice(),dir:s.dir.slice()})),suppressed:false};
     if(type==='chamfer')return {id:nextId(),type:'fillet',name:'Chamfer'+cnt('fillet'),kind:'chamfer',r:0.5,propagate:true,seeds:selectedEdges.map(s=>({mid:s.mid.slice(),dir:s.dir.slice()})),suppressed:false};
     if(type==='rcut'){const f={id:nextId(),type:'revolve',name:'RevolveCut'+cnt('revolve'),sketchId:sid,angle:360,axis:'v',operation:'cut',merge:true,segments:48,suppressed:false};return f;}
+    /* The path defaults to the sketch BELOW the profile, because that is the
+       order they get drawn in: path first, then the profile on a plane that
+       crosses it. It is one control away from wrong either way. */
+    if(type==='sweep'||type==='swcut')return {id:nextId(),type:'sweep',
+      name:(type==='sweep'?'Sweep':'SweepCut')+cnt('sweep'),
+      sketchId:sid, pathId:prevSketchId(sid),
+      operation:(type==='swcut'?'cut':'add'), merge:true, suppressed:false};
     if(type==='dplane')return {id:nextId(),type:'dplane',name:'Plane'+cnt('dplane'),base:'Top',about:'u',angle:30,suppressed:false};
     if(type==='daxis')return {id:nextId(),type:'daxis',name:'Axis'+cnt('daxis'),method:'planes',pa:'Top',pb:'Front',dir:'Y',px:0,py:0,pz:0,suppressed:false};
     if(type==='mirror')return {id:nextId(),type:'mirror',name:'Mirror'+cnt('mirror'),plane:'Right',merge:true,suppressed:false};
@@ -6481,7 +6938,7 @@ const CSG = (function(){
   }
   function cnt(t){return features.filter(f=>f.type===t).length+1;}
   function addFeature(type,sketchId){
-    if(type==='extrude'||type==='cut'||type==='revolve'||type==='rcut'){ if(!sketchId&&!lastSketchId()){setHint('Create a sketch first');return;} }
+    if(type==='extrude'||type==='cut'||type==='revolve'||type==='rcut'||type==='sweep'||type==='swcut'){ if(!sketchId&&!lastSketchId()){setHint('Create a sketch first');return;} }
     const f=defaults(type); f._isNew=true;
     if(sketchId!=null&&'sketchId' in f)f.sketchId=sketchId;
     if(type==='fillet'||type==='chamfer'){ selectedEdges=[]; redrawEdgeSel(); }
@@ -6496,6 +6953,13 @@ const CSG = (function(){
     pushUndo('delete '+(f.name||f.type));
     const dep=features.filter(x=>x.sketchId===id);
     features=features.filter(x=>x!==f&&!dep.includes(x));
+    /* A mirror or pattern that copied it must not be left pointing at a hole —
+       the id would otherwise be reissued to something else entirely. */
+    const gone=new Set([id].concat(dep.map(x=>x.id)));
+    for(const x of features) if(Array.isArray(x.scope)){
+      const keep=x.scope.filter(k=>!gone.has(k));
+      if(keep.length!==x.scope.length){ if(keep.length)x.scope=keep; else delete x.scope; }
+    }
     rollbackIndex=Math.min(rollbackIndex,features.length);
     if(selId===id)selId=null;
     closeProps(); rebuild();
@@ -6529,11 +6993,15 @@ const CSG = (function(){
     'face-sketch':_sw(`<rect x="4" y="4" width="16" height="16" stroke="${_B}" opacity=".55"/><path d="M9 15 16 8l1.8 1.8-7 7-3 1.2z" stroke="${_Y}"/>`),
     extrude:_sw(`<path d="M5 17l7 3.2 7-3.2-7-3.2z" stroke="${_B}"/><path d="M5 17v-6.5l7 3.2 7-3.2V17" stroke="${_B}" opacity=".6"/><path d="M12 13.7V7.5" stroke="${_B}" opacity=".6"/><path d="M12 8V2.5M9.5 5 12 2.5 14.5 5" stroke="${_Y}"/>`),
     cut:_sw(`<path d="M4 21v-8h16v8z" stroke="${_B}"/><path d="M9 13h6v4H9z" stroke="${_Y}"/><path d="M12 3v6M9.5 6.5 12 9l2.5-2.5" stroke="${_Y}"/>`),
+    sweep:_sw(`<path d="M3.5 19c0-7 5.5-8.5 8.5-8.5s8.5-1.5 8.5-8" stroke="${_Y}" stroke-dasharray="3.4 2"/><rect x="1.6" y="15.6" width="6.4" height="6.4" rx="1" stroke="${_B}"/><rect x="16.8" y="1.6" width="6.4" height="6.4" rx="1" stroke="${_B}" opacity=".55"/>`),
+    swcut:_sw(`<path d="M3.5 19c0-7 5.5-8.5 8.5-8.5s8.5-1.5 8.5-8" stroke="${_R}" stroke-dasharray="3.4 2"/><rect x="1.6" y="15.6" width="6.4" height="6.4" rx="1" stroke="${_B}"/><path d="M17.2 2.2 22.8 7.8M22.8 2.2 17.2 7.8" stroke="${_R}"/>`),
     revolve:_sw(`<path d="M5 3v18" stroke="${_B}" stroke-dasharray="4.5 2 1.2 2"/><path d="M9 6.5c6 0 10 2.2 10 5.5s-4 5.5-10 5.5z" stroke="${_B}"/><path d="M8 3.5c5 .2 8.6 1 10.2 2.4M15.5 6.5l2.7-.6-.5-2.7" stroke="${_Y}"/>`),
     rcut:_sw(`<path d="M5 3v18" stroke="${_B}" stroke-dasharray="4.5 2 1.2 2"/><path d="M9 6.5c6 0 10 2.2 10 5.5s-4 5.5-10 5.5z" stroke="${_B}"/><path d="M9 10h5.5v4H9z" stroke="${_Y}"/>`),
     fillet:_sw(`<path d="M4 4v16h16" stroke="${_B}" stroke-dasharray="3 2.4" opacity=".45"/><path d="M4 4v6a10 10 0 0 0 10 10h6" stroke="${_Y}" stroke-width="1.9"/>`),
     chamfer:_sw(`<path d="M4 4v16h16" stroke="${_B}" stroke-dasharray="3 2.4" opacity=".45"/><path d="M4 4v8l8 8h8" stroke="${_Y}" stroke-width="1.9"/>`),
     cline:_sw(`<path d="M3 19 21 5" stroke="${_Y}" stroke-dasharray="3 2.5"/>`),
+    cmark:_sw(`<circle cx="12" cy="12" r="6.5" stroke="${_B}"/><path d="M9.6 12h4.8M12 9.6v4.8" stroke="${_Y}"/><path d="M3.4 12h3.2M17.4 12h3.2M12 3.4v3.2M12 17.4v3.2" stroke="${_Y}" stroke-dasharray="2.6 1.1"/>`),
+    ctrline:_sw(`<path d="M3.5 6.5h17M3.5 17.5h17" stroke="${_B}"/><path d="M2.6 12h3.4M8.4 12h7.2M18 12h3.4" stroke="${_Y}"/>`),
     mirror:_sw(`<path d="M12 3v18" stroke="${_G}" stroke-dasharray="4 3"/><path d="M8.5 8 3.5 12l5 4z" fill="${_B}" stroke="${_B}"/><path d="M15.5 8l5 4-5 4z" stroke="${_B}"/>`),
     lpattern:_sw(`<rect x="3" y="9.5" width="5" height="5" fill="${_B}"/><rect x="9.7" y="9.5" width="5" height="5" stroke="${_B}"/><rect x="16.4" y="9.5" width="5" height="5" stroke="${_B}" opacity=".5"/><path d="M4 19h14M15.5 16.7 18 19l-2.5 2.3" stroke="${_Y}"/>`),
     cpattern:_sw(`<circle cx="12" cy="13" r="7.5" stroke="${_B}" stroke-dasharray="3 2.4" opacity=".55"/><rect x="9.7" y="3" width="4.6" height="4.6" fill="${_B}"/><rect x="3.4" y="14" width="4.6" height="4.6" stroke="${_B}"/><rect x="16" y="14" width="4.6" height="4.6" stroke="${_B}"/><circle cx="12" cy="13" r="1.4" fill="${_Y}"/>`),
@@ -6562,6 +7030,7 @@ const CSG = (function(){
   function iconFor(f){
     if(f.type==='fillet') return f.kind==='chamfer'?'chamfer':'fillet';
     if(f.type==='revolve') return f.operation==='cut'?'rcut':'revolve';
+    if(f.type==='sweep')   return f.operation==='cut'?'swcut':'sweep';
     if(f.type==='sketch') return f.plane&&f.plane.kind==='face'?'face-sketch':'sketch';
     return ICONS[f.type]?f.type:'edit';
   }
@@ -6847,7 +7316,7 @@ const CSG = (function(){
      ones this feature should use. Nothing ticked means all of them, so parts
      made before this existed keep behaving exactly as they did. */
   function addContourPicker(add,f){
-    if(!['extrude','cut','revolve','rcut'].includes(f.type))return;
+    if(!['extrude','cut','revolve','rcut','sweep'].includes(f.type))return;
     const sd=sketchData[f.sketchId]; if(!sd)return;
     let regs; try{ regs=OCK.regions({entities:sd.sk.entities,fillet:sd.sk.fillet,
       chamfer:sd.sk.chamfer,corners:sd.sk.corners,frame:sd.frame},0); }catch(_){ return; }
@@ -6869,6 +7338,32 @@ const CSG = (function(){
         rerun();
       }));
     });
+  }
+  /* A mirror or pattern copies the whole body by default — that is what it has
+     always done and what a part saved before this expects, so the absence of
+     `scope` has to keep meaning exactly that. Tick "Chosen features" and it
+     copies those features' own tool shapes instead, each applied the way its
+     source applied it: a boss is fused, a cut is cut. */
+  function addScopePicker(add,f){
+    const scoped=isScoped(f), cands=scopeCands(f);
+    add(fieldSeg(f.type==='mirror'?'Mirror':'Pattern',
+      [{l:'Whole body',v:'body'},{l:'Chosen features',v:'feat'}], scoped?'feat':'body', v=>{
+        if(v==='feat'){ const last=cands[cands.length-1]; f.scope=last?[last.id]:[]; }
+        else delete f.scope;
+        rerun(); openProps(propsFeat);
+      }));
+    if(!scoped)return;
+    const nt=document.createElement('div'); nt.className='note';
+    nt.textContent=cands.length
+      ? 'Each copy is applied the way its own feature was: a boss adds material, a cut removes it. Fillets and chamfers cannot be copied — they reshape the body rather than add a shape to it.'
+      : 'Nothing above this feature builds a shape to copy.';
+    add(nt);
+    cands.forEach(c=>add(fieldCheck(c.name||c.type, f.scope.indexOf(c.id)>=0, v=>{
+      const set=new Set(f.scope);
+      if(v)set.add(c.id); else set.delete(c.id);
+      f.scope=cands.filter(x=>set.has(x.id)).map(x=>x.id);   // tree order, not click order
+      rerun();
+    })));
   }
   function buildPropsBody(body,f){
     const add=el=>body.appendChild(el);
@@ -6898,6 +7393,30 @@ const CSG = (function(){
         .concat(features.filter(x=>x.type==='daxis').map(a=>({l:a.name,v:'ax:'+a.id})));
       add(fieldSeg('Axis',axOpts,f.axis,v=>{f.axis=v;rerun();}));
       add(fieldNumber('Angle',f.angle,5,1,360,'deg',v=>{f.angle=Math.min(360,v);rerun();}));
+    } else if(f.type==='sweep'){
+      add(fieldSeg('Operation',[{l:'Boss',v:'add'},{l:'Cut',v:'cut'}],f.operation,v=>{
+        f.operation=v;
+        f.name=(v==='cut'?'SweepCut':'Sweep')+f.name.replace(/\D+/,'');
+        propsEl.querySelector('h3').textContent=f.name;
+        rerun(); openProps(propsFeat);
+      }));
+      /* Every sketch except this feature's own profile is a candidate path.
+         A sketch cannot be its own path, and offering it only invites the
+         error message. */
+      const paths=features.filter(x=>x.type==='sketch'&&x.id!==f.sketchId)
+                          .map(x=>({l:x.name,v:x.id}));
+      if(!paths.length){
+        const nt=document.createElement('div'); nt.className='note';
+        nt.textContent='A sweep needs a second sketch for the path. Draw the path on a plane the profile crosses, then come back.';
+        add(nt);
+      } else {
+        add(fieldSeg('Path',paths,f.pathId,v=>{f.pathId=v;rerun();}));
+      }
+      if(f.operation!=='cut')
+        add(fieldCheck('Merge with body',f.merge,v=>{f.merge=v;rerun();}));
+      const nt2=document.createElement('div'); nt2.className='note';
+      nt2.textContent='The profile is swept from where you drew it, staying square to the path as it travels. Draw the path so it starts on the profile\u2019s plane, and round any corner in the path sketch for a proper bend.';
+      add(nt2);
     } else if(f.type==='fillet'){
       add(fieldSeg('Type',[{l:'Fillet',v:'fillet'},{l:'Chamfer',v:'chamfer'}],f.kind,v=>{f.kind=v;f.name=(v==='fillet'?'Fillet':'Chamfer')+f.name.replace(/\D+/,''); propsEl.querySelector('h3').textContent=f.name; rerun(); openProps(propsFeat); }));
       /* Chamfers get SolidWorks' three shapes. `cmode` is absent on parts made
@@ -6924,12 +7443,16 @@ const CSG = (function(){
       const nt=document.createElement('div');nt.className='note';nt.textContent='Click edges in the viewport to preview. Removed material highlights in yellow.';add(nt);
     } else if(f.type==='mirror'){
       add(fieldSeg('Mirror plane',[{l:'Right',v:'Right'},{l:'Front',v:'Front'},{l:'Top',v:'Top'}],f.plane,v=>{f.plane=v;rerun();}));
-      add(fieldCheck('Merge result',f.merge,v=>{f.merge=v;rerun();}));
+      addScopePicker(add,f);
+      /* "Merge result" asks what to do with a copy of the whole body. A copied
+         feature has no such choice — it belongs to the body it came from. */
+      if(!isScoped(f)) add(fieldCheck('Merge result',f.merge,v=>{f.merge=v;rerun();}));
     } else if(f.type==='lpattern'){
       add(fieldSeg('Direction',[{l:'X',v:'X'},{l:'Y',v:'Y'},{l:'Z',v:'Z'}],f.dir,v=>{f.dir=v;rerun();}));
       add(fieldNumber('Count',f.count,1,1,null,'',v=>{f.count=Math.max(1,Math.round(v));rerun();}));
       add(fieldNumber('Spacing',f.spacing,0.5,0,null,'units',v=>{f.spacing=v;rerun();}));
-      add(fieldCheck('Merge result',f.merge,v=>{f.merge=v;rerun();}));
+      addScopePicker(add,f);
+      if(!isScoped(f)) add(fieldCheck('Merge result',f.merge,v=>{f.merge=v;rerun();}));
     } else if(f.type==='cpattern'){
       const cOpts=[{l:'X',v:'X'},{l:'Y',v:'Y'},{l:'Z',v:'Z'}]
         .concat(features.filter(x=>x.type==='daxis').map(a=>({l:a.name,v:'ax:'+a.id})));
@@ -6937,7 +7460,8 @@ const CSG = (function(){
       add(fieldNumber('Count',f.count,1,2,null,'',v=>{f.count=Math.max(2,Math.round(v));rerun();}));
       add(fieldNumber('Total angle',f.angle,15,1,360,'deg',v=>{f.angle=Math.min(360,v);rerun();}));
       add(fieldCheck('Equal spacing fills angle',f.equal,v=>{f.equal=v;rerun();}));
-      add(fieldCheck('Merge result',f.merge,v=>{f.merge=v;rerun();}));
+      addScopePicker(add,f);
+      if(!isScoped(f)) add(fieldCheck('Merge result',f.merge,v=>{f.merge=v;rerun();}));
     } else if(f.type==='dplane'){
       add(fieldSeg('Base plane',[{l:'Top',v:'Top'},{l:'Front',v:'Front'},{l:'Right',v:'Right'}],f.base,v=>{f.base=v;rerun();}));
       add(fieldSeg('Tilt about',[{l:'Its U axis',v:'u'},{l:'Its V axis',v:'v'}],f.about||'u',
@@ -7052,6 +7576,75 @@ const CSG = (function(){
     else if(f.chamfer>0)w.appendChild(fieldNumber('Chamfer size',f.chamfer,0.25,0,null,'units',v=>{f.chamfer=v;rebuild();}));
   }
 
+  /* ---- autosave -----------------------------------------------------------
+     The manual used to say "the tab is the only copy", and on iPadOS that is
+     not a caveat but a countdown: Safari evicts background tabs, and coming
+     back to a reloaded page meant coming back to nothing. So the open document
+     rides in localStorage — debounced off rebuild(), which every change passes
+     through, and flushed the moment the page loses visibility, because
+     eviction gives no later chance. Restore happens at boot, before the demo
+     pref gets a say: work in hand beats a brochure.
+
+     Two guards. Payloads over ~4.5 MB are skipped (a part carrying an embedded
+     STEP can exceed the localStorage quota, and a failed setItem must never
+     take the app down), and a payload that will not parse is discarded rather
+     than retried forever. */
+  const AUTOSAVE_KEY='fcad-autosave';
+  let autosaveT=null;
+  function autosavePayload(){
+    const m=(docMode==='draw')?drawReturn:docMode;
+    if(m==='asm')
+      return {mode:'asm', demo:demoActive||0,
+              data:{type:'assembly',components:asm.components,mates:asm.mates}};
+    return {mode:'part', demo:demoActive||0, data:features};
+  }
+  function autosaveNow(){
+    autosaveT=null;
+    if(ckptOff)return;                     // the engine is borrowed; state is not ours
+    try{
+      const p=autosavePayload();
+      if(p.mode==='part'&&!p.data.length){ localStorage.removeItem(AUTOSAVE_KEY); return; }
+      const txt=JSON.stringify(p);
+      if(txt.length>4.5e6)return;          // over quota territory: keep the last good one
+      localStorage.setItem(AUTOSAVE_KEY,txt);
+    }catch(_){ /* quota, private mode — autosave is a net, not a promise */ }
+  }
+  function scheduleAutosave(){
+    if(autosaveT)clearTimeout(autosaveT);
+    autosaveT=setTimeout(autosaveNow,1200);
+  }
+  window.addEventListener('pagehide',autosaveNow);
+  document.addEventListener('visibilitychange',()=>{ if(document.hidden)autosaveNow(); });
+  function restoreAutosave(){
+    let p=null;
+    try{ p=JSON.parse(localStorage.getItem(AUTOSAVE_KEY)||'null'); }catch(_){ }
+    if(!p||!p.mode||!p.data)return false;
+    /* A demo the user only LOOKED at is not their work — booting into "restored
+       unsaved work" that is really the brochure would teach people to distrust
+       the message. An edited demo is their work, and comes back still knowing
+       which demo it grew from. */
+    if(p.demo){
+      /* A part demo compares exactly. An assembly demo's stored form differs
+         from its registry form, so it cannot be compared — those boot fresh,
+         which forfeits autosave for edits made INSIDE a demo assembly. Rare,
+         and better than restoring the pristine jet engine as "your work". */
+      if(p.mode==='asm')return false;
+      try{
+        const d=demoByKey(p.demo);
+        if(d&&d.data&&JSON.stringify(d.data)===JSON.stringify(p.data))return false;
+      }catch(_){ }
+    }
+    try{
+      loadDocData(p.data);
+      if(p.demo)demoActive=p.demo;
+      setHint('Restored your unsaved work — Save it to a file to keep it for good');
+      return true;
+    }catch(_){
+      try{ localStorage.removeItem(AUTOSAVE_KEY); }catch(__){}
+      return false;
+    }
+  }
+
   /* ============================ STL EXPORT & SAVE / LOAD ============================ */
   function exportSTL(){
     const srcGeoms = docMode==='asm' ? asmTransformedGeoms() : resultGeoms;
@@ -7090,6 +7683,14 @@ const CSG = (function(){
       reader.onload = e => {
           try {
               const data = JSON.parse(e.target.result);
+              loadDocData(data);
+          } catch(err) { alert('Invalid file'); }
+      };
+      reader.readAsText(file);
+  }
+  /* One document from parsed JSON — a part list or an assembly record. Shared
+     by the Open button and the autosave restore, which must not drift apart. */
+  function loadDocData(data){
               if (Array.isArray(data)) {                    // a part file
                   if (docMode==='asm') { clearAsm(); setDocMode('part'); }
                   features = data;      // checkpoints stay: see loadDemo
@@ -7124,9 +7725,6 @@ const CSG = (function(){
                   reportSolve(solveMates({}));   // the file records the relations; the positions follow
                   refreshAsmUI(); fitAll();
               } else throw new Error('unrecognised');
-          } catch(err) { alert('Invalid file'); }
-      };
-      reader.readAsText(file);
   }
   /* A STEP or STL from the Open button becomes an import feature in the tree —
      bytes and all — so the part saves, reopens and replays like anything else.
@@ -7237,7 +7835,7 @@ const CSG = (function(){
       if(docMode==='asm'){ asmPointerDown(e); return; }
       if(mode==='sketch'&&editing&&tool==='select'&&e.button===0){
         const p=pointerToSketch(e);
-        if(p){ const tol=Math.max(0.6,controls.sph.radius*0.04);
+        if(p){ const tol=Math.max(0.6,controls.sph.radius*0.04)*(lastCoarse?1.8:1);
           /* A spline handle beats everything: it only exists while its spline
              is selected, it sits away from the curve, and it is the one thing
              there you cannot get at any other way. */
@@ -7489,6 +8087,23 @@ const CSG = (function(){
       }
     }
   });
+  /* Take back whatever a first finger armed, before a two-finger gesture or a
+     long press takes over. Every armed state below either has not moved
+     anything yet (a grab before its first pointermove) or has a snapshot to
+     restore (pushUndo at grab time), so cancelling here is exact. */
+  function cancelAppGesture(){
+    if(dragVtx){
+      const snap=undoStack.pop();
+      if(snap){ applyState(snap); refreshUndoUI(); }
+      dragVtx=null; dragSnapPt=null; dragJoins=null; redrawHandles();
+    }
+    if(boxDrag){ boxDrag=null; drawBox(); }
+    if(typeof asmDrag!=='undefined'&&asmDrag&&typeof asmPointerUp==='function')asmPointerUp();
+    if(typeof sheetDrag!=='undefined'&&sheetDrag)sheetDrag=null;
+    if(typeof projDrag!=='undefined'&&projDrag){ projDrag=null; if(typeof renderSheet==='function')renderSheet(); }
+    if(typeof dimDrag!=='undefined'&&dimDrag)dimDrag=null;
+    controls._s=0;
+  }
   canvas.addEventListener('pointerleave',()=>{
     const tc=$('tool-cursor'); if(tc)tc.style.display='none';
     if(mode==='sketch'&&editing){ hoverSnap=null; drawSnapMark(); redrawDraft(null); }
@@ -7646,6 +8261,8 @@ const CSG = (function(){
     f_cut    :{ic:'cut',    label:'Extrude cut', fn:()=>addFeature('cut'),    need:'sketch'},
     f_revolve:{ic:'revolve',label:'Revolve boss',fn:()=>addFeature('revolve'),need:'sketch'},
     f_rcut   :{ic:'rcut',   label:'Revolve cut', fn:()=>addFeature('rcut'),   need:'sketch'},
+    f_sweep  :{ic:'sweep',  label:'Swept boss',  fn:()=>addFeature('sweep'),  need:'sketch'},
+    f_swcut  :{ic:'swcut',  label:'Swept cut',   fn:()=>addFeature('swcut'),  need:'sketch'},
     f_fillet :{ic:'fillet', label:'Fillet',      fn:()=>addFeature('fillet'), need:'solid'},
     f_chamfer:{ic:'chamfer',label:'Chamfer',     fn:()=>addFeature('chamfer'),need:'solid'},
     t_mirror :{ic:'mirror', label:'Mirror',      fn:()=>addFeature('mirror'), need:'solid'},
@@ -7657,7 +8274,7 @@ const CSG = (function(){
   const DEFAULT_MODEL_LAYOUT=[
     {name:'View',     ids:['normal','iso','fit','proj']},
     {name:'Sketch',   ids:['sk_top','sk_front','sk_right','sk_face']},
-    {name:'Features', ids:['f_extrude','f_cut','f_revolve','f_rcut','f_fillet','f_chamfer']},
+    {name:'Features', ids:['f_extrude','f_cut','f_revolve','f_rcut','f_sweep','f_swcut','f_fillet','f_chamfer']},
     {name:'Transform',ids:['t_mirror','t_lpat','t_cpat']},
     {name:'Reference',ids:['r_plane','r_axis']}
   ];
@@ -8063,6 +8680,8 @@ const CSG = (function(){
       items.push({ic:'cut',label:'Extrude cut',fn:()=>addFeature('cut',f.id)});
       items.push({ic:'revolve',label:'Revolve boss',fn:()=>addFeature('revolve',f.id)});
       items.push({ic:'rcut',label:'Revolve cut',fn:()=>addFeature('rcut',f.id)});
+      items.push({ic:'sweep',label:'Swept boss',fn:()=>addFeature('sweep',f.id)});
+      items.push({ic:'swcut',label:'Swept cut',fn:()=>addFeature('swcut',f.id)});
     } else if(f.type==='dplane'){
       items.push({ic:'sketch',label:'Sketch on this plane',fn:()=>addSketchOnDPlane(f)});
       items.push({ic:'edit',label:'Edit plane',fn:()=>openProps(f)});
@@ -8091,14 +8710,14 @@ const CSG = (function(){
   function buildPartShapes(list){
     const sF=features,sR=rollbackIndex,sS=resultShapes,sPF=propsFeat,sDF=draftFeat;
     const sSD=Object.assign({},sketchData);
-    const sPK=pendKind,sPO=pendOps;
+    const sPK=pendKind,sPO=pendOps,sFT=featTools;
     features=list;rollbackIndex=list.length;resultShapes=[];propsFeat=null;draftFeat=null;
     Object.keys(sketchData).forEach(k=>delete sketchData[k]);
     const errs=[];
     let shapes=[];
     ckptOff++;               // a different feature list entirely — no checkpoints
     try{
-      resetPending();
+      resetPending(); resetFeatTools();
       for(const f of list){
         if(f.suppressed)continue;
         f.error=null;f._previewGeoms=[];
@@ -8110,7 +8729,7 @@ const CSG = (function(){
     } finally {
       features=sF;rollbackIndex=sR;resultShapes=sS;propsFeat=sPF;draftFeat=sDF;
       Object.keys(sketchData).forEach(k=>delete sketchData[k]);Object.assign(sketchData,sSD);
-      pendKind=sPK;pendOps=sPO;
+      pendKind=sPK;pendOps=sPO;featTools=sFT;
       ckptOff--;
     }
     return {shapes,errs};
@@ -8888,11 +9507,12 @@ const CSG = (function(){
     iso   :{n:[-1,-1,-1],up:[0,1,0], label:'Isometric'}
   };
   let draw={sheet:'A3',orient:'landscape',scale:0,angle:3,hidden:true,
-            title:'',views:[],dims:[],uid:1};
+            title:'',views:[],dims:[],marks:[],uid:1};
   let drawSel=null, sheetDrag=null;
   let drawTool=null, dimPick2=null;   // the sheet's own tool, and a dimension part-picked
   let projDrag=null;                  // pulling a projected view off its parent
   let dimDrag=null, dimHover=null;    // moving a dimension, and the point under the cursor
+  let markHover=null;                 // the circle or axis under the cursor
   function sheetSize(){
     const s=SHEETS[draw.sheet]||SHEETS.A3;
     return draw.orient==='portrait'?[s[1],s[0]]:[s[0],s[1]];
@@ -8939,6 +9559,169 @@ const CSG = (function(){
   }
   /* Project the model onto a view plane and split every edge into the runs
      that can be seen and the runs the solid is in front of. */
+  /* ---- circles in a projected view ------------------------------------------
+     A centre mark has to know where a bore's centre is, and by the time the
+     model reaches the sheet there are no circles left to ask: the solid was
+     tessellated, so a Ø6 bore is a ring of chords, and the drawing projects
+     those chords. So they are chained back into loops and each loop is fitted.
+     If every vertex of a closed loop sits on one circle, it IS one.
+
+     Fit the loop's VERTICES, never the chord midpoints. A midpoint sits inside
+     its chord, and that bias reads a Ø6 bore as Ø5.98 — the same trap that bit
+     the 3D face fitting (trap 15).
+
+     This runs once per view build, on the deduped edge list BEFORE the
+     visibility pass splits anything. That matters: a run boundary lands
+     mid-chord, so fitting the split output would chase loops that no longer
+     close. */
+  function chainLoops(rawSegs){
+    const Q=1e4, key=p=>Math.round(p.x*Q)+':'+Math.round(p.y*Q)+':'+Math.round((p.z||0)*Q);
+    /* Dedupe first. Coincident edges give every vertex four neighbours instead
+       of two, no walk can continue past one, and not a single loop closes. */
+    const segs=[], seen=new Set();
+    for(const sg of rawSegs){
+      const ka=key(sg[0]), kb=key(sg[1]);
+      if(ka===kb)continue;                            // collapsed end-on
+      const k=ka<kb?ka+'|'+kb:kb+'|'+ka;
+      if(seen.has(k))continue; seen.add(k);
+      segs.push(sg);
+    }
+    const at=new Map();
+    segs.forEach((sg,i)=>{ for(const p of sg){ const k=key(p);
+      if(!at.has(k))at.set(k,[]); at.get(k).push(i); } });
+    const used=new Array(segs.length).fill(false), out=[];
+    const step=(pts,fwd)=>{
+      for(;;){
+        const cur=fwd?pts[pts.length-1]:pts[0];
+        /* Exactly one unused edge continues the chain. Zero means the end of
+           an open run; two or more is a junction, and walking blindly through
+           one would weld a bore's rim to whatever it breaks through. */
+        const nx=(at.get(key(cur))||[]).filter(j=>!used[j]);
+        if(nx.length!==1)return false;
+        used[nx[0]]=true;
+        const sg=segs[nx[0]], nxt=(key(sg[0])===key(cur))?sg[1]:sg[0];
+        if(fwd)pts.push(nxt); else pts.unshift(nxt);
+        if(key(nxt)===key(fwd?pts[0]:pts[pts.length-1]))return true;   // closed
+      }
+    };
+    for(let i=0;i<segs.length;i++){
+      if(used[i])continue;
+      used[i]=true;
+      const pts=[segs[i][0],segs[i][1]];
+      let closed=step(pts,true);
+      if(!closed)step(pts,false);
+      out.push({pts,closed});
+    }
+    return out;
+  }
+  /* Kåsa: minimise Σ(x²+y² + Dx + Ey + F)², which is linear in D,E,F. */
+  function fitCircle2D(pts){
+    let n=0,Sx=0,Sy=0,Sxx=0,Syy=0,Sxy=0,Sz=0,Sxz=0,Syz=0;
+    for(const p of pts){ const z=p.x*p.x+p.y*p.y;
+      n++; Sx+=p.x; Sy+=p.y; Sxx+=p.x*p.x; Syy+=p.y*p.y; Sxy+=p.x*p.y;
+      Sz+=z; Sxz+=p.x*z; Syz+=p.y*z; }
+    if(n<3)return null;
+    const M=[[Sxx,Sxy,Sx],[Sxy,Syy,Sy],[Sx,Sy,n]], R=[-Sxz,-Syz,-Sz];
+    const det3=A=>A[0][0]*(A[1][1]*A[2][2]-A[1][2]*A[2][1])
+                 -A[0][1]*(A[1][0]*A[2][2]-A[1][2]*A[2][0])
+                 +A[0][2]*(A[1][0]*A[2][1]-A[1][1]*A[2][0]);
+    const det=det3(M); if(Math.abs(det)<1e-12)return null;
+    const sub=col=>{ const A=M.map(r=>r.slice()); for(let r=0;r<3;r++)A[r][col]=R[r];
+      return det3(A)/det; };
+    const cx=-sub(0)/2, cy=-sub(1)/2, rr=cx*cx+cy*cy-sub(2);
+    if(!(rr>1e-9))return null;
+    return {x:cx,y:cy,r:Math.sqrt(rr)};
+  }
+  /* A regular polygon's corners lie exactly on a circle too, so the fit alone
+     cannot tell a hexagonal boss from a bore. The side count is what separates
+     them: a tessellated circle arrives with sixteen chords or more, and a
+     polygon anybody draws on purpose has far fewer. Twelve is the line. It is a
+     real limit rather than a bug — a genuine 12-sided prism reads as a circle —
+     and the manual says so. */
+  const CIRC_MIN_SIDES=12;
+  /* Fit a circle to a loop that lives in space. Newell's normal gives the
+     plane, the loop is flattened into it, and the 2D fit above does the rest.
+     The planarity check earns its keep: a loop round the top of a fillet is
+     round in plan and nowhere near flat, and without the check it would be
+     handed a centre mark. */
+  function fitCircle3D(pts){
+    const n=pts.length; if(n<3)return null;
+    let cx=0,cy=0,cz=0;
+    for(const p of pts){ cx+=p.x; cy+=p.y; cz+=p.z; }
+    cx/=n; cy/=n; cz/=n;
+    let nx=0,ny=0,nz=0;
+    for(let i=0;i<n;i++){ const a=pts[i], b=pts[(i+1)%n];
+      nx+=(a.y-b.y)*(a.z+b.z); ny+=(a.z-b.z)*(a.x+b.x); nz+=(a.x-b.x)*(a.y+b.y); }
+    const L=Math.hypot(nx,ny,nz); if(L<1e-12)return null;
+    const N=new THREE.Vector3(nx/L,ny/L,nz/L);
+    const seed=Math.abs(N.x)<0.9?new THREE.Vector3(1,0,0):new THREE.Vector3(0,1,0);
+    const e1=seed.sub(N.clone().multiplyScalar(seed.dot(N))).normalize();
+    const e2=N.clone().cross(e1);
+    const flat=[]; let off=0;
+    for(const p of pts){
+      const dx=p.x-cx, dy=p.y-cy, dz=p.z-cz;
+      off=Math.max(off,Math.abs(dx*N.x+dy*N.y+dz*N.z));
+      flat.push({x:dx*e1.x+dy*e1.y+dz*e1.z, y:dx*e2.x+dy*e2.y+dz*e2.z});
+    }
+    const c=fitCircle2D(flat); if(!c||c.r<1e-4)return null;
+    if(off>c.r*0.02)return null;                       // not planar: not a circle
+    let worst=0;
+    for(const q of flat)worst=Math.max(worst,Math.abs(Math.hypot(q.x-c.x,q.y-c.y)-c.r));
+    if(worst>c.r*0.04)return null;
+    return {c:new THREE.Vector3(cx+e1.x*c.x+e2.x*c.y,
+                                cy+e1.y*c.x+e2.y*c.y,
+                                cz+e1.z*c.x+e2.z*c.y), n:N, r:c.r};
+  }
+  /* Every circular edge in the model, in world coordinates.
+     Finding them in SPACE rather than on the sheet is the whole point. A circle
+     found in the projection is only ever a circle you are looking straight at,
+     which is enough for a centre mark and useless for a centreline: a shaft
+     seen from the side has no circle on the sheet at all, and the first version
+     of this took "the line midway between two parallel edges" instead, which on
+     a shaft gives a line square across the axis rather than along it. Knowing
+     the circle in space means knowing its axis, and the axis is right in every
+     view. */
+  function modelCircles(segs3d){
+    const out=[];
+    for(const loop of chainLoops(segs3d)){
+      if(!loop.closed)continue;
+      const pts=loop.pts.slice(0,-1);                  // last repeats the first
+      if(pts.length<CIRC_MIN_SIDES)continue;
+      const c=fitCircle3D(pts);
+      if(c)out.push(c);
+    }
+    return out;
+  }
+  /* Circles that share one axis are one axis: the two rims of a through hole,
+     the four rims of a stepped bore. The group's span along that axis is what a
+     centreline has to cover. */
+  function axisGroups(circles){
+    const used=new Array(circles.length).fill(false), out=[];
+    for(let i=0;i<circles.length;i++){
+      if(used[i])continue;
+      used[i]=true;
+      const A=circles[i], grp=[A];
+      for(let j=i+1;j<circles.length;j++){
+        if(used[j])continue;
+        const B=circles[j];
+        if(Math.abs(A.n.dot(B.n))<0.999)continue;      // not parallel
+        const d=B.c.clone().sub(A.c);
+        const off=d.clone().addScaledVector(A.n,-d.dot(A.n)).length();
+        if(off>Math.max(1e-4,A.r*0.02))continue;       // parallel but not collinear
+        used[j]=true; grp.push(B);
+      }
+      let t0=Infinity,t1=-Infinity,rmax=0;
+      for(const c of grp){
+        const t=c.c.clone().sub(A.c).dot(A.n);
+        t0=Math.min(t0,t); t1=Math.max(t1,t); rmax=Math.max(rmax,c.r);
+      }
+      /* A blind hole shows one rim, so its group has no length of its own —
+         give it the radius, which is the size the feature actually is. */
+      if(t1-t0<1e-9){ t0-=rmax; t1+=rmax; }
+      out.push({o:A.c,n:A.n,t0,t1,r:rmax});
+    }
+    return out;
+  }
   function buildView(kind,shade){
     const geoms=drawSourceGeoms();
     if(!geoms.length)return null;
@@ -9024,6 +9807,32 @@ const CSG = (function(){
       }
       tris.sort((x,y)=>y.d-x.d);                          // furthest first
     }
+    /* Found on the deduped 3D edge list, before the visibility pass splits
+       anything: a run boundary lands mid-chord, so fitting the split output
+       would chase loops that no longer close. */
+    let circles=[], axes=[];
+    try{
+      const mc=modelCircles(segs);
+      /* Face-on within 12° reads as a circle and takes a centre mark; edge-on
+         within 12° reads as a line and takes a centreline. Anything in between
+         is an ellipse on the sheet and gets neither, which is also what a
+         draughtsman would do. */
+      const COS=Math.cos(12*Math.PI/180), SIN=Math.sin(12*Math.PI/180);
+      const seen=new Set();
+      for(const c of mc){
+        if(Math.abs(c.n.dot(B.n))<COS)continue;
+        const p=P(c.c);
+        // near and far rims of one hole land on the same circle (trap 20)
+        const k=Math.round(p.x*100)+':'+Math.round(p.y*100)+':'+Math.round(c.r*100);
+        if(seen.has(k))continue; seen.add(k);
+        circles.push({x:p.x,y:p.y,r:c.r});
+      }
+      for(const a of axisGroups(mc)){
+        if(Math.abs(a.n.dot(B.n))>SIN)continue;
+        axes.push({a:P(a.o.clone().addScaledVector(a.n,a.t0)),
+                   b:P(a.o.clone().addScaledVector(a.n,a.t1)), r:a.r});
+      }
+    }catch(_){ circles=[]; axes=[]; }   // never let an annotation break a view
     let bb=null;
     for(const s of vis.concat(hid))for(const q of s){
       if(!bb)bb={x0:q.x,x1:q.x,y0:q.y,y1:q.y};
@@ -9031,7 +9840,7 @@ const CSG = (function(){
       bb.y0=Math.min(bb.y0,q.y);bb.y1=Math.max(bb.y1,q.y);
     }
     geoms.forEach(g=>g.dispose());
-    return {vis,hid,tris,bb:bb||{x0:0,x1:1,y0:0,y1:1}};
+    return {vis,hid,tris,circles,axes,bb:bb||{x0:0,x1:1,y0:0,y1:1}};
   }
   /* The scale the sheet uses when it is set to fit: the biggest of the
      preferred series that still leaves every view inside its share of the
@@ -9169,6 +9978,7 @@ const CSG = (function(){
     const i=draw.views.indexOf(v); if(i<0)return;
     draw.views.splice(i,1); if(drawSel===v.id)drawSel=null;
     draw.dims=(draw.dims||[]).filter(d=>d.view!==v.id);   // a dimension of nothing is nothing
+    draw.marks=(draw.marks||[]).filter(m=>m.view!==v.id);
     renderSheet(); refreshDrawTree();
   }
   /* ---- dimensions on the sheet ----------------------------------------------
@@ -9209,22 +10019,35 @@ const CSG = (function(){
         if(d<bd){bd=d;best={view:v.id,x:q.x,y:q.y,sx:p.x,sy:p.y,d};}
       }
     }
-    return (best&&best.d<=4)?best:null;      // 4 mm of paper
+    return (best&&best.d<=(lastCoarse?7:4))?best:null;   // mm of paper; fingers get more
   }
-  function startDrawDim(){
+  /* The sheet has three tools now and they are mutually exclusive, so there is
+     one switch rather than three that have to remember to turn each other off. */
+  const DTOOL_HINT={
+    dim:'Dimension: click a corner on a view, then a second corner, then click where the line should sit (Esc cancels)',
+    cmark:'Centre mark: click the rim of a hole or a round boss (Esc cancels)',
+    cline:'Centreline: click one edge, then the edge facing it across the middle (Esc cancels)'};
+  /* The dock is what shows which tool is in hand — refreshDrawDock lights it.
+     The toolbar's drawing group is hidden on purpose (setDocMode says why), so
+     this only keeps its one surviving button honest in case it is ever shown. */
+  function syncDrawToolBtns(){
+    const b=$('btn-dw-dim'); if(b)b.classList.toggle('btn-primary',drawTool==='dim');
+  }
+  function startDrawTool(kind){
     if(!draw.views.length)return setHint('Add a view first');
-    dimPick2=null; drawTool=(drawTool==='dim')?null:'dim';
-    $('btn-dw-dim').classList.toggle('btn-primary',drawTool==='dim');
-    renderSheet(); refreshDrawDock();
-    setHint(drawTool==='dim'
-      ? 'Dimension: click a corner on a view, then a second corner, then click where the line should sit (Esc cancels)'
-      : 'Dimensioning off');
+    dimPick2=null; dimHover=null; markHover=null;
+    drawTool=(drawTool===kind)?null:kind;
+    syncDrawToolBtns(); renderSheet(); refreshDrawDock();
+    setHint(drawTool?DTOOL_HINT[drawTool]:'Tool off');
   }
-  function cancelDrawDim(quiet){
+  function startDrawDim(){ startDrawTool('dim'); }
+  function cancelDrawTool(quiet){
     if(!drawTool&&!dimPick2)return false;
-    drawTool=null; dimPick2=null; dimHover=null;
-    $('btn-dw-dim').classList.remove('btn-primary'); refreshDrawDock();
-    renderSheet(); if(!quiet)setHint('Dimension cancelled');
+    const was=drawTool;
+    drawTool=null; dimPick2=null; dimHover=null; markHover=null;
+    syncDrawToolBtns(); refreshDrawDock();
+    renderSheet();
+    if(!quiet)setHint((was==='cmark'?'Centre mark':was==='cline'?'Centreline':'Dimension')+' cancelled');
     return true;
   }
   function sheetDimClick(sx,sy){
@@ -9245,7 +10068,7 @@ const CSG = (function(){
     /* The placement click chooses the kind, exactly as a smart dimension does:
        drag it out sideways and you asked for the vertical distance, drag it
        above or below and you asked for the horizontal one. */
-    const v=viewOf(dimPick2.a.view); if(!v)return cancelDrawDim(true);
+    const v=viewOf(dimPick2.a.view); if(!v)return cancelDrawTool(true);
     const A=dimPick2.a, B=dimPick2.b;
     const mid={x:(A.sx+B.sx)/2,y:(A.sy+B.sy)/2};
     const dx=Math.abs(B.sx-A.sx), dy=Math.abs(B.sy-A.sy);
@@ -9258,6 +10081,23 @@ const CSG = (function(){
       a:{x:A.x,y:A.y}, b:{x:B.x,y:B.y}, at:{x:p.x,y:p.y}});
     dimPick2=null; renderSheet();
     setHint('Dimension placed — click it and press Delete to remove it');
+  }
+  function sheetMarkClick(sx,sy){
+    if(drawTool==='cmark'){
+      const c=snapCircle(sx,sy);
+      if(!c)return setHint('No circle there — click the rim of a hole or a round boss');
+      if(hasCentreMark(c.view,c.x,c.y))return setHint('That centre already has a mark');
+      draw.marks.push({id:draw.uid++,view:c.view,kind:'centre',x:c.x,y:c.y,r:c.r});
+      renderSheet(); refreshDrawTree();
+      return setHint('Centre mark placed — click it and press Delete to remove it');
+    }
+    const ax=snapAxis(sx,sy);
+    if(!ax)return setHint('No axis there — click along a hole or a shaft seen from the side');
+    if(hasCentreline(ax.view,ax.a,ax.b))return setHint('That axis already has a centreline');
+    draw.marks.push({id:draw.uid++,view:ax.view,kind:'line',
+                     a:{x:ax.a.x,y:ax.a.y}, b:{x:ax.b.x,y:ax.b.y}});
+    renderSheet(); refreshDrawTree();
+    setHint('Centreline placed — click it and press Delete to remove it');
   }
   function dimValue(d){
     if(d.kind==='horiz')return Math.abs(d.b.x-d.a.x);
@@ -9305,6 +10145,121 @@ const CSG = (function(){
     // an invisible fat line so a 0.25 mm dimension is still clickable
     g.appendChild(mk('line',{x1:p1.x,y1:p1.y,x2:p2.x,y2:p2.y,stroke:'transparent',
       'stroke-width':3,'pointer-events':'stroke'}));
+    svg.appendChild(g);
+  }
+  /* ---- centre marks and centrelines ------------------------------------------
+     Stored against a view in the view's own coordinates, exactly as dimensions
+     are (trap 21), so they travel with the view when it is dragged and survive a
+     change of sheet scale. Drawn in sheet millimetres, because a centre mark is
+     a fixed size on the PAPER — a 2 mm cross at 1:1 has to stay a 2 mm cross at
+     1:10, or it vanishes on a small view and swamps a large one. */
+  const CHAIN='2.6 0.9 0.7 0.9';          // long-short-long, the centreline convention
+  /* Nearest circle rim to a point on the sheet. Rim, not centre: two concentric
+     circles — a bore inside a boss — are told apart by which rim you clicked,
+     and there is nothing else to tell them apart by. */
+  function snapCircle(sx,sy){
+    let best=null,bd=Infinity;
+    for(const v of draw.views){
+      if(!v.geo||!v.geo.circles)continue;
+      const s=v.scale||fitScale();
+      for(const c of v.geo.circles){
+        const p=toSheet(v,c.x,c.y);
+        const d=Math.abs(Math.hypot(sx-p.x,sy-p.y)-c.r*s);
+        if(d<bd){bd=d;best={view:v.id,x:c.x,y:c.y,r:c.r,sx:p.x,sy:p.y,sr:c.r*s,d};}
+      }
+    }
+    return (best&&best.d<=(lastCoarse?6:3))?best:null;   // mm of paper; fingers get more
+  }
+  function hasCentreMark(view,x,y){
+    return (draw.marks||[]).some(m=>m.kind==='centre'&&m.view===view&&
+      Math.hypot(m.x-x,m.y-y)<1e-6);
+  }
+  /* Nearest detected axis to a point on the sheet. */
+  function snapAxis(sx,sy){
+    let best=null,bd=Infinity;
+    for(const v of draw.views){
+      if(!v.geo||!v.geo.axes)continue;
+      for(const ax of v.geo.axes){
+        const A=toSheet(v,ax.a.x,ax.a.y), B=toSheet(v,ax.b.x,ax.b.y);
+        const ux=B.x-A.x, uy=B.y-A.y, L2=ux*ux+uy*uy;
+        if(L2<1e-9)continue;
+        let t=((sx-A.x)*ux+(sy-A.y)*uy)/L2; t=Math.max(0,Math.min(1,t));
+        const d=Math.hypot(sx-(A.x+ux*t), sy-(A.y+uy*t));
+        if(d<bd){bd=d;best={view:v.id,a:ax.a,b:ax.b,sa:A,sb:B,d};}
+      }
+    }
+    return (best&&best.d<=(lastCoarse?6:3))?best:null;   // mm of paper; fingers get more
+  }
+  function hasCentreline(view,a,b){
+    return (draw.marks||[]).some(m=>m.kind==='line'&&m.view===view&&
+      Math.hypot(m.a.x-a.x,m.a.y-a.y)<1e-6&&Math.hypot(m.b.x-b.x,m.b.y-b.y)<1e-6);
+  }
+  /* One command for the whole view, because that is how anybody actually wants
+     it: every hole gets its cross, every axis gets its line, in one go. */
+  function addAllCentreMarks(v){
+    if(!v)return setHint('Select a view first');
+    if(!v.geo)return setHint('That view has not been built yet');
+    /* One mark per centre, sized to the biggest circle there: a bore inside a
+       boss is one axis, not two, and two coincident crosses just print heavier. */
+    const byC=new Map();
+    for(const c of (v.geo.circles||[])){
+      const k=Math.round(c.x*100)+':'+Math.round(c.y*100);
+      const cur=byC.get(k);
+      if(!cur||c.r>cur.r)byC.set(k,c);
+    }
+    let n=0;
+    for(const c of byC.values()){
+      if(hasCentreMark(v.id,c.x,c.y))continue;
+      draw.marks.push({id:draw.uid++,view:v.id,kind:'centre',x:c.x,y:c.y,r:c.r}); n++;
+    }
+    let m=0;
+    for(const ax of (v.geo.axes||[])){
+      if(hasCentreline(v.id,ax.a,ax.b))continue;
+      draw.marks.push({id:draw.uid++,view:v.id,kind:'line',
+                       a:{x:ax.a.x,y:ax.a.y}, b:{x:ax.b.x,y:ax.b.y}}); m++;
+    }
+    renderSheet(); refreshDrawTree();
+    const bits=[];
+    if(n)bits.push(n+' centre mark'+(n===1?'':'s'));
+    if(m)bits.push(m+' centreline'+(m===1?'':'s'));
+    setHint(bits.length?bits.join(' and ')+' added'
+      :((v.geo.circles||[]).length||(v.geo.axes||[]).length
+        ?'That view already has them all'
+        :'Nothing round in that view to mark'));
+  }
+  function drawMarkGeom(svg,m){
+    const v=viewOf(m.view); if(!v||!v.geo)return;
+    const s=v.scale||fitScale();
+    const col=(drawSel==='m'+m.id)?'#4285F4':'#111';
+    const g=mk('g',{class:'dw-mark','data-mark':m.id});
+    const line=(a,b,dash)=>g.appendChild(mk('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,
+      stroke:col,'stroke-width':0.22,'stroke-dasharray':dash||'none'}));
+    if(m.kind==='centre'){
+      const c=toSheet(v,m.x,m.y), R=Math.abs(m.r||0)*s;
+      const inner=Math.min(1.5,Math.max(0.7,R*0.55));
+      const outer=R+Math.min(3,Math.max(1.2,R*0.35));
+      line({x:c.x-inner,y:c.y},{x:c.x+inner,y:c.y});
+      line({x:c.x,y:c.y-inner},{x:c.x,y:c.y+inner});
+      /* The gap between the cross and the chain line is the convention, not an
+         accident — it is what distinguishes a centre mark from a plain cross. */
+      if(outer>inner*1.6+0.4)
+        for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]])
+          line({x:c.x+dx*inner*1.6,y:c.y+dy*inner*1.6},{x:c.x+dx*outer,y:c.y+dy*outer},CHAIN);
+      g.appendChild(mk('circle',{cx:c.x,cy:c.y,r:Math.max(1.6,R*0.45),fill:'transparent',
+        'pointer-events':'all'}));
+    } else {
+      const A=toSheet(v,m.a.x,m.a.y), B=toSheet(v,m.b.x,m.b.y);
+      /* The 2.5 mm overshoot past the feature is added HERE, not stored: it is
+         a distance on the paper, so it has to stay 2.5 mm when the sheet scale
+         changes. Bake it into the stored ends and a 1:10 view grows a 25 mm
+         tail. */
+      const ux=B.x-A.x, uy=B.y-A.y, L=Math.hypot(ux,uy);
+      const ex=L>1e-9?ux/L*2.5:0, ey=L>1e-9?uy/L*2.5:2.5;
+      const P0={x:A.x-ex,y:A.y-ey}, P1={x:B.x+ex,y:B.y+ey};
+      line(P0,P1,CHAIN);
+      g.appendChild(mk('line',{x1:P0.x,y1:P0.y,x2:P1.x,y2:P1.y,stroke:'transparent',
+        'stroke-width':3,'pointer-events':'stroke'}));
+    }
     svg.appendChild(g);
   }
   const SVGNS='http://www.w3.org/2000/svg';
@@ -9391,7 +10346,19 @@ const CSG = (function(){
         t.textContent=kk?VIEW_DIRS[kk].label:''; svg.appendChild(t);
       }
     }
+    for(const m of (draw.marks||[]))drawMarkGeom(svg,m);
     for(const d of (draw.dims||[]))drawDimGeom(svg,d);
+    /* What the next click would take, lit up — the same courtesy the dimension
+       tool already extends, and just as necessary: without it you are aiming at
+       a rim you cannot pick out from the line beside it. */
+    if(drawTool==='cmark'&&markHover){
+      svg.appendChild(mk('circle',{cx:markHover.sx,cy:markHover.sy,r:Math.max(1.4,markHover.sr),
+        fill:'none',stroke:'#4285F4','stroke-width':0.5,opacity:0.85}));
+      svg.appendChild(mk('circle',{cx:markHover.sx,cy:markHover.sy,r:0.7,fill:'#4285F4'}));
+    }
+    if(drawTool==='cline'&&markHover&&markHover.sa)
+      svg.appendChild(mk('line',{x1:markHover.sa.x,y1:markHover.sa.y,
+        x2:markHover.sb.x,y2:markHover.sb.y,stroke:'#4285F4','stroke-width':0.7,opacity:0.85}));
     /* Half a dimension, drawn as you place it: the corners you have picked and
        a rubber line between them, so you can see what you are measuring. */
     if(drawTool==='dim'&&dimHover){
@@ -9408,10 +10375,20 @@ const CSG = (function(){
         'stroke-dasharray':'1 0.8'}));
     }
     drawTitleBlock(svg,W,H,S);
-    svg.style.cursor=(drawTool==='dim')?'crosshair':'default';
+    svg.style.cursor=drawTool?'crosshair':'default';
+    svg.querySelectorAll('.dw-mark').forEach(g=>{
+      g.addEventListener('pointerdown',e=>{
+        if(drawTool)return;
+        e.preventDefault(); e.stopPropagation();
+        drawSel='m'+ +g.dataset.mark;
+        renderSheet(); refreshDrawTree();
+        setHint('Delete removes it');
+      });
+      g.style.cursor='pointer';
+    });
     svg.querySelectorAll('.dw-dim').forEach(g=>{
       g.addEventListener('pointerdown',e=>{
-        if(drawTool==='dim')return;
+        if(drawTool)return;
         e.preventDefault(); e.stopPropagation();
         const d=(draw.dims||[]).find(x=>x.id===+g.dataset.dim); if(!d)return;
         drawSel='d'+d.id;
@@ -9425,7 +10402,7 @@ const CSG = (function(){
     });
     svg.querySelectorAll('.vw').forEach(g=>{
       g.addEventListener('pointerdown',e=>{
-        if(drawTool==='dim')return;      // clicking a view means "measure here"
+        if(drawTool)return;              // clicking a view means "annotate here"
         e.preventDefault();
         const id=+g.dataset.id, v=draw.views.find(x=>x.id===id); if(!v)return;
         drawSel=id; refreshDrawTree();
@@ -9437,7 +10414,7 @@ const CSG = (function(){
         renderSheet();
       });
       g.addEventListener('pointermove',e=>{
-        if(drawTool==='dim'||sheetDrag||projDrag)return;
+        if(drawTool||sheetDrag||projDrag)return;
         const id=+g.dataset.id, v=draw.views.find(x=>x.id===id); if(!v)return;
         const r=svg.getBoundingClientRect(), k=W/r.width;
         const inBand=!!projectDrag(v,(e.clientX-r.left)*k,(e.clientY-r.top)*k);
@@ -9545,6 +10522,10 @@ const CSG = (function(){
     v_back   :{ic:'normal', label:'Back view',      fn:()=>addDrawView('back')},
     v_iso    :{ic:'iso',    label:'Isometric view', fn:()=>addDrawView('iso')},
     d_dim    :{ic:'dim',    label:'Dimension',      fn:()=>startDrawDim()},
+    d_cmark  :{ic:'cmark',  label:'Centre mark',    fn:()=>startDrawTool('cmark')},
+    d_cline  :{ic:'ctrline',label:'Centreline',     fn:()=>startDrawTool('cline')},
+    d_cmarks :{ic:'cmark',  label:'Mark every circle and axis',
+                 fn:()=>addAllCentreMarks(draw.views.find(x=>x.id===drawSel)||draw.views[0])},
     d_model  :{ic:'open',   label:'Draw a saved part…',fn:()=>$('file-draw').click()},
     d_hidden :{ic:'suppress',label:'Hidden detail', fn:()=>$('btn-dw-hidden').click(),
                  dyn:()=>draw.hidden?'Hide hidden detail':'Show hidden detail'},
@@ -9577,7 +10558,7 @@ const CSG = (function(){
     d_back   :{ic:'edit',   label:'Back to the model',fn:()=>setDocMode(drawReturn)}
   };
   const DEFAULT_DRAW_LAYOUT=[
-    {name:'Drawing',   ids:['d_dim','d_model','d_back']},
+    {name:'Drawing',   ids:['d_dim','d_cmark','d_cline','d_cmarks','d_model','d_back']},
     {name:'Views',     ids:['v_front','v_top','v_right','v_left','v_bottom','v_back','v_iso']},
     {name:'Sheet',     ids:['d_sheet','d_orient','d_scale','d_fit','d_hidden','d_angle','d_shade']},
     {name:'Output',    ids:['d_print','d_svg']}
@@ -9619,6 +10600,8 @@ const CSG = (function(){
       b.innerHTML=icHTML(c.ic)+'<span class="lbl">'+(c.dyn?c.dyn():c.label).replace(/[…:].*$/,'')+'</span>';
       b.title=c.dyn?c.dyn():c.label;
       if(id==='d_dim')b.classList.toggle('active',drawTool==='dim');
+      if(id==='d_cmark')b.classList.toggle('active',drawTool==='cmark');
+      if(id==='d_cline')b.classList.toggle('active',drawTool==='cline');
       b.addEventListener('click',()=>{ c.fn(); refreshDrawDock(); });
       d.appendChild(b);
     }
@@ -9679,6 +10662,11 @@ const CSG = (function(){
     if(shutAll)parentsWithSketches().forEach(f=>collapsed.add(f.id));
     refreshTree();
   });
+  /* The Delete key, for hands that don't have one. The window keydown handler
+     already knows what Delete means in every mode, so the button asks it. */
+  $('btn-del').addEventListener('click',()=>{
+    window.dispatchEvent(new KeyboardEvent('keydown',{key:'Delete',bubbles:true}));
+  });
   $('btn-undo').addEventListener('click',undo);
   $('btn-redo').addEventListener('click',redo);
   try{ if(localStorage.getItem('fcad-icons')==='1') setIconsOnly(true); }catch(_){}
@@ -9734,7 +10722,7 @@ const CSG = (function(){
     const r=$('btn-add').getBoundingClientRect();
     menu.style.left=r.left+'px';menu.style.top=(r.bottom+6)+'px';menu.classList.toggle('open');
     const hasSketch=!!lastSketchId();
-    menu.querySelectorAll('[data-add]').forEach(b=>{const a=b.dataset.add;b.disabled=(['extrude','cut','revolve','rcut'].includes(a)&&!hasSketch);});
+    menu.querySelectorAll('[data-add]').forEach(b=>{const a=b.dataset.add;b.disabled=(['extrude','cut','revolve','rcut','sweep','swcut'].includes(a)&&!hasSketch);});
     e.stopPropagation();
   });
   document.addEventListener('click',e=>{if(!menu.contains(e.target)&&e.target.id!=='btn-add')menu.classList.remove('open');});
@@ -9812,7 +10800,7 @@ const CSG = (function(){
     if(!resume){
       draw={sheet:$('dw-sheet').value||'A3',orient:$('dw-orient').value||'landscape',
             scale:+($('dw-scale').value||0),angle:+($('dw-angle').value||3),
-            hidden:true,title:'',views:[],dims:[],uid:1};
+            hidden:true,title:'',views:[],dims:[],marks:[],uid:1};
       drawSel=null; clearDrawModel();
     }
     setDocMode('draw');
@@ -9847,17 +10835,18 @@ const CSG = (function(){
   $('sheet-wrap').addEventListener('contextmenu',e=>{
     if(docMode!=='draw')return;
     e.preventDefault(); e.stopPropagation();
-    if(cancelDrawDim(true)){ refreshDrawDock(); }
+    if(cancelDrawTool(true)){ refreshDrawDock(); }
     openDrawMenu(e.clientX,e.clientY);
   });
   /* The sheet element outlives every redraw, so this is bound once. Binding it
      inside renderSheet stacked a handler per redraw, and one click then walked
      the dimension pick two or three steps at a time. */
   $('sheet').addEventListener('pointerdown',e=>{
-    if(drawTool!=='dim')return;
+    if(!drawTool)return;
     e.preventDefault(); e.stopPropagation();
     const svg=$('sheet'), r=svg.getBoundingClientRect(), k=sheetSize()[0]/r.width;
-    sheetDimClick((e.clientX-r.left)*k,(e.clientY-r.top)*k);
+    const sx=(e.clientX-r.left)*k, sy=(e.clientY-r.top)*k;
+    if(drawTool==='dim')sheetDimClick(sx,sy); else sheetMarkClick(sx,sy);
   },true);
   $('btn-dw-model').addEventListener('click',()=>$('file-draw').click());
   $('file-draw').addEventListener('change',e=>{
@@ -9878,12 +10867,22 @@ const CSG = (function(){
   /* The glow follows the cursor whenever the dimension tool is in hand, so
      you can see which corner the next click takes before you commit to it. */
   $('sheet').addEventListener('pointermove',e=>{
-    if(docMode!=='draw'||drawTool!=='dim'||dimDrag)return;
+    if(docMode!=='draw'||!drawTool||dimDrag)return;
     const svg=$('sheet'), r=svg.getBoundingClientRect(), k=sheetSize()[0]/r.width;
-    const h=snapDimPoint((e.clientX-r.left)*k,(e.clientY-r.top)*k);
-    const was=dimHover?dimHover.sx+','+dimHover.sy:null;
-    const now=h?h.sx+','+h.sy:null;
-    if(was!==now){ dimHover=h; renderSheet(); }
+    const sx=(e.clientX-r.left)*k, sy=(e.clientY-r.top)*k;
+    if(drawTool==='dim'){
+      const h=snapDimPoint(sx,sy);
+      const was=dimHover?dimHover.sx+','+dimHover.sy:null;
+      const now=h?h.sx+','+h.sy:null;
+      if(was!==now){ dimHover=h; renderSheet(); }
+      return;
+    }
+    const h=(drawTool==='cmark')?snapCircle(sx,sy):snapAxis(sx,sy);
+    /* Re-render only when the thing under the cursor actually changes — a
+       pointermove redraw of the whole sheet on every pixel is not free. */
+    const idOf=x=>x?(drawTool==='cmark'?x.x+','+x.y+','+x.r
+                                       :x.a.x+','+x.a.y+','+x.b.x+','+x.b.y):null;
+    if(idOf(h)!==idOf(markHover)){ markHover=h; renderSheet(); }
   });
   window.addEventListener('pointermove',e=>{
     if(!sheetDrag&&!projDrag&&!dimDrag)return;
@@ -10098,12 +11097,18 @@ const CSG = (function(){
       else if(combo===keyFor('spline')){tool='spline';dockSel();}
       else if(combo===keyFor('dim')){e.preventDefault();tool='dim';dockSel();setHint('Dimension: click a line, circle or rectangle edge, then type a value');}
     } else if(docMode==='draw'){
-      if(e.key==='Escape'){ if(!cancelDrawDim())setDocMode(drawReturn); }
+      if(e.key==='Escape'){ if(!cancelDrawTool())setDocMode(drawReturn); }
       else if(e.key==='Delete'||e.key==='Backspace'){
         if(typeof drawSel==='string'&&drawSel[0]==='d'){
           const id=+drawSel.slice(1);
           draw.dims=draw.dims.filter(x=>x.id!==id); drawSel=null;
           renderSheet(); setHint('Dimension removed');
+        } else if(typeof drawSel==='string'&&drawSel[0]==='m'){
+          const id=+drawSel.slice(1);
+          const gone=(draw.marks||[]).find(x=>x.id===id);
+          draw.marks=(draw.marks||[]).filter(x=>x.id!==id); drawSel=null;
+          renderSheet(); refreshDrawTree();
+          setHint((gone&&gone.kind==='line'?'Centreline':'Centre mark')+' removed');
         } else { const v=draw.views.find(x=>x.id===drawSel); if(v)removeDrawView(v); }
       }
       else if(combo===keyFor('dim'))startDrawDim();
@@ -10169,7 +11174,7 @@ const CSG = (function(){
     set selectedEdges(v){ selectedEdges = v; },
     get propsFeat(){ return propsFeat; },
     get draftFeat(){ return draftFeat; },
-    insertFeature, defaults, addFeature, rebuild, openProps, closeProps,
+    insertFeature, deleteFeature, defaults, addFeature, rebuild, openProps, closeProps,
     selectFeature, nextId: () => nextId(), renderer, scene,
     get camera(){return camera}, setProjection, get orthoOn(){return orthoOn}, controls, fitAll,
     OCK, featureEdges,
@@ -10184,7 +11189,8 @@ const CSG = (function(){
     get asmMeshes(){ return asmMeshes; },
     addComponent, setDocMode, buildPartShapes, asmTransformedShapes, removeComponent,
     get draw(){ return draw; }, addDrawView, buildView, renderSheet, fitScale,
-    sheetSVGText, removeDrawView, rebuildDrawViews, sheetSize,
+    sheetSVGText, removeDrawView, rebuildDrawViews, sheetSize, addDrawView, buildView,
+    get draw(){ return draw; }, renderSheet, addAllCentreMarks, toSheet, fitScale,
     startMate, cancelMate, fitFace, faceRegion, applyMate, applyCompTransform,
     get mateSel(){ return mateSel; }, perimeterHit, datumAt, mateEndAt, updateDatumVis,
     isSpline, splinePath, splinePts, splineTangent, splineHandles, splineInsertPoint,
@@ -10196,7 +11202,12 @@ const CSG = (function(){
     snap(){ renderer.render(scene, camera); return renderer.domElement.toDataURL('image/jpeg', 0.85); }
   };
 
+  /* Coarse-pointer devices get the Delete button (they have no Delete key).
+     maxTouchPoints catches a touch laptop whose primary pointer is fine. */
+  if((window.matchMedia&&matchMedia('(any-pointer: coarse)').matches)||navigator.maxTouchPoints>0)
+    document.documentElement.classList.add('touch');
   function boot(){
+    if(restoreAutosave()){ updateHelp(); refreshDemoTgl(); return; }
     if(demoPref()){ bootDemo(); }
     else { rebuild(); setHint('Click a plane to start a sketch · right-click for all commands'); }
     updateHelp(); refreshDemoTgl();

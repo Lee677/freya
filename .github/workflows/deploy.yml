@@ -1,0 +1,29 @@
+# Deploys the site to Cloudflare Pages (project "cad") on every push to main.
+#
+# Inert until two repository secrets exist (Settings -> Secrets and variables
+# -> Actions): CLOUDFLARE_API_TOKEN (a token with the "Cloudflare Pages: Edit"
+# permission) and CLOUDFLARE_ACCOUNT_ID. Without them the job exits green and
+# says why, so nothing turns red while the secrets are missing — and once they
+# are set, "git push" IS the deploy, from any machine, including remote
+# sessions that have no wrangler login of their own.
+name: deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  pages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "Cloudflare secrets not set - skipping deploy (this is fine)."
+            echo "Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID as Actions secrets to enable auto-deploy."
+            exit 0
+          fi
+          npx wrangler pages deploy . --project-name=cad

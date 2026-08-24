@@ -36,33 +36,41 @@ looks like the deploy failed when it did not.
 
 **The job in progress** is closing the gap to SolidWorks and FreeCAD, working through
 `FEATURE-MATRIX.html` **cheapest first**. The matrix carries a token estimate per gap and
-`dev/matrix_done.py` ticks a row and recomputes the tallies. As of this writing: **36 ✅ ·
-6 ◐ · 33 ✗**, 39 gaps, ~7.67M tokens. The working agreement has been: one item at a time,
+`dev/matrix_done.py` ticks a row and recomputes the tallies. As of this writing: **42 ✅ ·
+3 ◐ · 31 ✗**, 34 gaps, ~7.27M tokens (the 42nd row is tablet support, added done).
+
+**freyacad also runs on an iPad now.** Phones still get the gate; anything with a ≥600 px
+short side gets the app, with one finger orbiting, two fingers panning and pinch-zooming, a
+long press for the right-click menus, a Delete button on coarse-pointer devices, and an
+Apple Pencil as a precision pointer. The document autosaves to localStorage against
+iPadOS tab eviction (trap 37). Tested with emulated touch in Chromium; a real iPad has not
+touched it yet, so the first hands-on session is worth watching. The working agreement has been: one item at a time,
 each committed, deployed and reported before starting the next.
+
+The three scope rows — Mirror, linear pattern, circular pattern — were taken together as one
+job, because they were one bug (trap 22). All three are ticked.
 
 Next up, in cost order (IGES was on this list at 40k and was explicitly dropped):
 
 | | |
 |---|---|
-| 50k | Centre marks & centrelines (drawings) |
-| 60k | Scope Mirror to chosen features rather than the whole body |
 | 60k | Distance & angle mates |
-| 70k | Scope linear / circular patterns the same way |
 | 70k | Shell · Interference detection |
 | 80k | Draft · Bill of materials |
 | 90k | Geometric constraints (the rest) · Variable-radius fillet · Exploded views · Diameter/radius/angular drawing dims · Notes, leaders & balloons |
+| 110k+ | Detail views · control-point splines · curve-driven patterns · DXF/DWG · trim/offset/extend · lofted boss |
 
-Three of those are related and worth doing together if anyone wants a bigger swing: Mirror,
-linear pattern and circular pattern all copy the **whole body** today (trap 22), which is
-both the wrong behaviour and the reason the demo models avoid patterns entirely. Fixing the
-scope once fixes all three.
+(IGES sits at 40k and would be the cheapest row left, but it was dropped on purpose and stays
+dropped unless someone asks for it.)
 
 **Performance is done for now.** Lantern 5.5 s cold, pillow block 0.6 s, jet engine 10.5 s,
 warm edits near the top of a tree under a second. See "Where the remaining time goes" at the
 foot of this file for the one lever left, which is not a kernel change at all.
 
 **Verify with `dev/verify.js`.** Read `dev/README.md` first — the A/B-against-the-previous-
-commit routine is what caught every regression in this work, and it is cheap.
+commit routine is what caught every regression in this work, and it is cheap. `dev/headless.js`
+now runs any of the suites without a browser window, so verification no longer depends on
+having a visible pane to paste into.
 
 ## Shape of the thing
 
@@ -236,16 +244,48 @@ commit routine is what caught every regression in this work, and it is cheap.
     not inside the view's `scale(s,-s)` group — put text in there and it comes out
     mirrored and scaled.
 
-22. **`cpattern` and `lpattern` copy the whole body, not the feature above them.** Both
-    take `resultShapes.slice()` as their base, so a circular pattern placed after one flute
-    clones the hull, the flute and everything else built so far — and with `merge:true`
-    that is a boolean union per copy. An early lantern demo chained a 7-, a 3- and a
-    5-count pattern and produced 105 bodies to fuse; the page never came back, and the
-    symptom read as "the app hangs on this model" rather than "this model is wrong". Where
-    the pattern is really a ring of identical features, prefer several loops in one sketch:
-    both demo models get four-fold symmetry from two mirrored profiles on Front repeated on
-    Right, and each engine rotor is one sketch of a dozen curved blades extruded in a single
-    feature. Neither uses a pattern at all.
+22. **Mirror and both patterns take a scope; without one they still copy the whole body.**
+    They used to have no choice about it: all three took `resultShapes.slice()` as their
+    base, so a circular pattern placed after one flute cloned the hull, the flute and
+    everything else built so far — and with `merge:true` that is a boolean union per copy.
+    An early lantern demo chained a 7-, a 3- and a 5-count pattern and produced 105 bodies
+    to fuse; the page never came back, and the symptom read as "the app hangs on this model"
+    rather than "this model is wrong".
+
+    `f.scope` is now a list of feature ids. Absent or empty still means the whole body, which
+    is what every part saved before this expects, so the old behaviour had to stay reachable
+    rather than be replaced. With a scope, the copies are the scoped features' **tool**
+    shapes — the prism an extrude fused in, the prism a cut removed — transformed and applied
+    again with the operation their source used. That is the whole trick: patterning a hole
+    cuts more holes because the hole's tool is a cutting prism, not a lump.
+
+    Five things hold it together, and each one is load-bearing:
+
+    * **`featTools` only lives for one rebuild.** `noteTool` files each tool under its
+      feature's id as it is built. Nothing owns those shapes — booleans run
+      non-destructive (trap 29), so a tool outlives the boolean that consumed it.
+    * **A checkpoint may not skip a scoped source.** The tool exists only if the feature
+      actually ran, so `rebuild` refuses any checkpoint at or above the shallowest feature a
+      scope points at (`scopeFloor`). Take that guard out and `dev/verify-live.js` case
+      `patternPanel` reads 894.272 instead of 745.832 — the pattern silently drops every
+      copy, and worse, the wrong body gets pinned into a checkpoint. It fails exactly when
+      you open the pattern's own panel, which bars the checkpoint taken AT the pattern and
+      sends the search down to the flush just below it.
+    * **Tools are resolved in tree order, not tick order.** Scope a boss and a cut together
+      and the boss has to be fused before the cut is cut, or the boss fills the hole back
+      in. `scopeTools` walks `features`, not `f.scope`.
+    * **Copies are grouped tool-major**, so all N instances of one boss are a single fuse.
+      Trap 26 again: what bills is the number of booleans.
+    * **`deleteFeature` strips the id from every scope.** Ids get reissued, so a dangling
+      reference would eventually point at something unrelated rather than at nothing.
+
+    A fillet cannot be scoped and this is not an oversight: it reshapes the body's edges
+    rather than contributing a shape, so there is no tool to copy. Put the pattern before the
+    fillet. `SCOPEABLE` is the list; the manual states the limit.
+
+    The demo models still use mirrored loops in one sketch rather than patterns — that was
+    the right call for other reasons (one sketch, one extrude, no booleans at all) and it was
+    not revisited. Rebuilding them on patterns is now possible, and would be a fair test.
 23. **Loops in one sketch must not overlap each other.** The first jet-engine rotor set the
     blade half-thickness as an arc *length*, so the angular half-width was `half/r` — at the
     root radius that made each blade wider than the gap between blades, and the profiles
@@ -425,6 +465,117 @@ commit routine is what caught every regression in this work, and it is cheap.
     Taking a key from another command clears that command's override — and if the key taken was
     that command's own default, it is set to "no key" instead, otherwise it would silently take
     the key straight back.
+
+34. **Find a circle in SPACE, not on the sheet.** A centre mark needs a hole's centre and a
+    centreline needs its axis, and by the time the model reaches a drawing there are no
+    circles left to ask: the solid is tessellated, so a Ø6 bore is a ring of chords, and
+    `buildView` projects those chords. Two things went wrong before this landed, and both are
+    worth keeping.
+
+    * **Chaining the PROJECTED chords finds nothing at all.** A through hole's near and far
+      rims are different edges in space that land on exactly the same circle on the sheet
+      (trap 20 says so about the drawn result; it is just as true of the graph underneath).
+      Every 2D vertex therefore has four edges at it rather than two, no walk can continue
+      past one, and not a single loop closes. Measured, not guessed: the degree histogram of
+      a plate with two holes was `{4: 76}` projected and `{2: 144, 3: 8}` in space. Dedupe
+      the projected segments and it works — `chainLoops` does, and says why.
+    * **A projected circle is only ever a circle you are looking straight at.** That is
+      enough for a centre mark and useless for a centreline: a shaft seen from the side has
+      no circle on the sheet at all. The first version took "the line midway between two
+      parallel edges" instead, which on a shaft picks the two rim projections — and those
+      are square across the axis, so the centreline came out at ninety degrees to the truth.
+      The fix was to move the whole detector into 3D: `modelCircles` fits plane-and-circle to
+      each closed 3D loop, `axisGroups` merges circles that share an axis, and `buildView`
+      then asks one question per view — is this axis pointing at the eye or across it.
+      Face-on within 12° draws a cross, edge-on within 12° draws a line, and anything between
+      is an ellipse on the sheet and gets neither, which is what a draughtsman would do.
+
+    The polygon exclusion is a real limit, not a bug: a regular polygon's corners lie exactly
+    on a circle, so the fit alone cannot tell a hexagonal boss from a bore. `CIRC_MIN_SIDES`
+    is 12 and the manual states the consequence. `fitCircle3D` also refuses a non-planar loop,
+    which is what keeps the round-in-plan top of a fillet from collecting a centre mark.
+
+35. **The drawing dock was underneath the sheet, and had been all along.** `.sheet-wrap` is
+    `z-index:14` so a drawing covers the 3D canvas outright (trap 20), and it is `inset:0`, so
+    it covers the whole viewport. `.dock` is `z-index:10`. Every button in the drawing's
+    floating dock — Dimension included — was therefore sitting under a sheet of paper and
+    could not be clicked at all, and the right-click menu was the only way to reach a drawing
+    command. Nothing looked wrong, which is why it survived: the dock is drawn, it lights up
+    on hover-free redraws, it simply never receives a click. `#dock-draw{z-index:15}` fixes it.
+    Found by a real hit-tested click in the headless harness, not by reading the CSS — it
+    is exactly the class of thing that only a real click finds.
+
+36. **`BRepOffsetAPI_MakePipeShell`: two of its flags will quietly ruin a sweep.** Both were
+    found by measuring against volumes that are known exactly, and neither announces itself.
+
+    * **`Add_1(profile, WithContact, WithCorrection)` must take `false, false`.** `WithContact`
+      reads as "put the profile on the path", and it does not: it translates the profile until
+      it *touches* the spine, which for a centred section moves it off the axis by its own
+      half-width. A Ø4 tube swept round a Ø20 ring then sweeps about Ø24. The torus is what
+      settles it, because its volume is exactly 2πR·πr²: **947.48 with contact on, 789.568 with
+      it off, and 789.568 is the answer.** Every curved path was reading about 10% heavy and it
+      looked like a kernel quirk rather than a flag. The profile is swept where it was drawn.
+    * **`BRepBuilderAPI_Transformed`, OCCT's DEFAULT transition mode, silently truncates.** On a
+      path of a 20 leg and a 15 leg it sweeps the first leg, drops the second, reports `IsDone`,
+      returns a solid that `BRepCheck_Analyzer` calls valid, and measures exactly the first 20.
+      `RightCorner` is used instead and measures exact on every path shape tried; `RoundCorner`
+      is the fallback and differs by about half a percent on a right angle. Transformed is not
+      in the list at all.
+
+    A third trap has no flag behind it: **`IsDone()` and `MakeSolid()` both return true for a
+    shape with no volume.** A bend whose radius equals the profile's half-width pinches the
+    inside of the tube to a line, and OCCT hands back a zero-volume solid rather than refusing.
+    That would reach the tree as a feature that silently does nothing, so `runPipe` measures the
+    result and treats zero as a failure, which sends it to the next transition mode — and
+    `RoundCorner` builds that case correctly.
+
+    Two things about the sweep that are not OCCT's doing. The path is chained by `pathChain`,
+    which is `stitchLoops` for OPEN runs — a profile that does not close is not a profile, but a
+    path that does not close is the normal case, so it could not simply reuse it. And the path
+    honours **sketch fillets** (trap 32): without that, a rounded corner drawn on the path would
+    show rounded on screen and sweep square, and rounding the path corner is the right answer to
+    a sharp bend anyway.
+
+    Regression cover is four cases in `dev/verify.js`, all analytic rather than baseline:
+    a swept solid of section A along a path of length L has volume **A·L exactly**, on a
+    straight path and round a mitred corner alike, because the wedge the mitre cuts off one leg
+    is the wedge it adds to the other.
+
+37. **Touch is a capture-phase overlay, and three prior decisions made it cheap.** The whole
+    tablet grammar — one finger = the pointer, two fingers = pan/pinch, long press =
+    right-click — lives in one listener block on `document` in the CAPTURE phase, beside the
+    Controls. Ancestor capture listeners run before the target's own even when a drag is
+    pointer-captured to the canvas, so the second finger can be swallowed there before any
+    sketch handler sees it. Do not try to register the interceptor on the canvas itself: at
+    the target element, capture and bubble listeners fire in plain registration order, and
+    this block is parsed long after the handlers it must outrank.
+
+    What makes a pinch SAFE rather than merely possible: sketch clicks dispatch on
+    **pointerup behind a 5 px movement guard** (a pinch's fingers move, so it can never place
+    geometry), and drags **arm on pointerdown but only act on pointermove**, so
+    `cancelAppGesture` can take back an armed drag whole — it restores the pushUndo snapshot
+    — before anything has moved. Anything that changes either of those invariants breaks
+    two-finger navigation silently. The long press dies past 5 px for the same reason the
+    canvas contextmenu handler ignores drags past 5 px: the two guards must agree or a slow
+    press opens a menu the handler then refuses.
+
+    `lastCoarse` (was the last pointer a finger?) widens pick tolerances by ~1.8× for
+    fingers only — a Pencil reports pointerType 'pen' and keeps mouse precision. And
+    `touch-action:none` on the canvases is load-bearing: without it the browser answers the
+    pinch itself and the pointermoves never arrive.
+
+38. **Autosave exists because iPadOS evicts tabs, and its three rules matter.** The document
+    rides in localStorage, debounced 1.2 s off `rebuild()` (every change passes through
+    there) and flushed on `visibilitychange`/`pagehide`, because eviction gives no later
+    chance. On boot it restores before the demo pref gets a say. The rules: a payload over
+    ~4.5 MB is skipped (embedded STEP imports can exceed the quota, and the last good save
+    is better than a failed one); a **pristine demo is never restored as "your work"** —
+    part demos compare exactly against the registry and boot fresh on a match, assembly
+    demos always boot fresh (their stored form differs from the registry form, so edits to a
+    demo assembly forfeit the net — rare, documented); and `ckptOff` gates the save so
+    `buildPartShapes`' borrowed state is never written. Note `dev/verify-live.js` ends by
+    clearing the document, which empties the autosave — run it in a browser you care about
+    and your net is gone until the next edit.
 
 ## Biggest thing still missing
 

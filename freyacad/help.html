@@ -88,6 +88,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line-soft);
   <div class="grp">Interface</div>
   <a href="#layout">The layout</a>
   <a href="#navigate">Getting around</a>
+  <a href="#touch">On an iPad</a>
   <a href="#views">Views &amp; projection</a>
   <div class="grp">Sketching</div>
   <a href="#sketch">Making a sketch</a>
@@ -265,6 +266,33 @@ drop back with <kbd>Ctrl</kbd>+<kbd>8</kbd>.</p>
 </ul>
 <p>Both cameras share one orbit, so the swap holds your position and framing — only the
 projection changes.</p>
+
+<h2 id="touch">freyacad on an iPad</h2>
+<p>Open the same address on an iPad (or any large tablet) and the whole workshop comes with
+it — the real kernel, the same files. The controls translate the obvious way:</p>
+<table>
+  <tr><th>Mouse</th><th>Touch</th></tr>
+  <tr><td>Left-drag to orbit</td><td><b>One finger</b> orbits</td></tr>
+  <tr><td>Right-drag / wheel</td><td><b>Two fingers</b> pan; <b>pinch</b> zooms</td></tr>
+  <tr><td>Right-click menus</td><td><b>Press and hold</b></td></tr>
+  <tr><td>Click, drag, sketch</td><td>A finger works; an <b>Apple Pencil</b> is better</td></tr>
+  <tr><td>Delete key</td><td>The <b>&#10005;</b> button by Undo</td></tr>
+</table>
+<p>The Pencil behaves as a precision pointer: sketching, dragging handles and picking
+dimensions all take its exact tip, and on iPads that support Pencil hover the same glow that
+follows the mouse follows the Pencil. Fingers get a slightly bigger snap radius, because a
+fingertip is honest about being one.</p>
+<p><b>Your work survives the tab.</b> The open document is kept continuously in the
+browser's own storage, so if iPadOS reloads the tab — or you close it by accident, on any
+machine — freyacad comes back up with your unsaved work and says so. That is a net, not an
+archive: <b>Save</b> still writes the real file, and a part carrying very large imports is
+too big for the net and relies on saving. A demo you only looked at is not treated as work.</p>
+<div class="note">
+  <span class="tag">Worth knowing</span>
+  <p>A drawing sheet is still not part of the document, on any machine — leave the tab with
+  a drawing open and the sheet is rebuilt from the model when you return, without its
+  dimensions. Export or print sheets you care about.</p>
+</div>
 
 <h2 id="sketch">Making a sketch</h2>
 <p><b>Add → Sketch</b>, then pick a plane: Top, Front, Right, or a flat face of an existing
@@ -657,18 +685,22 @@ sketch, or an existing solid — stay greyed out until it exists.</p>
     Anything turned on a lathe — shafts, knobs, bottles.</td></tr>
   <tr><td><b>Revolve cut</b></td><td>A sketch + a solid</td><td>The same spin, subtracted.
     Grooves and undercuts.</td></tr>
+  <tr><td><b>Swept boss</b></td><td>Two sketches</td><td>Carries a profile along a path.
+    Pipework, handles, trim, cable runs, O-ring grooves.</td></tr>
+  <tr><td><b>Swept cut</b></td><td>Two sketches + a solid</td><td>The same carry, subtracted.
+    Channels and bores that do not run straight.</td></tr>
   <tr><td><b>Fillet</b></td><td>A solid</td><td>Rounds edges to a radius. Softens corners
     and removes stress risers.</td></tr>
   <tr><td><b>Chamfer</b></td><td>A solid</td><td>Cuts a flat bevel on an edge. Good for
     lead-ins and de-burring. Three shapes: <b>equal</b> (one size, 45°), <b>distance ×
     distance</b> for an asymmetric bevel, and <b>distance × angle</b> where the angle is
     measured from the first face.</td></tr>
-  <tr><td><b>Mirror</b></td><td>A solid</td><td>Reflects the model across a plane.
-    Model half a symmetrical part, mirror the rest.</td></tr>
-  <tr><td><b>Linear pattern</b></td><td>A solid</td><td>Repeats along a direction at a
-    fixed spacing.</td></tr>
+  <tr><td><b>Mirror</b></td><td>A solid</td><td>Reflects the whole body, or just the
+    features you choose, across a plane. Model half a symmetrical part, mirror the rest.</td></tr>
+  <tr><td><b>Linear pattern</b></td><td>A solid</td><td>Repeats along a direction at a fixed
+    spacing — the whole body, or chosen features.</td></tr>
   <tr><td><b>Circular pattern</b></td><td>A solid</td><td>Repeats around an axis — bolt
-    circles, splines, cooling fins.</td></tr>
+    circles, splines, cooling fins. The whole body, or chosen features.</td></tr>
 </table>
 <p>Select a feature in the tree and its parameters appear in a panel — depth, radius,
 count, spacing. Edit them and the model rebuilds.</p>
@@ -694,6 +726,59 @@ inside, so it makes no face — that is the usual reason a shape seems to be ign
   Open CASCADE has its own distance-angle routine, but it fails on the circular edges this
   app produces, and the distance pair does not.</p>
 </div>
+
+<h3 id="sweep">Sweeping along a path</h3>
+<p>A sweep needs <b>two</b> sketches: the <b>profile</b>, which is the cross-section, and the
+<b>path</b> it travels. Draw the path first, then draw the profile on a plane the path starts
+on, and pick <b>Swept boss</b> or <b>Swept cut</b>. The panel's <b>Path</b> row lists every
+other sketch — it guesses the one before the profile, which is the order they are usually
+drawn in.</p>
+<p>The profile is carried <b>exactly as you drew it</b>, staying square to the path the whole
+way. So where the profile sits matters: draw it centred on the start of the path and you get a
+tube down the middle of that path. If the path never reaches the profile's plane the feature
+says so rather than sweeping it off into space.</p>
+<p><b>Round the corners in the path sketch.</b> A path with a square corner sweeps to a mitred
+corner, which is right for a bar but not for a pipe. Give the path sketch a fillet and the
+bend comes out as a real bend — the path honours sketch fillets exactly as a profile does.</p>
+<p>A profile with a <b>hole</b> in it sweeps as you would expect: two concentric circles give a
+tube with a bore, in one feature. A sweep can be mirrored and patterned like any other
+feature.</p>
+<div class="note">
+  <span class="tag">Worth knowing</span>
+  <p>The path has to be <b>one connected run</b>. Several lines drawn end to end are joined
+  automatically, but a gap, a fork or a stray second line is refused rather than guessed at.
+  A sweep also cannot twist along its path or change section as it goes, and it takes one path
+  rather than a path plus guide curves.</p>
+</div>
+<h3 id="scope">What a mirror or pattern copies</h3>
+<p>Mirror, linear pattern and circular pattern all ask the same question, at the top of
+their panel:</p>
+<table>
+  <tr><th>Copy</th><th>What you get</th></tr>
+  <tr><td><b>Whole body</b></td><td>Everything built so far is reflected or repeated. Right
+    for a symmetrical part you have modelled half of, or for laying out copies of a finished
+    body.</td></tr>
+  <tr><td><b>Chosen features</b></td><td>Only the features you tick are copied. A tick list of
+    every boss, cut, revolve and import above this point in the tree appears underneath.</td></tr>
+</table>
+<p>The second is the one you want most of the time, and it is the difference between a bolt
+circle and a mess. Pattern <b>one hole</b> six ways round a disc and you get six holes.
+Pattern the <b>whole body</b> and you get six overlapping copies of the entire disc, hole and
+all — the wrong shape, and six times the work to build it.</p>
+<p>Each copy is applied the way its own feature was applied: a boss adds material, a cut
+removes it. That is what makes a patterned hole cut more holes rather than deposit lumps.
+Tick a boss and a cut together and they go on in tree order, so the copied cut passes through
+the copied boss exactly as the original does.</p>
+<div class="note">
+  <span class="tag">Worth knowing</span>
+  <p>Fillets and chamfers can't be ticked. They reshape edges of the body rather than add a
+  shape of their own, so there is nothing to copy — put the mirror or pattern
+  <em>before</em> the fillet in the tree and the copies get rounded too, which is the usual
+  order anyway. <b>Merge result</b> disappears when you choose features: a copied feature
+  belongs to the body it came from, so there is nothing left to decide.</p>
+</div>
+<p>Parts saved before this existed open exactly as they did — no choice recorded means
+whole body. Delete a feature that something was copying and that tick simply drops off.</p>
 
 <p>Fillets and chamfers are the usual place a rebuild fails, and it's rarely a bug: a
 radius bigger than the material it has to blend into has no valid solution. Reduce it, or
@@ -888,6 +973,30 @@ paper: change the sheet scale to 1:2 and the drawing halves while the dimension 
 when you delete it. Drag a dimension to move it where you want it; click one and press
 <kbd>Delete</kbd> to remove it. <kbd>Esc</kbd> puts the tool down, and again leaves the
 drawing.</p>
+<h3 id="cmarks">Centre marks and centrelines</h3>
+<p>A hole on a drawing is expected to say where its centre is. <b>Centre mark</b> arms the
+tool; click the rim of any hole or round boss and it gets the standard cross, with chain-dashed
+arms reaching just past the rim. <b>Centreline</b> does the same job for round things seen from
+the side: click along a hole or a shaft and you get the chain-dashed line down its axis.</p>
+<p><b>Mark every circle and axis</b> does the whole of the selected view in one go, which is
+usually what you want. Run it again after changing the model and it only adds what is missing.</p>
+<p>Both know what they are looking at because freyacad finds the model's circular edges <em>in
+space</em>, not on the paper. That is what lets one command serve both cases: a hole whose axis
+points at you is a circle on the sheet and takes a cross, and the same hole in the view next
+door is edge-on and takes a line down its middle — correctly along the hole, not across it.
+A hole at some angle in between draws as an ellipse and gets neither, which is what a
+draughtsman would do too.</p>
+<p>Marks belong to their view exactly as dimensions do: they travel with it when you drag it,
+they stay the same size on the paper when you change the sheet scale, and they go when the view
+goes. Click one and press <kbd>Delete</kbd> to remove it. <kbd>Esc</kbd> puts the tool down.</p>
+<div class="note">
+  <span class="tag">Worth knowing</span>
+  <p>A round edge is recognised by being round, so a <b>regular polygon of twelve or more
+  sides</b> would be taken for a circle. Six- and eight-sided bosses are safely below that line.
+  And a mark records where the centre was when you placed it — move the hole in the model and
+  the mark stays put, the same as a dimension does. Re-run <b>Mark every circle and axis</b>
+  after a change of that kind.</p>
+</div>
 <h3>The drawing tools</h3>
 <p>Right-click anywhere on the sheet for every drawing command, grouped the same way the
 sketch menu is, with the same floating dock along the top of the sheet. <b>Customise tools…</b>
@@ -906,10 +1015,10 @@ Whatever it lands on is printed in the title block.</p>
 opens in Illustrator, Inkscape, or a laser cutter's software.</p>
 <div class="note">
   <span class="tag">Where this stops</span>
-  <p>Dimensions are linear — between two corners. There are no diameter or radius dimensions,
-  no angular ones, and no notes, centre marks, centrelines, balloons or bill of materials.
-  There are no section, detail or auxiliary views. The drawing is not saved with the part: the
-  sheet lasts as long as the tab, so print or export it before you close.</p>
+  <p>Dimensions are linear — between two corners. There are no diameter or radius dimensions
+  and no angular ones, and no notes, balloons or bill of materials. There are no section, detail
+  or auxiliary views. The drawing is not saved with the part: the sheet lasts as long as the
+  tab, so print or export it before you close.</p>
 </div>
 
 <h2 id="keys">Keyboard</h2>
@@ -941,11 +1050,18 @@ three view keys — can all be changed under <b>Customise tools… → Keyboard<
       concentric and coincident are in; perpendicular isn't yet.</li>
   <li><b>STL imports are faceted.</b> A mesh has no true surfaces, so an imported STL
       can be viewed, placed and exported but not filleted or chamfered.</li>
-  <li><b>Desktop only</b>, by design.</li>
-  <li><b>No autosave.</b> The tab is the only copy until you save.</li>
+  <li><b>Phones stay outside</b>, by design. iPads and other large tablets work — see
+      <a href="#touch">freyacad on an iPad</a>.</li>
   <li><b>Drawings are linear dimensions only.</b> No diameter, radius or angular dimensions,
-      no notes or centre marks, no section or detail views, and the sheet isn't saved with the
-      part. See <a href="#drawings">Drawings</a>.</li>
+      no notes or balloons, no section or detail views, and the sheet isn't saved with the
+      part. Centre marks and centrelines <em>are</em> there — see
+      <a href="#cmarks">Centre marks and centrelines</a>.</li>
+  <li><b>No loft, and no twist on a sweep.</b> A swept feature carries one profile along one
+      path at a constant section. There is no lofted boss between two profiles, no twist, and
+      no guide curves. See <a href="#sweep">Sweeping along a path</a>.</li>
+  <li><b>A pattern can't copy a fillet or chamfer.</b> Bosses, cuts, revolves and imports
+      can each be mirrored or patterned on their own; edge treatments can't, because they
+      reshape the body rather than add a shape to it. Put the pattern before the fillet.</li>
   <li><b>Only two assembly mates.</b> Concentric and coincident hold as real relations and
       are solved together, but distance, angle, parallel and the rest aren't there yet, and
       neither are joints or sub-assemblies.</li>

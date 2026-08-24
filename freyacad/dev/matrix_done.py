@@ -36,7 +36,7 @@ s = s[:i] + row + s[j:]
 # recompute from the table
 body = s[s.index("<tbody>"):]
 rows = re.findall(r'<tr>\s*<td class="col-feat">.*?</tr>', body, re.S)
-assert len(rows) == 75, len(rows)
+assert len(rows) == 76, len(rows)
 fy = [re.findall(r'class="mk (\w+)"', r)[-1] for r in rows]
 tot = sum(int(x) for x in re.findall(r'class="num">(\d+)k<', s))
 gaps = len(re.findall(r'class="num">\d+k<', s))
