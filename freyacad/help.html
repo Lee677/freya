@@ -122,7 +122,8 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line-soft);
 
 <h2 id="start">Start here</h2>
 <p class="lede">freyacad is a small CAD program with a real geometry kernel. You sketch on a
-plane, turn sketches into solids, and export STL for printing or STEP for other CAD. There
+plane, turn sketches into solids, and print them — 3MF or STL for your slicer, true
+STEP for other CAD. There
 is nothing to install and no account.</p>
 
 <p>The workflow is the same one every mainstream CAD package uses, and it is worth
@@ -860,17 +861,36 @@ large scans first.</p>
 <p>The <b>Units</b> button switches what dimensions are displayed and typed in. It changes
 presentation, not the model — the underlying geometry is unaffected.</p>
 
-<h2 id="export">Exporting</h2>
-<h3>STL — for 3D printing</h3>
-<p>A triangle mesh. Every slicer reads it, and it's what you want for printing. Curves
-become facets, so a cylinder is really a many-sided prism; fine for printing, lossy as a
-master copy. STL carries no feature history — keep the <code>.sketchcad</code> file too.</p>
+<h2 id="export">Printing &amp; exporting</h2>
+<p>One button — <b>Print / Export</b> — opens a dialog with the three files that
+matter. Two promises hold for all of them: <b>a dimension of 14 is 14&nbsp;millimetres in the
+file</b>, and the part arrives <b>print-side down</b> — whatever you built on the Top
+plane sits flat on the slicer's bed, the right way up.</p>
+
+<h3>3MF — for your slicer</h3>
+<p>The format Bambu Studio, OrcaSlicer and PrusaSlicer prefer, and the one to reach for
+first. Unlike STL it says its units out loud, so a part can never import at the wrong size.
+The <b>Open Bambu Studio</b> button in the dialog launches the app if it's installed —
+then drop the downloaded file in, or just double-click the file.</p>
+
+<h3>STL — the universal mesh</h3>
+<p>A plain triangle mesh. Everything reads it. Curves become facets, so a cylinder is really
+a many-sided prism; fine for printing, lossy as a master copy.</p>
 
 <h3>STEP — for other CAD</h3>
 <p>Real B-rep geometry written straight out of the kernel: planes stay planes, cylinders
 stay cylinders, fillets stay analytic blend surfaces. Nothing is tessellated. This is the
 format to hand to a machine shop, to import into Fusion or SolidWorks, or to keep as a
-neutral archive. If you're choosing between the two and not printing, choose STEP.</p>
+neutral archive.</p>
+
+<p>None of the three carries feature history — keep the <code>.sketchcad</code> file
+too.</p>
+<div class="note">
+  <span class="tag">Worth knowing</span>
+  <p>Before 24 August 2026 the STL export wrote everything at <b>ten times</b> the modelled
+  size while STEP was true size. If a print of an old export came out suspiciously large,
+  that is why. Both are honest millimetres now.</p>
+</div>
 
 <h2 id="assembly">Assemblies</h2>
 <p><b>New assembly</b> starts a document that holds several parts rather than one.
