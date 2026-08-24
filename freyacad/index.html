@@ -1471,6 +1471,10 @@ const CSG = (function(){
         const lim=(e&&e.type==='poly')?(e.closed?e.pts.length:e.pts.length-1):0;
         if(!(d.seg>=0&&d.seg<lim))continue;     // stale after an edit
       }
+      if(d.kind==='pedge'){
+        const e=sk.entities[i];                 // the side may have been dropped
+        if(!(e&&e.type==='polygon'&&d.seg>=0&&d.seg<Math.max(3,e.sides|0)))continue;
+      }
       n++;
     }
     return n;
@@ -1907,6 +1911,13 @@ const CSG = (function(){
       if(L.length>=3)out.push({pts:L,curved,segs});
     }
     return out;
+  }
+  // the corners of a regular polygon, in order, starting at its rotation angle
+  function polyCorners(e){
+    const L=[], n=Math.max(3, e.sides|0);
+    for(let i=0;i<n;i++){ const a=e.rot+i/n*Math.PI*2;
+      L.push({x:e.c.x+e.r*Math.cos(a), y:e.c.y+e.r*Math.sin(a)}); }
+    return L;
   }
   function entityLoops(sk){
     const loops=[];
@@ -4858,7 +4869,9 @@ const CSG = (function(){
          concentric tool was really for */
       let pr=nearestPointRef(p);
       if(!pr){ const eh=dimHit(p);
-        if(eh&&(eh.kind==='dia'||eh.kind==='pdia'))pr={ent:eh.entIdx,idx:0}; }
+        // clicking the outline of a round or regular shape means its centre —
+        // 'pedge' is how a polygon reports now, 'pdia' only in older files
+        if(eh&&(eh.kind==='dia'||eh.kind==='pdia'||eh.kind==='pedge'))pr={ent:eh.entIdx,idx:0}; }
       if(pr){
         if(!coincRef){ coincRef=pr; setHint('Now click the point to lock it to'); }
         else {
@@ -5341,8 +5354,18 @@ const CSG = (function(){
               anchor:{x:mid.x+nx*(off+0.9), y:mid.y+ny*(off+0.9)}};
     };
     if(d.kind==='dia'&&e.type==='circle'||d.kind==='pdia'&&e.type==='polygon'){
+      // pdia is only reached by files saved before polygons were dimensioned by
+      // edge; nothing creates one now, but old sketches must still read right
       const c=Math.SQRT1_2;                       // rim-to-rim across 45°
       return mk({x:e.c.x-e.r*c,y:e.c.y-e.r*c},{x:e.c.x+e.r*c,y:e.c.y+e.r*c},c,c,'⌀','dia');
+    }
+    if(d.kind==='pedge'&&e.type==='polygon'){
+      const C=polyCorners(e), n=C.length;
+      if(!(d.seg>=0&&d.seg<n)) return null;       // stale: the side count shrank
+      const a=C[d.seg], b=C[(d.seg+1)%n];
+      // the dimension sits outside the side it measures
+      const ox=(a.x+b.x)/2-e.c.x, oy=(a.y+b.y)/2-e.c.y, L=Math.hypot(ox,oy)||1;
+      return mk(a,b,ox/L,oy/L);
     }
     if(d.kind==='width'&&e.type==='rect'){
       const x0=Math.min(e.a.x,e.b.x),x1=Math.max(e.a.x,e.b.x),y1=Math.max(e.a.y,e.b.y);
@@ -5459,16 +5482,23 @@ const CSG = (function(){
     }
   }
   // Find the dimensionable thing nearest a sketch-space click.
-  function dimHit(p){
-    if(!editing) return null;
+  function dimHit(p, sk){
+    sk = sk || editing;
+    if(!sk) return null;
     let best=null, bd=Infinity;
-    editing.entities.forEach((e,ei)=>{
+    sk.entities.forEach((e,ei)=>{
       if(e.type==='circle'){
         const d=Math.abs(Math.hypot(p.x-e.c.x,p.y-e.c.y)-e.r);
         if(d<bd){bd=d; best={entIdx:ei,kind:'dia'};}
       } else if(e.type==='polygon'){
-        const d=Math.abs(Math.hypot(p.x-e.c.x,p.y-e.c.y)-e.r);
-        if(d<bd){bd=d; best={entIdx:ei,kind:'pdia'};}
+        /* Measure to the sides, not to the circumcircle. SolidWorks dimensions a
+           regular polygon by one edge, and it is the useful number — an edge is
+           a thing you can measure on the part, a pitch circle is not. It also
+           means a click on a flat finds something at all, which it never did
+           while this measured to the circle through the corners. */
+        const C=polyCorners(e), n=C.length;
+        for(let i=0;i<n;i++){ const d=seg2Dist(p,C[i],C[(i+1)%n]);
+          if(d<bd){bd=d; best={entIdx:ei,kind:'pedge',seg:i};} }
       } else if(e.type==='rect'){
         const x0=Math.min(e.a.x,e.b.x),x1=Math.max(e.a.x,e.b.x),y0=Math.min(e.a.y,e.b.y),y1=Math.max(e.a.y,e.b.y);
         const hd=Math.min(seg2Dist(p,{x:x0,y:y0},{x:x1,y:y0}), seg2Dist(p,{x:x0,y:y1},{x:x1,y:y1})); // horiz edges -> width
@@ -5574,6 +5604,11 @@ const CSG = (function(){
     }
     const e=f.entities[d.entIdx]; if(!e) return;
     if(d.kind==='dia'||d.kind==='pdia') e.r=Math.max(1e-3,val/2);
+    /* A regular n-gon of side L has circumradius L / (2 sin(pi/n)), so typing an
+       edge length resizes the polygon about its centre and leaves its rotation
+       alone — which is what makes the number behave like a real dimension. */
+    else if(d.kind==='pedge'&&e.type==='polygon')
+      e.r=Math.max(1e-3, val/(2*Math.sin(Math.PI/Math.max(3,e.sides|0))));
     else if(d.kind==='width')  e.b.x=e.a.x+(Math.sign(e.b.x-e.a.x)||1)*val;
     else if(d.kind==='height') e.b.y=e.a.y+(Math.sign(e.b.y-e.a.y)||1)*val;
     else if(d.kind==='seg'){
@@ -9864,6 +9899,7 @@ const CSG = (function(){
     get camera(){return camera}, setProjection, get orthoOn(){return orthoOn}, controls, fitAll,
     OCK, featureEdges,
     get checkpoints(){ return checkpoints.map(c=>({i:c.i, bodies:c.shapes.length, key:c.key})); },
+    dimHit, dimResolve, dimApply, polyCorners,
     get docMode(){ return docMode; },
     get asm(){ return asm; },
     get asmShapes(){ return asmShapes; },

@@ -130,9 +130,9 @@ the overlay iframe.
     with `ratio` recording where along the radius you took hold so a polygon grabbed on a
     flat doesn't jump out to its circumradius. Two things this must not break: a corner
     handle still wins the pick (corners spin, flats only resize), and a *tap* on the
-    outline has to fall through to selection — going back through `sketchClick` isn't
-    enough there, because `dimHit` measures a polygon to its circumcircle and a click on
-    the flat of an edge finds nothing.
+    outline has to fall through to selection.
+    (`dimHit` used to measure a polygon to its circumcircle, so a click on the flat of an
+    edge found nothing at all; it measures to the sides now — see trap 31.)
 
 17. **Assembly mates are relations; a solver keeps them true.** Each mate stores its two
     faces in the *components' own* coordinates (`{comp,p,d,r}`), never in world — that is
@@ -335,6 +335,18 @@ the overlay iframe.
     it took the lantern 6.2 s → 5.5 s, the pillow block 899 ms → 621 ms and the jet engine
     16.5 s → 10.5 s, for nothing. Everything goes through `runBop` on the default constructor
     now, which builds once.
+
+31. **A regular polygon is dimensioned by one side, not across its corners.** That is what
+    SolidWorks does and it is the number you can measure on the part. `dimHit` measures to
+    the sides and returns `{kind:'pedge', seg}`; `dimApply` converts back through
+    `r = L / (2·sin(π/n))`, which resizes about the centre and leaves the rotation alone.
+    Three things ride on the kind name and were easy to miss: the old `'pdia'` branches in
+    `dimResolve`/`dimApply` must stay so sketches saved before this still read right (nothing
+    creates one now); the concentric tool resolves a click on an outline to the shape's centre
+    by matching the dim kind, so `'pedge'` had to be added there or clicking a polygon stopped
+    finding its centre; and `dimsOn` needs a staleness guard, because reducing the side count
+    leaves a dim pointing at a side that no longer exists and it would otherwise go on
+    spending a degree of freedom.
 
 ## Biggest thing still missing
 

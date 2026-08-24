@@ -401,7 +401,13 @@ geometry <b>moves to match</b> — dimensions here drive the model, they don't j
   <tr><td>The angle to a datum plane</td><td>A line, then a plane trace (either order)</td></tr>
   <tr><td>A point's distance to a datum plane</td><td>The point, then a plane trace (either order)</td></tr>
   <tr><td>A circle</td><td>The circle — you get its diameter</td></tr>
+  <tr><td>A regular polygon</td><td>One of its <b>sides</b> — you get that side's length</td></tr>
 </table>
+<p>Dimensioning a polygon by a side is what SolidWorks does, and it is the number you can
+actually measure on the finished part. Type a new side length and the polygon resizes about
+its centre, keeping its rotation: a hexagon of side 10 has corners 20 apart, and the program
+works that out for you. Older sketches that carry an across-corners diameter on a polygon still
+open and still read correctly.</p>
 <p>The plane traces count as <b>ground</b>: they can't move, so a dimension to one costs
 only the sketched entity its freedom. That is what makes a line drawn from the origin fully
 defined by two dimensions — its length, and its angle to a plane. Two distances to the two
