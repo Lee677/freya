@@ -527,7 +527,7 @@ if(!window.THREE){
     <div class="tb-group" id="tb-asm-main" style="display:none">
       <button id="btn-insert" class="btn-primary">Insert part</button>
     </div>
-    <div class="tb-group" id="tb-draw-main" style="display:none">
+    <div id="tb-draw-main" style="display:none">
       <button id="btn-dw-view" class="btn-primary">Add view</button>
       <select id="dw-sheet" class="tb-sel" title="Sheet size">
         <option value="A4">A4</option><option value="A3" selected>A3</option>
@@ -557,9 +557,12 @@ if(!window.THREE){
     </div>
     <div class="sep"></div>
     <div class="tb-group">
-      <button id="btn-new" class="btn-ghost">New part</button>
-      <button id="btn-new-asm" class="btn-ghost">New assembly</button>
-      <button id="btn-new-draw" class="btn-ghost" title="Engineering drawings — in progress, not open yet">New drawing</button>
+      <button id="btn-newmenu" class="btn-ghost" title="Start a part, an assembly or a drawing">New&nbsp;&#9662;</button>
+      <span id="new-hidden" style="display:none">
+        <button id="btn-new" class="btn-ghost">New part</button>
+        <button id="btn-new-asm" class="btn-ghost">New assembly</button>
+        <button id="btn-new-draw" class="btn-ghost">New drawing</button>
+      </span>
       <button id="btn-load" class="btn-ghost">Open</button>
       <input type="file" id="file-load" style="display:none" accept=".json,.sketchcad,.asmcad,.step,.stp,.stl">
       <input type="file" id="file-insert" style="display:none" accept=".json,.sketchcad">
@@ -7582,7 +7585,14 @@ const CSG = (function(){
     const isD=docMode==='draw', isA=docMode==='asm';
     $('tb-main').style.display=(isA||isD)?'none':'flex';
     $('tb-asm-main').style.display=isA?'flex':'none';
-    $('tb-draw-main').style.display=isD?'flex':'none';
+    /* The drawing's controls live in its dock and right-click menu; the group
+       in the toolbar only exists to hold the <select>s that own the state, and
+       it stays hidden. A second copy of every command in the top bar was the
+       clutter. */
+    $('tb-draw-main').style.display='none';
+    // and nothing that drives a 3D view belongs above a sheet of paper
+    ['btn-normal','btn-iso','btn-fitall','btn-proj','btn-export','btn-step']
+      .forEach(id=>{ const el=$(id); if(el)el.style.display=isD?'none':''; });
     $('btn-demo-tgl').style.display=(isA||isD)?'none':'';
     $('sheet-wrap').classList.toggle('on',isD);
     $('dock-draw').style.display=isD?'flex':'none';
@@ -7914,11 +7924,18 @@ const CSG = (function(){
   function addDrawView(kind){
     const geo=buildView(kind);
     if(!geo)return setHint('Nothing to draw — model something first');
+    if(draw.views.some(v=>v.kind===kind))
+      return setHint('There is already a '+VIEW_DIRS[kind].label.toLowerCase()+
+        ' view on this sheet — delete it first, or drag a new one off another view');
     const [W,H]=sheetSize();
     /* Where a view lands is not decorative: a projected view sits square with
        its parent, and which side depends on the convention the sheet is in.
-       Third angle puts the top view above; first angle puts it below. */
-    const parent=draw.views.find(v=>v.kind==='front');
+       Third angle puts the top view above; first angle puts it below.
+       Falling back to ANY view when there is no front one matters: anchored to
+       the bare sheet centre instead, every view added after the front one was
+       deleted piled up on the same spot, which reads exactly like the button
+       having stopped working. */
+    const parent=draw.views.find(v=>v.kind==='front')||draw.views[0]||null;
     const third=draw.angle===3;
     let x=W/2,y=H/2;
     if(parent){
@@ -7930,6 +7947,13 @@ const CSG = (function(){
     }
     const v={id:draw.uid++,kind,x:Math.max(24,Math.min(W-24,x)),y:Math.max(30,Math.min(H-40,y)),
              scale:0,hidden:null,geo};
+    /* And never drop one exactly on top of another — a view you cannot see is
+       a view you will swear was never added. */
+    let guard=0;
+    while(guard++<40&&draw.views.some(o=>Math.hypot(o.x-v.x,o.y-v.y)<6)){
+      v.x=Math.min(W-24,v.x+14);
+      if(v.x>=W-24){ v.x=Math.max(24,x); v.y=Math.min(H-40,v.y+14); }
+    }
     draw.views.push(v); drawSel=v.id;
     renderSheet(); refreshDrawTree();
     setHint(VIEW_DIRS[kind].label+' view added — drag it to place it');
@@ -8311,6 +8335,15 @@ const CSG = (function(){
                  dyn:()=>draw.angle===3?'Switch to first angle':'Switch to third angle'},
     d_fit    :{ic:'fit',    label:'Fit to the page', fn:()=>{ draw.scale=0; $('dw-scale').value='0';
                  renderSheet(); refreshDrawTree(); setHint('Scale '+scaleLabel(fitScale())); }},
+    d_sheet  :{ic:'dplane', label:'Sheet size…', fn:()=>pickFromSelect('dw-sheet','Sheet size'),
+                 dyn:()=>'Sheet size · '+draw.sheet},
+    d_orient :{ic:'mirror', label:'Orientation',
+                 fn:()=>{ const o=draw.orient==='portrait'?'landscape':'portrait';
+                   $('dw-orient').value=o; $('dw-orient').dispatchEvent(new Event('change'));
+                   setHint('Sheet is '+o); },
+                 dyn:()=>draw.orient==='portrait'?'Turn the sheet landscape':'Turn the sheet portrait'},
+    d_scale  :{ic:'dim',    label:'Scale…', fn:()=>pickFromSelect('dw-scale','Sheet scale'),
+                 dyn:()=>'Scale · '+scaleLabel(fitScale())},
     d_print  :{ic:'export', label:'Print…',         fn:()=>printSheet()},
     d_svg    :{ic:'export', label:'Export SVG',     fn:()=>exportSheetSVG()},
     d_back   :{ic:'edit',   label:'Back to the model',fn:()=>setDocMode(drawReturn)}
@@ -8318,7 +8351,7 @@ const CSG = (function(){
   const DEFAULT_DRAW_LAYOUT=[
     {name:'Drawing',   ids:['d_dim','d_model','d_back']},
     {name:'Views',     ids:['v_front','v_top','v_right','v_left','v_bottom','v_back','v_iso']},
-    {name:'Sheet',     ids:['d_hidden','d_angle','d_fit']},
+    {name:'Sheet',     ids:['d_sheet','d_orient','d_scale','d_fit','d_hidden','d_angle']},
     {name:'Output',    ids:['d_print','d_svg']}
   ];
   MENUS.draw.cmds=DCMD; MENUS.draw.def=DEFAULT_DRAW_LAYOUT; loadMenu(MENUS.draw);
@@ -8336,6 +8369,17 @@ const CSG = (function(){
     return items;
   }
   function openDrawMenu(x,y){ buildCtxMenu(x,y,drawMenuItems(),{cols:true}); }
+  /* The sheet controls are still <select>s under the hood — hidden, but they
+     own the state and the change handlers. Building the menu from the options
+     means the two can never drift apart. */
+  function pickFromSelect(id,title){
+    const sel=$(id); if(!sel)return;
+    const items=[{sect:title}];
+    for(const o of sel.options)items.push({ic:'dplane',label:(o.selected?'• ':'')+o.textContent,
+      fn:()=>{ sel.value=o.value; sel.dispatchEvent(new Event('change')); refreshDrawDock(); }});
+    const d=$('dock-draw').getBoundingClientRect();
+    buildCtxMenu(d.left+10,d.bottom+6,items);
+  }
   /* The floating dock is the same list again, so a command hidden from the
      menu is gone from the dock too — one place to arrange, both obey. */
   function refreshDrawDock(){
@@ -8562,6 +8606,15 @@ const CSG = (function(){
   $('btn-dw-hidden').addEventListener('click',()=>{
     draw.hidden=!draw.hidden; $('btn-dw-hidden').classList.toggle('btn-primary',draw.hidden);
     renderSheet(); setHint(draw.hidden?'Hidden detail shown, dashed':'Hidden detail off');
+  });
+  $('btn-newmenu').addEventListener('click',e=>{
+    const r=e.currentTarget.getBoundingClientRect();
+    buildCtxMenu(r.left,r.bottom+6,[
+      {sect:'New'},
+      {ic:'sketch',label:'Part',    fn:()=>$('btn-new').click()},
+      {ic:'iso',   label:'Assembly',fn:()=>$('btn-new-asm').click()},
+      {ic:'dplane',label:'Drawing of this model',fn:()=>$('btn-new-draw').click()}
+    ]);
   });
   $('btn-dw-dim').addEventListener('click',startDrawDim);
   /* The sheet takes the right-click, not the canvas — the canvas is hidden in
