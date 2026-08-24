@@ -518,6 +518,14 @@ else.</p>
 </ul>
 <p>To edit a sketch you've already finished, find it in the tree and open it from the
 right-click menu. Everything downstream rebuilds when you're done.</p>
+<h3>A profile can be made of several pieces</h3>
+<p>A closed profile doesn't have to be one closed run. A line and a spline that meet at both
+ends enclose an area just as well, and so do four separate lines drawn as four separate runs —
+all of them extrude, cut and revolve. What matters is that the ends actually <b>meet</b>: snap
+each new run onto the end of the last, or join them with a coincident relation.</p>
+<p>Where three or more ends meet at one point the shape is ambiguous, so nothing is guessed
+and no profile is made there. A run that dead-ends is simply left out — a stray line next to a
+closed rectangle doesn't stop the rectangle being a profile.</p>
 
 <h2 id="features">Features</h2>
 <p>Everything lives under <b>Add</b>. Features that need something they haven't got — a

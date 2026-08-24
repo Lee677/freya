@@ -1601,6 +1601,62 @@ const CSG = (function(){
     return out;
   }
 
+  /* ---- profiles made of more than one entity ---------------------------------
+     A closed profile does not have to be a single closed run. A line and a
+     spline that meet at both ends enclose an area exactly as well, and so do
+     four separate lines drawn as four separate runs — but only an entity with
+     `closed` set was ever offered to the kernel, so those profiles silently
+     refused to extrude.
+
+     Any set of open runs whose ends meet is stitched into one loop here. The
+     walk only ever steps through a junction where exactly two ends meet: at a
+     fork it stops rather than guessing, because guessing which branch to take
+     is how you extrude a profile the user never drew. A run that dead-ends is
+     simply left out — a stray line beside a closed rectangle doesn't stop the
+     rectangle being a profile. */
+  const STITCH_TOL=1e-4;
+  function stitchLoops(sk){
+    const paths=[];
+    (sk.entities||[]).forEach((e,i)=>{
+      if(e.construction||e.type!=='poly'||e.closed)return;
+      const pts=isSpline(e)?splinePts(e):(e.pts||[]).map(q=>({x:q.x,y:q.y}));
+      if(pts.length>=2)paths.push({ei:i,pts,curved:isSpline(e)});
+    });
+    if(paths.length<2)return [];
+    const K=p=>Math.round(p.x/STITCH_TOL)+':'+Math.round(p.y/STITCH_TOL);
+    const inc=new Map();
+    const add=(k,r)=>{ let l=inc.get(k); if(!l){l=[];inc.set(k,l);} l.push(r); };
+    paths.forEach((P,i)=>{ add(K(P.pts[0]),{i,end:0}); add(K(P.pts[P.pts.length-1]),{i,end:1}); });
+    const used=paths.map(()=>false), out=[];
+    for(let s=0;s<paths.length;s++){
+      if(used[s])continue;
+      const startK=K(paths[s].pts[0]);
+      if(K(paths[s].pts[paths[s].pts.length-1])===startK)continue;   // already a ring on its own
+      const chain=[{i:s,rev:false}];
+      used[s]=true;
+      let k=K(paths[s].pts[paths[s].pts.length-1]), closed=false, guard=0;
+      while(guard++<=paths.length){
+        if(k===startK){ closed=chain.length>=2; break; }
+        const l=inc.get(k); if(!l||l.length!==2)break;      // dead end, or a fork
+        const free=l.filter(r=>!used[r.i]);
+        if(free.length!==1)break;
+        const r=free[0], P=paths[r.i];
+        used[r.i]=true; chain.push({i:r.i,rev:r.end===1});
+        k=K(r.end===0?P.pts[P.pts.length-1]:P.pts[0]);
+      }
+      if(!closed){ for(const c of chain)if(c.i!==s)used[c.i]=false; continue; }
+      const L=[]; let curved=false;
+      chain.forEach((c,ci)=>{
+        const P=paths[c.i]; curved=curved||P.curved;
+        const seq=c.rev?P.pts.slice().reverse():P.pts;
+        for(let q=(ci===0?0:1);q<seq.length;q++)L.push({x:seq[q].x,y:seq[q].y});
+      });
+      // the walk ends back on the first point; a loop states it once
+      if(L.length>2&&Math.hypot(L[0].x-L[L.length-1].x,L[0].y-L[L.length-1].y)<STITCH_TOL*4)L.pop();
+      if(L.length>=3)out.push({pts:L,curved});
+    }
+    return out;
+  }
   function entityLoops(sk){
     const loops=[];
     for(const e of sk.entities){
@@ -1620,6 +1676,9 @@ const CSG = (function(){
         loops.push(applyCorner(sk,e.pts,true));
       }
     }
+    // and the profiles that only exist because two runs meet at both ends
+    for(const st of stitchLoops(sk))
+      loops.push(st.curved?st.pts:applyCorner(sk,st.pts,true));
     return loops;
   }
   /* ---- splines ---------------------------------------------------------------
@@ -1954,6 +2013,14 @@ const CSG = (function(){
         items.push({ poly: L, area: Math.abs(polyArea(L)),
           mk: (hole)=> OCK.wireFromPts(hole ? cw(L) : ccw(L), frame, zoff) });
       }
+    }
+    /* A profile stitched from several runs is a profile like any other once it
+       is closed — the kernel is handed the same kind of wire and never learns
+       it came from two entities rather than one. */
+    for(const st of stitchLoops(sk)){
+      const L = st.curved ? st.pts : applyCorner(sk, st.pts, true);
+      items.push({ poly: L, area: Math.abs(polyArea(L)),
+        mk: (hole)=> OCK.wireFromPts(hole ? cw(L) : ccw(L), frame, zoff) });
     }
     return items;
   };
