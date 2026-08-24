@@ -1638,6 +1638,10 @@ const CSG = (function(){
     const d=demoByKey(key||demoPref()||'pillow');
     if(d.kind==='asm')return loadDemoAsm(d);
     if(docMode!=='part'){ clearAsm(); setDocMode('part'); }
+    /* Deliberately NOT dropping checkpoints. They are keyed on feature content,
+       so one belonging to another model can never match; and reloading the model
+       you already have short-circuits on the geometry signature, which would
+       throw the checkpoints away without ever rebuilding to replace them. */
     features=JSON.parse(JSON.stringify(d.data));
     uid=Math.max(...features.map(f=>f.id))+1;
     rollbackIndex=features.length;
@@ -1653,6 +1657,7 @@ const CSG = (function(){
   /* The assembly demo takes the same route a saved .asmcad does: components are
      reissued fresh ids, then the mates are re-pointed at them and solved. */
   function loadDemoAsm(d){
+    dropAllCheckpoints();
     features=[];rollbackIndex=0;selId=null;editing=null;
     clearAsm(); asm={components:[],mates:[]};
     setDocMode('asm');
@@ -2371,22 +2376,8 @@ const CSG = (function(){
     if(!faces.length) throw new Error('no contour selected');
     return faces;
   };
-  OCK.fuse = function(a, b){
-    const oc = OC();
-    const op = new oc.BRepAlgoAPI_Fuse_3(a, b, new oc.Message_ProgressRange_1());
-    op.Build(new oc.Message_ProgressRange_1());
-    const s = op.Shape();
-    if(s.IsNull()) throw new Error('boolean union failed');
-    return s;
-  };
-  OCK.cut = function(a, b){
-    const oc = OC();
-    const op = new oc.BRepAlgoAPI_Cut_3(a, b, new oc.Message_ProgressRange_1());
-    op.Build(new oc.Message_ProgressRange_1());
-    const s = op.Shape();
-    if(s.IsNull()) throw new Error('boolean cut failed');
-    return s;
-  };
+  OCK.fuse = function(a, b){ return OCK.fuseAll([a], [b])[0]; };
+  OCK.cut  = function(a, b){ return OCK.cutAll(a, [b]); };
   /* One boolean instead of N. A single BOP takes a list of arguments and a list
      of tools, builds ONE intersection structure for the lot and splits every
      face once; N chained booleans re-intersect the whole accumulated body each
@@ -2401,28 +2392,33 @@ const CSG = (function(){
     for(const s of shapes) l.Append_1(s);
     return l;
   }
-  OCK.fuseAll = function(args, tools){
-    if(!tools.length) return args.slice();
-    if(args.length === 1 && tools.length === 1) return [OCK.fuse(args[0], tools[0])];
+  /* Every boolean runs NON-DESTRUCTIVE. Left to itself OCCT may write back into
+     its arguments — attach p-curves, inflate tolerances — which is harmless
+     when the argument is dropped straight afterwards and quietly corrupting
+     when it is a checkpoint shape that will serve as the base for the next
+     fifty rebuilds. Tolerance creep of that kind shows up much later as a
+     boolean that mysteriously stops working on a model that used to build. */
+  function runBop(op, args, tools){
     const oc = OC();
-    const op = new oc.BRepAlgoAPI_Fuse_1();
     op.SetArguments(bopList(oc, args));
     op.SetTools(bopList(oc, tools));
+    op.SetNonDestructive(true);
     op.Build(new oc.Message_ProgressRange_1());
     const s = op.Shape();
-    if(op.HasErrors() || s.IsNull()) throw new Error('boolean union failed');
+    return (op.HasErrors() || s.IsNull()) ? null : s;
+  }
+  OCK.fuseAll = function(args, tools){
+    if(!tools.length) return args.slice();
+    const oc = OC();
+    const s = runBop(new oc.BRepAlgoAPI_Fuse_1(), args, tools);
+    if(!s) throw new Error('boolean union failed');
     return [s];
   };
   OCK.cutAll = function(shape, tools){
     if(!tools.length) return shape;
-    if(tools.length === 1) return OCK.cut(shape, tools[0]);
     const oc = OC();
-    const op = new oc.BRepAlgoAPI_Cut_1();
-    op.SetArguments(bopList(oc, [shape]));
-    op.SetTools(bopList(oc, tools));
-    op.Build(new oc.Message_ProgressRange_1());
-    const s = op.Shape();
-    if(op.HasErrors() || s.IsNull()) throw new Error('boolean cut failed');
+    const s = runBop(new oc.BRepAlgoAPI_Cut_1(), [shape], tools);
+    if(!s) throw new Error('boolean cut failed');
     return s;
   };
   OCK.bounds = function(s){
@@ -3461,6 +3457,12 @@ const CSG = (function(){
         catch(err){ if(o.feat) markFeatureError(o.feat, err); }
       }
     }
+    /* The body is whole again exactly here, and nowhere else — every feature
+       below the one being applied is now fully built. This is the only moment a
+       checkpoint can be taken in the middle of a batched run, which is why
+       checking at the end of a feature (where a tool is usually pending again
+       already) records nothing useful. */
+    maybeCheckpoint(ckptCurIdx-1);
   }
 
   /* ---- geometry cache ------------------------------------------------------
@@ -3476,7 +3478,12 @@ const CSG = (function(){
      not certain to be geometry-neutral belongs in the print; a print that is
      too sensitive only costs a rebuild we would have done anyway, whereas one
      that is too loose shows stale geometry, so this errs sensitive. */
-  const SIG_SKIP={error:1,errorDetail:1,_previewGeoms:1,_isNew:1};
+  /* `frame` is the one that bites. applyFeature writes a sketch's resolved frame
+     back onto the feature DURING the build, so a key taken before the build
+     lacks it and the next one has it — two keys for identical geometry, and a
+     checkpoint that can never match. It is derived from `plane`, which is in the
+     key already, so skipping it loses nothing. */
+  const SIG_SKIP={error:1,errorDetail:1,_previewGeoms:1,_isNew:1,frame:1};
   let lastGeomSig=null;
   function geomSignature(){
     try{
@@ -3487,6 +3494,75 @@ const CSG = (function(){
         selectedEdges.map(e=>e.mid), active],
         (k,v)=>SIG_SKIP[k]?undefined:v);
     }catch(_){ return null; }      // never let the cache break a rebuild
+  }
+  /* ---- per-feature checkpoints ---------------------------------------------
+     The signature above answers "has anything changed at all". This answers
+     the next question down: "how much of the stack has changed". After each
+     feature that leaves the body fully built, the shapes are kept along with a
+     key describing every feature at or below it. Next rebuild, the deepest
+     checkpoint whose key still matches is restored and the loop starts after
+     it — so editing the last feature of sixteen replays one feature, not
+     sixteen.
+
+     Three things to know before touching this:
+
+     * A checkpoint can only sit where the body is actually materialised, and
+       batching (trap 26) made those points sparse on purpose — a run of merged
+       extrudes has no intermediate body to keep. So this is "replay from the
+       last flush at or below N", not "replay from N", and editing a feature
+       inside a batch legitimately redoes the whole batch.
+     * Sketches are replayed even below the checkpoint. They build no geometry,
+       they only fill sketchData, and every later feature looks its sketch up by
+       id — skip them and the first extrude above the checkpoint fails with
+       "needs a sketch".
+     * Shapes are owned by checkpoints, so nothing else may delete them. When
+       checkpoints are dropped, only shapes no surviving checkpoint still holds
+       are freed — `unionAll` passes untouched bodies through by reference, so
+       two checkpoints routinely share one shape.
+
+     The booleans run non-destructive (see runBop) because a checkpoint shape is
+     handed to the kernel as an argument over and over. */
+  const CKPT_MAX=8;
+  let checkpoints=[];        // [{i, key, shapes}], shallowest first
+  let ckptOff=0;             // >0 while buildPartShapes borrows the engine
+  let ckptKeys=null;         // this rebuild's prefix keys, one per feature
+  let ckptPfIdx=Infinity;    // index of the feature the panel is editing
+  let ckptCurIdx=-1;         // index of the feature being applied right now
+  function maybeCheckpoint(i){
+    if(ckptOff || !ckptKeys) return;
+    if(i<0 || i>=ckptKeys.length || i>=ckptPfIdx) return;
+    if(!resultShapes.length) return;
+    recordCheckpoint(i, ckptKeys[i], resultShapes.slice());
+  }
+  function ckptShapeSet(list){
+    const s=new Set();
+    for(const c of list) for(const sh of c.shapes) s.add(sh);
+    return s;
+  }
+  function freeShapes(shapes, keep){
+    for(const s of shapes) if(!keep.has(s)){ try{ s.delete(); }catch(_){} }
+  }
+  // Keep only checkpoints at or below `upTo`; free what nothing else holds.
+  function trimCheckpoints(upTo){
+    const survivors=checkpoints.filter(c=>c.i<=upTo);
+    if(survivors.length===checkpoints.length) return;
+    const keep=ckptShapeSet(survivors);
+    for(const c of checkpoints) if(c.i>upTo) freeShapes(c.shapes, keep);
+    checkpoints=survivors;
+  }
+  function dropAllCheckpoints(){ trimCheckpoints(-1); }
+  function recordCheckpoint(i, key, shapes){
+    if(key===null || !shapes.length) return;
+    const last=checkpoints[checkpoints.length-1];
+    /* Nothing was added since the last one — a sketch, a datum plane. Move that
+       checkpoint deeper instead of storing the same shapes twice. */
+    if(last && last.shapes.length===shapes.length &&
+       last.shapes.every((s,k)=>s===shapes[k])){ last.i=i; last.key=key; return; }
+    checkpoints.push({i, key, shapes});
+    while(checkpoints.length>CKPT_MAX){
+      const drop=checkpoints.shift();          // the deepest are worth the most
+      freeShapes(drop.shapes, ckptShapeSet(checkpoints));
+    }
   }
   function rebuildOverlaysOnly(active){
     while(sketchOverlay.children.length){const c=sketchOverlay.children.pop();if(c.geometry)c.geometry.dispose();}
@@ -3514,21 +3590,67 @@ const CSG = (function(){
     lastGeomSig=sig;
     resultMeshes.forEach(m=>{scene.remove(m);m.geometry.dispose();});
     resultMeshes=[]; resultGeoms=[];
-    for(const s of resultShapes){ try{ s.delete(); }catch(_){} }
-    resultShapes=[];
+
+    const active=features.slice(0,rollbackIndex);
+    /* The feature list as the checkpoint keys see it: the draft standing in for
+       the feature being edited, exactly as geomSignature does it. */
+    const keyed=active.map(f=>(propsFeat&&draftFeat&&propsFeat.id===f.id)?draftFeat:f);
+    /* Never reuse a checkpoint at or above the feature the panel is editing:
+       its preview geometry is produced by running it, and a restored body
+       would silently drop the preview. */
+    let pfIdx=Infinity;
+    if(propsFeat) for(let i=0;i<active.length;i++) if(active[i].id===propsFeat.id){ pfIdx=i; break; }
+    const keys=new Array(active.length).fill(null);
+    try{
+      const selKey=JSON.stringify(selectedEdges.map(e=>e.mid));
+      let run=JSON.stringify([docMode]);
+      for(let i=0;i<keyed.length;i++){
+        run+='|'+JSON.stringify(keyed[i],(k,v)=>SIG_SKIP[k]?undefined:v);
+        keys[i]=(i>=pfIdx?selKey:'')+run;
+      }
+    }catch(_){ /* unkeyable: no checkpointing this time round, build it all */ }
+
+    ckptKeys=keys; ckptPfIdx=pfIdx; ckptCurIdx=-1;
+    /* A checkpoint survives if its key still describes the stack — not merely
+       if it sits below the one being reused. The difference shows when the
+       rollback bar is dragged down and back up: those deeper checkpoints are
+       still perfectly good, and blanket-dropping them made scrubbing rebuild
+       everything it passed over. */
+    const alive=[], dead=[];
+    for(const c of checkpoints)
+      ((c.i<keys.length && keys[c.i]!==null && keys[c.i]===c.key) ? alive : dead).push(c);
+    let ck=null;
+    if(!ckptOff)
+      for(let c=alive.length-1;c>=0;c--) if(alive[c].i<active.length && alive[c].i<pfIdx){ ck=alive[c]; break; }
+    const keep=ckptShapeSet(alive);
+    const gone=new Set();
+    for(const s of resultShapes) if(!keep.has(s)) gone.add(s);
+    for(const c of dead) for(const s of c.shapes) if(!keep.has(s)) gone.add(s);
+    for(const s of gone){ try{ s.delete(); }catch(_){} }
+    checkpoints=alive;
+    resultShapes = ck ? ck.shapes.slice() : [];
+    const start = ck ? ck.i+1 : 0;
+
     Object.keys(sketchData).forEach(k=>delete sketchData[k]);
     while(sketchOverlay.children.length){const c=sketchOverlay.children.pop();if(c.geometry)c.geometry.dispose();}
     while(previewOverlay.children.length){const c=previewOverlay.children.pop();c.geometry.dispose();}
 
-    const active=features.slice(0,rollbackIndex);
     resetPending();
     for(let i=0; i<active.length; i++){
       let f = active[i];
       if (propsFeat && propsFeat.id === f.id && draftFeat) f = draftFeat;
-      
+
       f.error=null; f.errorDetail=null;
       f._previewGeoms = [];
       if(f.suppressed) continue;
+      if(i<start){
+        /* Its geometry is already in the restored body. Only sketches still
+           have to run, because they build no geometry and every feature above
+           looks its sketch up by id. */
+        if(f.type==='sketch'){ try{ applyFeature(f); }catch(err){ markFeatureError(f, err); } }
+        continue;
+      }
+      ckptCurIdx=i;
       try{ applyFeature(f); }
       catch(err){ markFeatureError(f, err); }
 
@@ -3543,8 +3665,14 @@ const CSG = (function(){
               pm.add(eg); previewOverlay.add(pm);
           }
       }
+      // and a feature that owes nothing (a first solid, a non-merged body) is
+      // a boundary in its own right
+      if(!pendOps.length && !f.error) maybeCheckpoint(i);
     }
+    ckptCurIdx=active.length;
     flushPending();            // whatever the last run left owing
+    if(active.length && !active.some(f=>f.error)) maybeCheckpoint(active.length-1);
+    ckptKeys=null; ckptCurIdx=-1;
     
     // tessellate the B-rep shapes for display, picking and STL
     resultGeoms = [];
@@ -6771,11 +6899,12 @@ const CSG = (function(){
               const data = JSON.parse(e.target.result);
               if (Array.isArray(data)) {                    // a part file
                   if (docMode==='asm') { clearAsm(); setDocMode('part'); }
-                  features = data;
+                  features = data;      // checkpoints stay: see loadDemo
                   uid = Math.max(0,...features.map(f=>f.id)) + 1;
                   rollbackIndex = features.length;
                   selId = null; demoActive=false; closeProps(); rebuild(); refreshDemoTgl();
               } else if (data && data.type==='assembly') {  // an assembly file
+                  dropAllCheckpoints();
                   features=[];rollbackIndex=0;selId=null;editing=null;demoActive=false;
                   clearAsm();
                   asm={components:[],mates:[]};
@@ -7667,6 +7796,7 @@ const CSG = (function(){
     Object.keys(sketchData).forEach(k=>delete sketchData[k]);
     const errs=[];
     let shapes=[];
+    ckptOff++;               // a different feature list entirely — no checkpoints
     try{
       resetPending();
       for(const f of list){
@@ -7681,6 +7811,7 @@ const CSG = (function(){
       features=sF;rollbackIndex=sR;resultShapes=sS;propsFeat=sPF;draftFeat=sDF;
       Object.keys(sketchData).forEach(k=>delete sketchData[k]);Object.assign(sketchData,sSD);
       pendKind=sPK;pendOps=sPO;
+      ckptOff--;
     }
     return {shapes,errs};
   }
@@ -9340,6 +9471,7 @@ const CSG = (function(){
   $('btn-demo').addEventListener('click',e=>{ openDemoMenu($('btn-demo')); e.stopPropagation(); });
   $('btn-new-asm').addEventListener('click',()=>{
     const start=()=>{
+      dropAllCheckpoints();
       features=[];rollbackIndex=0;selId=null;editing=null;demoActive=false;
       closeProps();setMode('model');controls.unlock();clearAsm();rebuild();refreshDemoTgl();
       setDocMode('asm');
@@ -9516,6 +9648,7 @@ const CSG = (function(){
     if(propsEl){ const body=propsEl.querySelector('#pbody'); if(body){ body.innerHTML=''; buildPropsBody(body, draftFeat||propsFeat); } }
   });
   function doNewPart(){
+    dropAllCheckpoints();
     features=[];rollbackIndex=0;selId=null;editing=null;selectedEdges=[];hoveredEdge=null;closeEdgeMenu();closeProps();setMode('model');controls.unlock();demoActive=false;rebuild();refreshDemoTgl();
   }
   /* small choice dialog (used by New part) */
@@ -9730,6 +9863,7 @@ const CSG = (function(){
     selectFeature, nextId: () => nextId(), renderer, scene,
     get camera(){return camera}, setProjection, get orthoOn(){return orthoOn}, controls, fitAll,
     OCK, featureEdges,
+    get checkpoints(){ return checkpoints.map(c=>({i:c.i, bodies:c.shapes.length, key:c.key})); },
     get docMode(){ return docMode; },
     get asm(){ return asm; },
     get asmShapes(){ return asmShapes; },

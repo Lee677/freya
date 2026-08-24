@@ -174,7 +174,7 @@ starts you empty instead.</p>
     the control points and drag one.</td></tr>
   <tr><td><b>Jet engine</b></td><td>An assembly of six parts — a spline nacelle, a shaft, an
     exhaust cone and three bladed rotors, each rotor a single sketch of curved blade profiles
-    extruded in one go. It is the heaviest thing here and takes a good twenty seconds of Open
+    extruded in one go. It is the heaviest thing here and takes ten seconds or so of Open
     CASCADE work to build, so the page sits still while it does; the message in the corner
     tells you it is working.</td></tr>
 </table>
@@ -196,6 +196,14 @@ knowing when you are laying a part out:</p>
 <p>Reopening a part you have already built is instant — the geometry is kept and reused, and
 selecting a feature or opening a sketch does not rebuild anything. It is only a genuine change
 to the recipe that costs kernel time.</p>
+<p><b>Where you edit matters more than what you edit.</b> The state of the part is kept at
+each point where the body is complete, so changing something near the <em>top</em> of the tree
+only rebuilds from there up — usually a fraction of a second, however big the part is.
+Changing something near the bottom rebuilds everything above it, because everything above it
+genuinely depends on it. That is why adding a new feature and adjusting it until it looks
+right stays quick even on a heavy model, while going back to move the very first sketch does
+not. Nothing needs doing to enable this; it is worth knowing only because it explains why two
+edits that look equally small can take very different amounts of time.</p>
 
 <h2 id="layout">The layout</h2>
 <table>

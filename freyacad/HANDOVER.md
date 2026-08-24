@@ -295,6 +295,47 @@ the overlay iframe.
     fillet-and-cut run, a deliberate merge-cut-merge ordering case, and the lantern; seven of
     the eight match to the last digit, and the lantern is the one to check by mesh volume.
 
+29. **Checkpoints: the body is kept wherever it is whole, and three things nearly broke it.**
+    Trap 25 answers "has anything changed"; this answers "how much". After each point where
+    nothing is owed, `resultShapes` is kept with a key describing every feature at or below
+    it; next rebuild the deepest still-matching checkpoint is restored and the loop starts
+    after it. Lantern: editing the last feature **5.8 s → 0.9 s**, editing a cut → 1.7 s,
+    editing inside the merge batch unchanged at 5.7 s (correct — the batch has to redo).
+
+    * **Checkpoints can only be taken at a flush, not at the end of a feature.** The first
+      version checked `!pendOps.length` after each `applyFeature` and recorded nothing useful
+      at all, because batching keeps a tool pending across the whole run — features 3–15 of
+      the lantern never have a materialised body between them. `flushPending` is the only
+      moment the body is whole, and it records at `ckptCurIdx-1`.
+    * **Anything the build writes back onto a feature poisons the key.** `applyFeature` sets
+      `f.frame` on sketches *during* the build, so a key taken before the build lacked it and
+      the next one had it — two different keys for identical geometry, and not one checkpoint
+      ever matched. It is in `SIG_SKIP` now (it is derived from `plane`, which is keyed
+      already). Any new derived field written onto a feature has to go there too, and note
+      `geomSignature` had the same latent bug, silently costing full rebuilds.
+    * **Dropping checkpoints and then not rebuilding loses them for good.** `loadDemo` used
+      to call `dropAllCheckpoints()` before `rebuild()`; once the frame fix made the signature
+      stable, reloading the model you already had short-circuited on trap 25 and returned
+      before recording anything, so the first edit after any load was always a full rebuild.
+      Checkpoints are keyed on content and capped at 8, so a stale one can neither match
+      wrongly nor grow without bound — the drop was never needed on the part paths.
+
+    Two standing requirements. **Booleans must run non-destructive** (`runBop` sets it):
+    OCCT may otherwise write p-curves and inflated tolerances back into its arguments, and a
+    checkpoint shape is handed in as an argument over and over, so the creep would surface
+    much later as a model that used to build and stopped. And **shapes are owned by
+    checkpoints** — nothing else may `delete()` them; `unionAll` passes untouched bodies
+    through by reference, so two checkpoints routinely share one shape, and freeing is done
+    against the set of shapes the survivors still hold. A checkpoint at or above the feature
+    the panel is editing is never reused, because its preview geometry only exists if that
+    feature actually runs.
+
+30. **`BRepAlgoAPI_Fuse_3(a, b, range)` performs the operation in its constructor.** The old
+    `OCK.fuse` then called `Build()` again, so every single-shape boolean ran twice. Removing
+    it took the lantern 6.2 s → 5.5 s, the pillow block 899 ms → 621 ms and the jet engine
+    16.5 s → 10.5 s, for nothing. Everything goes through `runBop` on the default constructor
+    now, which builds once.
+
 ## Biggest thing still missing
 
 **A real constraint solver *for sketches*.** Dimensions are applied one at a time, so
@@ -309,12 +350,13 @@ already works), lines parallel to a datum plane, and property-panel edits inside
 
 ## Where the remaining time goes
 
-After trap 26 the lantern is 6.2 s and the jet engine's six parts are ~16 s (from 18.5 s —
-batching barely helps there, because each rotor is one unavoidable blades-into-hub boolean
-and there is no run to collapse). Both are now close to the floor set by the per-boolean cost
-of a spline surface, so the next real lever is **not** doing the booleans again:
-**per-feature checkpoint caching** — keep the shape after each feature so editing feature 14
-of 16 replays 14–16 instead of all sixteen. The geometry cache (trap 25) already covers the
-no-change case; this is the change case. Note `cpattern`/`lpattern`/`mirror` copy the whole
-body (trap 22), so a checkpoint has to be invalidated by anything above it, not just by the
-feature itself.
+Cold builds: lantern 5.5 s, pillow block 0.6 s, jet engine's six parts 10.5 s. Warm edits
+near the top of a tree are under a second (trap 29). What is left is the per-boolean cost of
+a spline surface — about 600 ms, flat — and the boolean count is already minimal, so there is
+no more to win by rearranging them.
+
+The remaining lever is therefore **not building at all**: ship the demo models' built B-rep
+beside the recipe so opening one displays immediately and the kernel only runs if you edit
+something. That is the whole of the "opening the lantern on a slow laptop" complaint, which
+checkpoints do nothing for — a cold load has no cache to hit. Keep the stored shape honest
+with a hash of the feature JSON.
