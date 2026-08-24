@@ -199,6 +199,28 @@ the overlay iframe.
     not inside the view's `scale(s,-s)` group — put text in there and it comes out
     mirrored and scaled.
 
+22. **`cpattern` and `lpattern` copy the whole body, not the feature above them.** Both
+    take `resultShapes.slice()` as their base, so a circular pattern placed after one flute
+    clones the hull, the flute and everything else built so far — and with `merge:true`
+    that is a boolean union per copy. An early lantern demo chained a 7-, a 3- and a
+    5-count pattern and produced 105 bodies to fuse; the page never came back, and the
+    symptom read as "the app hangs on this model" rather than "this model is wrong". Where
+    the pattern is really a ring of identical features, prefer several loops in one sketch:
+    both demo models get four-fold symmetry from two mirrored profiles on Front repeated on
+    Right, and each engine rotor is one sketch of a dozen curved blades extruded in a single
+    feature. Neither uses a pattern at all.
+23. **Loops in one sketch must not overlap each other.** The first jet-engine rotor set the
+    blade half-thickness as an arc *length*, so the angular half-width was `half/r` — at the
+    root radius that made each blade wider than the gap between blades, and the profiles
+    intersected. OCCT did not error; it ground. Blades that do not touch build a 12-blade
+    rotor in 59 ms. `rotor()` in the generator now asserts `2*half_arc < gap*0.55`.
+24. **A synchronous OCCT build blocks the paint, so a slow model looks like a crash.** The
+    jet engine is about a minute of kernel work. `loadDemoAsm` sets the hint and defers the
+    build by a `setTimeout` so the message reaches the screen first. Anything else that can
+    run long needs the same two-step, and note that timing it from the caller lies if the
+    work is behind a `FileReader` — that was how the engine first appeared to build in
+    376 ms.
+
 ## Biggest thing still missing
 
 **A real constraint solver *for sketches*.** Dimensions are applied one at a time, so
