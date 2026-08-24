@@ -6009,6 +6009,17 @@ const CSG = (function(){
         viewport.appendChild(el);propsEl=el;
         
         el.querySelector('#p-done').addEventListener('click', () => {
+            /* Panel edits used to sit outside undo altogether: the draft was
+               assigned straight onto the feature, so Ctrl+Z stepped over the
+               change to whatever happened before it. Snapshot first — but only
+               if something actually changed, and not for a feature that is new,
+               because adding it already pushed an entry and a second one would
+               make undoing it take two presses. `error` is stripped from the
+               comparison since a preview rebuild writes it onto the draft. */
+            const bare = o => { const c = Object.assign({}, o);
+                delete c.error; delete c._isNew; return JSON.stringify(c); };
+            if(!propsFeat._isNew && bare(draftFeat) !== bare(JSON.parse(draftOriginalState)))
+                pushUndo('edit '+(propsFeat.name||propsFeat.type));
             Object.assign(propsFeat, draftFeat);
             propsFeat._isNew = false;
             closeProps();

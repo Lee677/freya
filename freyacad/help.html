@@ -578,11 +578,12 @@ one, the feature's panel lists them as <b>contours</b> with a tick box each, so 
 build from just the ones you want. Leave them all ticked for the usual behaviour.</p>
 <p>A shape only counts as a contour if its outline is <b>closed</b>. An open chain has no
 inside, so it makes no face — that is the usual reason a shape seems to be ignored.</p>
-<div class="note warn">
+<div class="note">
   <span class="tag">Worth knowing</span>
-  <p>Edits made in the parameter panel are <b>not covered by undo</b>. <kbd>Ctrl</kbd>+<kbd>Z</kbd>
-  tracks sketching and tree operations; it won't walk back an extrude depth you retyped.
-  Note the old number before you change it.</p>
+  <p>Parameter-panel edits are covered by undo. Pressing <b>Done</b> records one step, so
+  <kbd>Ctrl</kbd>+<kbd>Z</kbd> puts the old depth or radius back. Pressing <b>Cancel</b>, or
+  <b>Done</b> without having changed anything, records nothing — so undo never fills up with
+  entries for panels you only looked at.</p>
 </div>
 <p>Fillets and chamfers are the usual place a rebuild fails, and it's rarely a bug: a
 radius bigger than the material it has to blend into has no valid solution. Reduce it, or
@@ -629,7 +630,8 @@ your own:</p>
 <p><kbd>Ctrl</kbd>+<kbd>Z</kbd> steps back, <kbd>Ctrl</kbd>+<kbd>Y</kbd> forward, up to
 60 steps. Undo captures the whole document, so stepping back into a sketch reopens that
 sketch as it was.</p>
-<p>The exception is the parameter panel, as noted above.</p>
+<p>Parameter-panel edits count too: one step per <b>Done</b> that actually changed something.
+A new feature still takes a single press to remove, panel edit and all.</p>
 
 <h2 id="save">Saving &amp; opening</h2>
 <p><b>Save</b> writes a <code>.sketchcad</code> file — plain JSON holding the entire
@@ -826,7 +828,6 @@ opens in Illustrator, Inkscape, or a laser cutter's software.</p>
       concentric and coincident are in; perpendicular isn't yet.</li>
   <li><b>STL imports are faceted.</b> A mesh has no true surfaces, so an imported STL
       can be viewed, placed and exported but not filleted or chamfered.</li>
-  <li><b>The parameter panel is outside undo.</b></li>
   <li><b>Desktop only</b>, by design.</li>
   <li><b>No autosave.</b> The tab is the only copy until you save.</li>
   <li><b>Drawings are linear dimensions only.</b> No diameter, radius or angular dimensions,
