@@ -2226,28 +2226,59 @@ const CSG = (function(){
      span, which gave the lantern demo 946 faces and 5,382 edges — and OCCT
      boolean cost climbs steeply with face count, so seven booleans took 18 of
      a 20-second rebuild. The app already fits each spline span as a cubic
-     Bezier to draw it, so the same four control points make one real
-     Geom_BezierCurve edge here: identical geometry, a fraction of the faces,
-     and a STEP export with true surfaces in it rather than facets. */
+     Bezier to draw it, so the same four control points make one real curved
+     edge here: identical geometry, a fraction of the faces, and a STEP export
+     with true surfaces in it rather than facets.
+
+     One edge per span was the first version of that, and it only bought 25%:
+     a 22-span spline still revolved into 22 separate surfaces of revolution,
+     and every boolean had to intersect all 22. Consecutive spans are joined
+     into a SINGLE Geom_BSplineCurve instead (they meet C1, so the
+     concatenation is exact — GeomConvert_CompCurveToBSplineCurve is a
+     reparameterisation, not a refit), which is what actually collapses the
+     revolve to one surface. Runs are only joined where the spans really do
+     touch, so a gap can never silently bridge itself, and a refused join
+     falls back to one edge per span rather than dropping geometry. */
+  const BEZ_JOIN_TOL = 1e-6;
+  function bezHandle(oc, span, P){
+    const arr = new oc.TColgp_Array1OfPnt_2(1, 4);
+    for(let i = 0; i < 4; i++) arr.SetValue(i+1, P(span[i]));
+    return new oc.Handle_Geom_BoundedCurve_2(new oc.Geom_BezierCurve_1(arr));
+  }
+  // One curve for a run of touching Bezier spans, or null if OCCT refuses a join.
+  function curveFromBezRun(oc, run, P){
+    if(run.length === 1) return new oc.Handle_Geom_Curve_2(bezHandle(oc, run[0], P).get());
+    const cc = new oc.GeomConvert_CompCurveToBSplineCurve_2(
+      bezHandle(oc, run[0], P), oc.Convert_ParameterisationType.Convert_TgtThetaOver2);
+    for(let i = 1; i < run.length; i++)
+      if(!cc.Add_1(bezHandle(oc, run[i], P), BEZ_JOIN_TOL, false, false, 0)) return null;
+    return new oc.Handle_Geom_Curve_2(cc.BSplineCurve().get());
+  }
   OCK.wireFromSegs = function(segs, frame, zoff){
     const oc = OC();
     const mw = new oc.BRepBuilderAPI_MakeWire_1();
     const P = q => { const p = fpt(frame, q.x, q.y, zoff); return new oc.gp_Pnt_3(p.x, p.y, p.z); };
     const near = (a,b) => Math.abs(a.x-b.x) < 1e-9 && Math.abs(a.y-b.y) < 1e-9;
     let added = 0;
+    const addCurve = h => { mw.Add_1(new oc.BRepBuilderAPI_MakeEdge_24(h).Edge()); added++; };
+    const flush = run => {
+      if(!run.length) return;
+      const h = curveFromBezRun(oc, run, P);
+      if(h) addCurve(h);
+      else for(const span of run) addCurve(new oc.Handle_Geom_Curve_2(bezHandle(oc, span, P).get()));
+    };
+    let run = [];
     for(const s of segs){
-      let edge;
       if(s.bez){
-        const arr = new oc.TColgp_Array1OfPnt_2(1, 4);
-        for(let i = 0; i < 4; i++) arr.SetValue(i+1, P(s.bez[i]));
-        edge = new oc.BRepBuilderAPI_MakeEdge_24(
-          new oc.Handle_Geom_Curve_2(new oc.Geom_BezierCurve_1(arr))).Edge();
-      } else {
-        if(near(s.line[0], s.line[1])) continue;   // a zero-length edge fails the wire
-        edge = new oc.BRepBuilderAPI_MakeEdge_3(P(s.line[0]), P(s.line[1])).Edge();
+        if(run.length && !near(run[run.length-1][3], s.bez[0])){ flush(run); run = []; }
+        run.push(s.bez);
+        continue;
       }
-      mw.Add_1(edge); added++;
+      flush(run); run = [];
+      if(near(s.line[0], s.line[1])) continue;   // a zero-length edge fails the wire
+      mw.Add_1(new oc.BRepBuilderAPI_MakeEdge_3(P(s.line[0]), P(s.line[1])).Edge()); added++;
     }
+    flush(run);
     if(!added) throw new Error('empty profile');
     return mw.Wire();
   };
@@ -2356,6 +2387,44 @@ const CSG = (function(){
     if(s.IsNull()) throw new Error('boolean cut failed');
     return s;
   };
+  /* One boolean instead of N. A single BOP takes a list of arguments and a list
+     of tools, builds ONE intersection structure for the lot and splits every
+     face once; N chained booleans re-intersect the whole accumulated body each
+     time. Measured on a revolved-spline hull plus four blocks: 2,991 ms chained
+     against 1,375 ms batched, same 24 faces out. The gap is a fixed per-boolean
+     cost — a fuse against a spline surface is ~600 ms whether the spline has 2
+     spans or 24 — so what matters is how many booleans run, not how big they
+     are. Anything that fuses or cuts more than one shape should come through
+     here. */
+  function bopList(oc, shapes){
+    const l = new oc.TopTools_ListOfShape_1();
+    for(const s of shapes) l.Append_1(s);
+    return l;
+  }
+  OCK.fuseAll = function(args, tools){
+    if(!tools.length) return args.slice();
+    if(args.length === 1 && tools.length === 1) return [OCK.fuse(args[0], tools[0])];
+    const oc = OC();
+    const op = new oc.BRepAlgoAPI_Fuse_1();
+    op.SetArguments(bopList(oc, args));
+    op.SetTools(bopList(oc, tools));
+    op.Build(new oc.Message_ProgressRange_1());
+    const s = op.Shape();
+    if(op.HasErrors() || s.IsNull()) throw new Error('boolean union failed');
+    return [s];
+  };
+  OCK.cutAll = function(shape, tools){
+    if(!tools.length) return shape;
+    if(tools.length === 1) return OCK.cut(shape, tools[0]);
+    const oc = OC();
+    const op = new oc.BRepAlgoAPI_Cut_1();
+    op.SetArguments(bopList(oc, [shape]));
+    op.SetTools(bopList(oc, tools));
+    op.Build(new oc.Message_ProgressRange_1());
+    const s = op.Shape();
+    if(op.HasErrors() || s.IsNull()) throw new Error('boolean cut failed');
+    return s;
+  };
   OCK.bounds = function(s){
     const oc = OC();
     const box = new oc.Bnd_Box_1();
@@ -2376,16 +2445,57 @@ const CSG = (function(){
     const oc = OC();
     return new oc.TopExp_Explorer_2(s, oc.TopAbs_ShapeEnum.TopAbs_SOLID, oc.TopAbs_ShapeEnum.TopAbs_SHAPE).More();
   };
-  OCK.unionInto = function(shapes, tool){
-    let merged = tool; const keep = [];
-    for(const s of shapes){ if(OCK.hit(s, merged)) merged = OCK.fuse(merged, s); else keep.push(s); }
-    keep.push(merged); return keep;
+  const boxTouch = (A, B) =>
+    A.max[0] >= B.min[0] && A.min[0] <= B.max[0] &&
+    A.max[1] >= B.min[1] && A.min[1] <= B.max[1] &&
+    A.max[2] >= B.min[2] && A.min[2] <= B.max[2];
+  /* Fuse a batch of tools into a list of bodies. Shapes are grouped by
+     bounding-box overlap first, so a tool that touches nothing still comes out
+     as its own body — that is the rule the one-at-a-time version had, and
+     multi-body parts rely on it (one array entry per body is what gives each
+     body its own mesh and its own selection). Each group is then a single
+     boolean rather than one per shape. */
+  OCK.unionAll = function(shapes){
+    if(shapes.length < 2) return shapes.slice();
+    const bb = shapes.map(s=>OCK.bounds(s)), n = shapes.length;
+    const par = shapes.map((_,i)=>i);
+    const find = i => { while(par[i] !== i) i = par[i] = par[par[i]]; return i; };
+    for(let i = 0; i < n; i++) for(let j = i+1; j < n; j++)
+      if(boxTouch(bb[i], bb[j])){ const a = find(i), b = find(j); if(a !== b) par[a] = b; }
+    const groups = new Map();
+    for(let i = 0; i < n; i++){
+      const r = find(i);
+      if(!groups.has(r)) groups.set(r, []);
+      groups.get(r).push(shapes[i]);
+    }
+    const out = [];
+    for(const g of groups.values())
+      if(g.length === 1) out.push(g[0]);
+      else out.push(...OCK.fuseAll([g[0]], g.slice(1)));
+    return out;
   };
-  OCK.subtractFrom = function(shapes, tool){
+  OCK.unionInto = function(shapes, tool){ return OCK.unionAll(shapes.concat([tool])); };
+  OCK.compound = function(shapes){
+    if(shapes.length === 1) return shapes[0];
+    const oc = OC(), c = new oc.TopoDS_Compound(), b = new oc.BRep_Builder();
+    b.MakeCompound(c);
+    for(const s of shapes) b.Add(c, s);
+    return c;
+  };
+  /* One shape from several, for a feature that has to hand back exactly one.
+     Fusing solids that don't touch produces a compound of those same solids,
+     so the boolean is pure cost — and a bladed rotor is a dozen prisms that
+     touch nothing. Group first, fuse only what overlaps, and compound the
+     rest. */
+  OCK.unionOne = function(shapes){ return OCK.compound(OCK.unionAll(shapes)); };
+  OCK.subtractFrom = function(shapes, tool){ return OCK.subtractAllFrom(shapes, [tool]); };
+  OCK.subtractAllFrom = function(shapes, tools){
     const out = [];
     for(const s of shapes){
-      if(OCK.hit(s, tool)){ const r = OCK.cut(s, tool); if(OCK.hasSolid(r)) out.push(r); }
-      else out.push(s);
+      const hits = tools.filter(t=>OCK.hit(s, t));
+      if(!hits.length){ out.push(s); continue; }
+      const r = OCK.cutAll(s, hits);
+      if(OCK.hasSolid(r)) out.push(r);
     }
     return out;
   };
@@ -2396,12 +2506,9 @@ const CSG = (function(){
     const faces = OCK.facesFromSketch(sk, base - eps, opt.contours);
     const n = sk.frame.n, d = depth + 2*eps;
     const vec = new oc.gp_Vec_4(n.x*d, n.y*d, n.z*d);
-    let out = null;
-    for(const f of faces){
-      const s = new oc.BRepPrimAPI_MakePrism_1(f, vec, false, true).Shape();
-      out = out ? OCK.fuse(out, s) : s;
-    }
-    return out;
+    const solids = faces.map(f=>new oc.BRepPrimAPI_MakePrism_1(f, vec, false, true).Shape());
+    if(!solids.length) return null;
+    return OCK.unionOne(solids);
   };
   OCK.revolve = function(sk, angleDeg, axis, pick){
     const oc = OC();
@@ -2411,12 +2518,9 @@ const CSG = (function(){
     if(axis && typeof axis === 'object' && axis.d){ o = axis.o; dir = axis.d; }
     else dir = axis === 'v' ? sk.frame.v : sk.frame.u;
     const ax = new oc.gp_Ax1_2(new oc.gp_Pnt_3(o.x, o.y, o.z), new oc.gp_Dir_4(dir.x, dir.y, dir.z));
-    let out = null;
-    for(const f of faces){
-      const s = new oc.BRepPrimAPI_MakeRevol_1(f, ax, ang, true).Shape();
-      out = out ? OCK.fuse(out, s) : s;
-    }
-    return out;
+    const solids = faces.map(f=>new oc.BRepPrimAPI_MakeRevol_1(f, ax, ang, true).Shape());
+    if(!solids.length) return null;
+    return OCK.unionOne(solids);
   };
   OCK.transformed = function(s, setup){
     const oc = OC();
@@ -3235,6 +3339,7 @@ const CSG = (function(){
     if(f.type==='dplane'||f.type==='daxis') return;   // reference geometry only
     if(f.type==='import'){
       // the file's bytes live in the feature, so the recipe replays offline
+      flushPending();          // a new body must not join a batch that predates it
       const shp=OCK.importShape(f.fmt, f.data);
       resultShapes.push(shp);
       return;
@@ -3244,13 +3349,13 @@ const CSG = (function(){
       const sk={entities:sd.sk.entities,fillet:sd.sk.fillet,chamfer:sd.sk.chamfer,frame:sd.frame};
       if(f.type==='extrude'){
         const shp=OCK.extrude(sk,f.depth,{symmetric:f.symmetric,flip:f.flip,contours:f.contours});
-        if(f.merge && resultShapes.length) resultShapes=OCK.unionInto(resultShapes,shp);
-        else resultShapes.push(shp);
+        if(f.merge && resultShapes.length) pendOp('merge',shp,f);
+        else { flushPending(); resultShapes.push(shp); }
       } else {
         const depth = f.through ? 1000 : f.depth;
         const tool=OCK.extrude(sk,depth,{symmetric:f.through, flip:(!f.through&&f.flip), overhang:true, contours:f.contours});
         if(!resultShapes.length)throw new Error('nothing to cut');
-        resultShapes=OCK.subtractFrom(resultShapes,tool);
+        pendOp('cut',tool,f);
       }
       return;
     }
@@ -3258,18 +3363,20 @@ const CSG = (function(){
       const sd=sketchData[f.sketchId]; if(!sd)throw new Error('needs a sketch');
       const sk={entities:sd.sk.entities,fillet:sd.sk.fillet,chamfer:sd.sk.chamfer,frame:sd.frame};
       const shp=OCK.revolve(sk,f.angle,resolveAxis(f.axis),f.contours);
-      if(f.operation==='cut'){ if(!resultShapes.length)throw new Error('nothing to cut'); resultShapes=OCK.subtractFrom(resultShapes,shp); }
-      else if(f.merge && resultShapes.length) resultShapes=OCK.unionInto(resultShapes,shp);
-      else resultShapes.push(shp);
+      if(f.operation==='cut'){ if(!resultShapes.length)throw new Error('nothing to cut'); pendOp('cut',shp,f); }
+      else if(f.merge && resultShapes.length) pendOp('merge',shp,f);
+      else { flushPending(); resultShapes.push(shp); }
       return;
     }
     if(f.type==='fillet'){
+      flushPending();          // a fillet runs on the real body, so settle it first
       if(!resultShapes.length)throw new Error('nothing to fillet');
       resultShapes=OCK.edgeTreat(resultShapes, f.seeds, f.r, f.kind,
         (f===propsFeat||f===draftFeat), {mode:f.cmode, r2:f.r2, ang:f.ang});
       return;
     }
     if(f.type==='mirror'){
+      flushPending();          // it copies the body, so the body must be finished
       if(!resultShapes.length)throw new Error('nothing to mirror');
       const pl=DATUM[f.plane];
       const clones=resultShapes.map(s=>OCK.mirror(s, pl.o, pl.n));
@@ -3278,6 +3385,7 @@ const CSG = (function(){
       return;
     }
     if(f.type==='lpattern'){
+      flushPending();          // same again: a pattern copies the whole body
       if(!resultShapes.length)throw new Error('nothing to pattern');
       const dir={X:[1,0,0],Y:[0,1,0],Z:[0,0,1]}[f.dir];
       const base=resultShapes.slice();const add=[];
@@ -3289,6 +3397,7 @@ const CSG = (function(){
       return;
     }
     if(f.type==='cpattern'){
+      flushPending();
       if(!resultShapes.length)throw new Error('nothing to pattern');
       const base=resultShapes.slice();const add=[];
       const total=Math.PI*2*(f.angle/360);
@@ -3304,8 +3413,54 @@ const CSG = (function(){
       return;
     }
   }
-  function mergeAllShapes(shapes){
-    let out=[]; for(const s of shapes) out=OCK.unionInto(out,s); return out;
+  // a pattern of N copies used to be N chained booleans; it is one now
+  function mergeAllShapes(shapes){ return OCK.unionAll(shapes); }
+  function markFeatureError(f, err){
+    f.error = (err && err.message) || String(err);
+    f.errorDetail = [
+      'Feature: '+(f.name||f.type)+'  (type: '+f.type+(f.kind?', kind: '+f.kind:'')+(f.r!=null?', r: '+f.r:'')+')',
+      'Error: '+((err && err.message) ? err.message : String(err)),
+      'Stack:',
+      (err && err.stack ? err.stack : '(no stack)')
+    ].join('\n');
+  }
+
+  /* ---- deferred booleans ---------------------------------------------------
+     A run of consecutive features that only ADDS material never needs to see
+     the body in between: fusing A and then B gives the same solid as fusing
+     {A, B} at once. The same holds for a run that only REMOVES material. And
+     one boolean is far cheaper than several — a fuse against a spline surface
+     costs about 600 ms whether the spline has 2 spans or 24, so what bills is
+     the NUMBER of booleans. So tools are collected and applied together, and
+     the batch is flushed the moment something actually reads the body: a
+     fillet, a mirror, a pattern, an import, a change of direction, or the end
+     of the stack. Sketches don't read it, which is what lets the usual
+     sketch-extrude-sketch-extrude run collapse into a single boolean.
+
+     Each pending tool remembers the feature that made it. If the batch fails,
+     the tools are re-applied one at a time so the error still lands on the
+     feature at fault rather than on the whole run. */
+  let pendKind=null, pendOps=[];
+  function resetPending(){ pendKind=null; pendOps=[]; }
+  function pendOp(kind, tool, feat){
+    if(pendKind && pendKind!==kind) flushPending();
+    pendKind=kind; pendOps.push({tool,feat});
+  }
+  function applyPending(kind, ops){
+    const tools=ops.map(o=>o.tool);
+    if(kind==='merge') resultShapes=OCK.unionAll(resultShapes.concat(tools));
+    else resultShapes=OCK.subtractAllFrom(resultShapes, tools);
+  }
+  function flushPending(){
+    if(!pendOps.length){ pendKind=null; return; }
+    const ops=pendOps, kind=pendKind; resetPending();
+    try{ applyPending(kind, ops); }
+    catch(_){
+      for(const o of ops){
+        try{ applyPending(kind, [o]); }
+        catch(err){ if(o.feat) markFeatureError(o.feat, err); }
+      }
+    }
   }
 
   /* ---- geometry cache ------------------------------------------------------
@@ -3366,6 +3521,7 @@ const CSG = (function(){
     while(previewOverlay.children.length){const c=previewOverlay.children.pop();c.geometry.dispose();}
 
     const active=features.slice(0,rollbackIndex);
+    resetPending();
     for(let i=0; i<active.length; i++){
       let f = active[i];
       if (propsFeat && propsFeat.id === f.id && draftFeat) f = draftFeat;
@@ -3374,16 +3530,8 @@ const CSG = (function(){
       f._previewGeoms = [];
       if(f.suppressed) continue;
       try{ applyFeature(f); }
-      catch(err){
-        f.error = err.message||String(err);
-        f.errorDetail = [
-          'Feature: '+(f.name||f.type)+'  (type: '+f.type+(f.kind?', kind: '+f.kind:'')+(f.r!=null?', r: '+f.r:'')+')',
-          'Error: '+(err && err.message ? err.message : String(err)),
-          'Stack:',
-          (err && err.stack ? err.stack : '(no stack)')
-        ].join('\n');
-      }
-      
+      catch(err){ markFeatureError(f, err); }
+
       if ((f === propsFeat || f === draftFeat) && f._previewGeoms.length) {
           for(const pg of f._previewGeoms) {
               pg.computeVertexNormals();
@@ -3396,6 +3544,7 @@ const CSG = (function(){
           }
       }
     }
+    flushPending();            // whatever the last run left owing
     
     // tessellate the B-rep shapes for display, picking and STL
     resultGeoms = [];
@@ -7513,20 +7662,25 @@ const CSG = (function(){
   function buildPartShapes(list){
     const sF=features,sR=rollbackIndex,sS=resultShapes,sPF=propsFeat,sDF=draftFeat;
     const sSD=Object.assign({},sketchData);
+    const sPK=pendKind,sPO=pendOps;
     features=list;rollbackIndex=list.length;resultShapes=[];propsFeat=null;draftFeat=null;
     Object.keys(sketchData).forEach(k=>delete sketchData[k]);
     const errs=[];
     let shapes=[];
     try{
+      resetPending();
       for(const f of list){
         if(f.suppressed)continue;
         f.error=null;f._previewGeoms=[];
         try{ applyFeature(f); }catch(e){ errs.push((f.name||f.type)+': '+(e.message||e)); }
       }
+      flushPending();
+      for(const f of list) if(f.error) errs.push((f.name||f.type)+': '+f.error);
       shapes=resultShapes;
     } finally {
       features=sF;rollbackIndex=sR;resultShapes=sS;propsFeat=sPF;draftFeat=sDF;
       Object.keys(sketchData).forEach(k=>delete sketchData[k]);Object.assign(sketchData,sSD);
+      pendKind=sPK;pendOps=sPO;
     }
     return {shapes,errs};
   }

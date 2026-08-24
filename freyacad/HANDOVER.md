@@ -1,7 +1,8 @@
 # freyacad — handover
 
-Browser CAD at `/freyacad`. One ~7,400-line `index.html`, no build step, no framework.
-Open CASCADE compiled to WASM (CDN, ~11 MB) does the geometry; three.js r128 draws it.
+Browser CAD at `/freyacad`. One ~9,500-line `index.html`, no build step, no framework.
+Open CASCADE compiled to WASM (CDN, 50 MB raw / 13 MB brotli over the wire) does the
+geometry; three.js r128 draws it.
 
 ## The one standing rule
 
@@ -232,17 +233,67 @@ the overlay iframe.
     touch it: the reuse test must require `resultGeoms.length > 0`, because an empty result
     satisfies `0 === 0` and pins the emptiness in place for good; and anything that can
     change geometry without changing a feature's JSON must go into the fingerprint.
-26. **Splines reach the kernel as polylines, and that is the single biggest remaining
-    cost.** `OCK.wireFromPts` builds every non-circular loop with
-    `BRepBuilderAPI_MakePolygon`. Circles are special-cased into real `gp_Circ` edges;
-    splines are not. The lantern's revolved spline hull therefore has **946 faces and 5,382
-    edges** where a few surfaces of revolution would do, and OCCT boolean cost climbs
-    steeply with face count: of a 20.6 s rebuild, **11.8 s is five `unionInto` calls and
-    6.4 s is two `subtractFrom` calls** — 88% in seven booleans. Extrude is 1.3 s, meshing
-    0.9 s, everything else noise. The fix is real curved edges: the app already converts
-    each spline span to a cubic Bezier for drawing, so the same control points can build a
-    `Geom_BezierCurve` edge per span instead of 16 straight ones. Expect roughly an order
-    of magnitude off the face count and most of those seven booleans.
+26. **Boolean cost is the NUMBER of booleans, not the size of the shapes.** This took three
+    attempts and two wrong theories to pin down, so the measurements are worth keeping.
+
+    Splines used to reach the kernel as polylines — `BRepBuilderAPI_MakePolygon`, sixteen
+    chords per span — giving the lantern demo 946 faces and 5,382 edges. Of a **20.6 s**
+    rebuild, 11.8 s was five `unionInto` calls and 6.4 s two `subtractFrom` calls: 88% in
+    seven booleans. The obvious theory was "boolean cost climbs with face count, so build
+    real curved edges". Done, one `Geom_BezierCurve` per span: faces 946 → **80**, edges
+    5,382 → 452, and the rebuild went to **15.5 s**. Only 25%, and `unionInto` did not move
+    at all (11.8 s → 12.3 s). Fewer, curved faces are not cheaper to boolean than many flat
+    ones.
+
+    Second theory: 80 faces is still 22 separate surfaces of revolution because there was
+    one edge per span, so join the spans into one curve. `GeomConvert_CompCurveToBSplineCurve`
+    does that exactly — it reparameterises, it does not refit, and it picks interior knot
+    multiplicity 3 when the spans are only G1 (a centripetal Catmull-Rom is), so the
+    concatenation is the same curve. Faces 80 → **32**, edges 452 → 164, rebuild **11.5 s**.
+    Better, still not the order of magnitude.
+
+    What it actually is: **a fuse against a spline surface costs ~600 ms whether the spline
+    has 2 spans or 24.** Measured directly — a revolved-spline hull fused with one block:
+    598 ms at 2 spans, 874 ms at 24. It is a fixed cost per boolean. Chaining four blocks in
+    one at a time took 2,991 ms; one BOP with all four tools took **1,375 ms** for the same
+    24 faces out. So: batch. `OCK.fuseAll`/`cutAll` take argument and tool *lists*, and
+    consecutive features that all add (or all remove) material are collected and applied in
+    a single boolean — see the deferred-booleans block above `applyFeature`. Lantern
+    **6.2 s**, circular pattern 1,004 → 710 ms, linear pattern 203 → 73 ms. 20.6 s → 6.2 s
+    overall, 3.3×.
+
+    Things that measured as worthless, so don't spend time on them again: `SetUseOBB`,
+    `SimplifyResult`, and `SetRunParallel` (the WASM build is single-threaded — 1,395 ms vs
+    1,389 ms). `BRepBuilderAPI_NurbsConvert` on the hull gave ~15% and costs shape identity,
+    so it was not taken.
+
+27. **`BRepGProp::VolumeProperties` lies about multi-span surfaces — don't use it to check a
+    refactor.** It picks Gauss points from the surface *degree* and ignores the knot count,
+    so one 8-span BSpline surface of revolution integrates far worse than the same geometry
+    as 8 faces. On the lantern hull it reported 10782.8 against a true 10942.8 — **1.46%
+    low** — and reported the same figure for every `Eps` from 1e-3 to 1e-8, which makes it
+    look converged when it is not. That nearly sent a correct change back for rework.
+    `VolumePropertiesGK` is the adaptive one but it hung the renderer at tight tolerances.
+    What to use instead: mesh with `BRepMesh_IncrementalMesh` at a few deflections and sum
+    signed tetrahedra — that converged to the analytic Pappus volume (10942.7983) from both
+    the old and new code, which is what proved the geometry unchanged. For a revolved
+    profile the analytic value is free: `V = 2π ∮ (x²/2) dy` round the closed loop, exact
+    per polygon edge as `(y₁−y₀)(x₀²+x₀x₁+x₁²)/6`.
+
+28. **Deferring a boolean is only safe while nothing reads the body.** `pendOp` collects
+    tools and `flushPending` applies them; the flush has to happen before anything that
+    consumes `resultShapes` — fillet, mirror, both patterns, an import, and a change of
+    direction between adding and removing — and at the end of the loop. Sketches
+    deliberately do *not* flush, which is the whole point: that is what lets the usual
+    sketch-extrude-sketch-extrude run collapse into one boolean. Two things this must keep
+    doing: each pending tool remembers its feature, so a failed batch is retried one at a
+    time and the error still lands on the feature at fault rather than on the whole run; and
+    `buildPartShapes` (the assembly path) has to reset and flush around its own loop and
+    save/restore the pending state, because it swaps `resultShapes` out from under it.
+    Regression cover for all of this is a volume/centre-of-mass/face-count comparison against
+    the previous commit over pillow, mirror, both patterns, a multi-body part, a
+    fillet-and-cut run, a deliberate merge-cut-merge ordering case, and the lantern; seven of
+    the eight match to the last digit, and the lantern is the one to check by mesh volume.
 
 ## Biggest thing still missing
 
@@ -255,3 +306,15 @@ in 3D, and sketch entities are neither rigid nor 3D.
 
 Also open: dimensioning to the datum planes (length and angle to a plane trace; the origin
 already works), lines parallel to a datum plane, and property-panel edits inside undo.
+
+## Where the remaining time goes
+
+After trap 26 the lantern is 6.2 s and the jet engine's six parts are ~16 s (from 18.5 s —
+batching barely helps there, because each rotor is one unavoidable blades-into-hub boolean
+and there is no run to collapse). Both are now close to the floor set by the per-boolean cost
+of a spline surface, so the next real lever is **not** doing the booleans again:
+**per-feature checkpoint caching** — keep the shape after each feature so editing feature 14
+of 16 replays 14–16 instead of all sixteen. The geometry cache (trap 25) already covers the
+no-change case; this is the change case. Note `cpattern`/`lpattern`/`mirror` copy the whole
+body (trap 22), so a checkpoint has to be invalidated by anything above it, not just by the
+feature itself.

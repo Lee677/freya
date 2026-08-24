@@ -84,6 +84,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line-soft);
   <div class="brand"><b>freya</b>cad</div>
   <div class="sub">Manual</div>
   <a href="#start">Start here</a>
+  <a href="#speed">If a model feels slow</a>
   <div class="grp">Interface</div>
   <a href="#layout">The layout</a>
   <a href="#navigate">Getting around</a>
@@ -173,10 +174,28 @@ starts you empty instead.</p>
     the control points and drag one.</td></tr>
   <tr><td><b>Jet engine</b></td><td>An assembly of six parts — a spline nacelle, a shaft, an
     exhaust cone and three bladed rotors, each rotor a single sketch of curved blade profiles
-    extruded in one go. It is the heaviest thing here and takes about a minute of Open
+    extruded in one go. It is the heaviest thing here and takes a good twenty seconds of Open
     CASCADE work to build, so the page sits still while it does; the message in the corner
     tells you it is working.</td></tr>
 </table>
+
+<h3 id="speed">If a model feels slow</h3>
+<p>Almost all the time goes on <b>boolean operations</b> — the unions and cuts that join one
+feature to the last — and a boolean against a curved surface costs roughly the same whether
+that surface is simple or elaborate. So what makes a model slow is <em>how many</em> booleans
+it needs, not how complicated its shapes are. Two things follow from that, and both are worth
+knowing when you are laying a part out:</p>
+<ul>
+  <li><b>Consecutive features that all add material cost about the same as one.</b> A run of
+      merged extrudes is applied in a single boolean, and so is a run of cuts. Alternating
+      add, cut, add, cut splits that run up and pays for each piece separately, so grouping
+      your cuts together is genuinely faster than interleaving them.</li>
+  <li><b>Several profiles in one sketch beat several features.</b> Twelve blades drawn in one
+      sketch and extruded once are one operation; twelve separate extrudes are twelve.</li>
+</ul>
+<p>Reopening a part you have already built is instant — the geometry is kept and reused, and
+selecting a feature or opening a sketch does not rebuild anything. It is only a genuine change
+to the recipe that costs kernel time.</p>
 
 <h2 id="layout">The layout</h2>
 <table>
@@ -538,6 +557,12 @@ the <b>control polygon</b> it was fitted through, dashed, and a <b>handle</b> at
 </ul>
 <p>Splines mirror, take part in dynamic mirror, and can be construction geometry like anything
 else.</p>
+<p>A spline reaches the geometry kernel as a <b>true curve</b>, not as a string of short
+straight pieces, and a whole spline arrives as one curve rather than one per span. So
+extruding or revolving one gives a single genuine curved surface: a STEP export carries real
+geometry rather than facets, a fillet has a proper surface to run along, and the model is
+far cheaper to build. See <a href="#speed">if a model feels slow</a> for what does still
+cost time.</p>
 <div class="note">
   <span class="tag">Where this stops</span>
   <p>Not everything SolidWorks does with splines is here. These are <b>through-point</b>
