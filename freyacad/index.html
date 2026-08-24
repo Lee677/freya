@@ -99,6 +99,9 @@ if(!window.THREE){
 </script>
 <style>
   :root{
+    /* one knob for the size of every floating menu and its icons; the Tools
+       dialog writes it and localStorage remembers it */
+    --ui-scale:1;
     /* Cyberpunk x Google HQ UI Palette */
     --bg: #05070a; --panel: #0d1117; --panel-2: #161b22;
     --line: #30363d; --line-soft: #21262d;
@@ -200,8 +203,21 @@ if(!window.THREE){
   .viewport{grid-row:2/3;grid-column:2/3;position:relative;overflow:hidden;background:radial-gradient(120% 100% at 50% 0%,#0d1117 0%,#000000 75%)}
   canvas{display:block;position:absolute;inset:0}
 
-  .dock{position:absolute;top:14px;left:50%;transform:translateX(-50%);display:flex;gap:6px;background:rgba(13,17,23,.85);backdrop-filter:blur(8px);border:1px solid var(--g-blue);border-radius:10px;padding:6px;z-index:10;box-shadow:0 0 20px rgba(66,133,244,0.2)}
-  .dock button{padding:7px 10px;font-size:12px;border:1px solid transparent;background:transparent}
+  /* Every dock measurement is driven by --ui-scale so one control resizes them
+     all, and the row wraps inside the viewport rather than running off the
+     side of the screen — with enough tools in a menu it always would. */
+  /* Centred with auto margins rather than left:50% + translateX. With left:50%
+     the space available for shrink-to-fit is only the right half of the pane,
+     so a wrapping dock folded into four rows at half width no matter how much
+     room was actually free. */
+  .dock{position:absolute;top:14px;left:0;right:0;margin:0 auto;
+    width:max-content;max-width:calc(100% - 28px);display:flex;
+    gap:calc(5px * var(--ui-scale));background:rgba(13,17,23,.85);backdrop-filter:blur(8px);
+    border:1px solid var(--g-blue);border-radius:10px;padding:calc(5px * var(--ui-scale));
+    z-index:10;box-shadow:0 0 20px rgba(66,133,244,0.2);
+    flex-wrap:wrap;justify-content:center}
+  .dock button{padding:calc(5px * var(--ui-scale)) calc(8px * var(--ui-scale));
+    font-size:calc(11.5px * var(--ui-scale));border:1px solid transparent;background:transparent}
   .dock button.active{background:rgba(66,133,244,.2);border-color:var(--g-blue);color:#fff;box-shadow:0 0 10px rgba(66,133,244,0.4);text-shadow:0 0 4px var(--g-blue)}
   /* editing a dimension should look like the dimension, not like a form field:
      same chip, just with a caret. type=number draws stepper arrows, hence the
@@ -245,6 +261,14 @@ if(!window.THREE){
     padding:16px 18px;width:min(900px,95vw);max-height:88vh;overflow:auto}
   .cust h3{margin:0 0 4px;font-size:15px}
   .cust-hint{margin:0 0 12px;font-size:12px;color:var(--muted)}
+  /* the size row is deliberately unscaled — shrinking the control you use to
+     un-shrink everything else would be a trap */
+  .cust-size{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    margin:0 0 12px;padding:9px 11px;border:1px solid var(--line-soft);
+    border-radius:8px;background:rgba(255,255,255,.02);font-size:12.5px}
+  .cust-size>span:first-child{color:var(--text);font-weight:600}
+  .cust-size .seg button{font-size:12px;padding:5px 11px}
+  .cust-size .cust-note{color:var(--muted);font-size:11.5px;flex:1;min-width:140px}
   .cust-tabs{display:flex;gap:6px;margin-bottom:10px}
   .cust-tab{background:var(--panel-2);border:1px solid var(--line);border-radius:6px;
     padding:4px 10px;font-size:12px;color:var(--muted);cursor:pointer}
@@ -334,7 +358,15 @@ if(!window.THREE){
      names — a tree of identical pictograms is unreadable */
   .menu.open{display:block}
   .menu-sect{font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:var(--g-blue);padding:7px 9px 4px;text-transform:uppercase;text-shadow:0 0 4px rgba(66,133,244,0.4)}
-  .menu button{display:flex;width:100%;justify-content:flex-start;background:transparent;border:0;padding:7px 9px;font-size:12.5px;border-radius:6px;box-shadow:none;gap:9px}
+  /* the right-click menus are the model and assembly equivalents of the dock,
+     so they take the same scale — otherwise resizing one leaves the other
+     looking wrong beside it */
+  .menu button{display:flex;width:100%;justify-content:flex-start;background:transparent;border:0;
+    padding:calc(6px * var(--ui-scale)) calc(8px * var(--ui-scale));
+    font-size:calc(12px * var(--ui-scale));border-radius:6px;box-shadow:none;
+    gap:calc(8px * var(--ui-scale))}
+  .menu button .fi.ic-s{width:calc(19px * var(--ui-scale));height:calc(19px * var(--ui-scale))}
+  .menu-col{min-width:calc(142px * var(--ui-scale))}
   .menu button:hover{background:rgba(66,133,244,.15)}
   .menu button .fi{color:var(--muted)}
   .menu button[disabled]{opacity:.3}
@@ -375,11 +407,12 @@ if(!window.THREE){
   .fi.ic-s{width:20px;height:20px;display:inline-flex;flex:0 0 auto}
   .fi.ic-s svg{width:100%;height:100%}
   .feat .fi.ic-s{width:19px;height:19px}
-  .dock button .fi.ic-s{width:21px;height:21px}
+  .dock button .fi.ic-s{width:calc(19px * var(--ui-scale));height:calc(19px * var(--ui-scale))}
   .toolbar button .fi.ic-s{width:18px;height:18px}
   /* icons-only mode: labels collapse, pictograms remain */
   body.icons-only .toolbar button .lbl,body.icons-only .dock button .lbl{display:none}
-  body.icons-only .toolbar button,body.icons-only .dock button{padding:7px 8px}
+  body.icons-only .toolbar button{padding:7px 8px}
+  body.icons-only .dock button{padding:calc(5px * var(--ui-scale)) calc(6px * var(--ui-scale))}
   #btn-labels.active{background:rgba(66,133,244,.2);border-color:var(--g-blue)}
 
   @media (max-width:900px){
@@ -7183,6 +7216,20 @@ const CSG = (function(){
       b.style.display=(id&&MENUS.sketch.hidden.indexOf(id)>=0)?'none':'';
     });
   }
+  /* Menu size. Every dock and right-click menu is sized off --ui-scale, so this
+     is the only place that needs to change to shrink the lot. It exists because
+     a dock with enough tools in it outgrew a large screen. */
+  const UI_SCALES=[{v:0.75,l:'Tiny'},{v:0.85,l:'Compact'},{v:1,l:'Normal'},{v:1.15,l:'Large'}];
+  function uiScale(){
+    try{ const v=parseFloat(localStorage.getItem('fcad-ui-scale'));
+      if(v>=0.6&&v<=1.6)return v; }catch(_){ }
+    return 1;
+  }
+  function setUiScale(v){
+    document.documentElement.style.setProperty('--ui-scale',v);
+    try{ localStorage.setItem('fcad-ui-scale',String(v)); }catch(_){ }
+  }
+  setUiScale(uiScale());
   const MENUS={
     sketch:{title:'Sketch menu',cmds:CMD, def:DEFAULT_LAYOUT,      key:'fcad-sketch-layout',layout:null,hidden:[]},
     model :{title:'Model menu', cmds:MCMD,def:DEFAULT_MODEL_LAYOUT,key:'fcad-model-layout', layout:null,hidden:[]},
@@ -7198,6 +7245,8 @@ const CSG = (function(){
     ov.innerHTML='<div class="cust"><h3>Customise menus</h3>'+
       '<p class="cust-hint">Drag a command into another group to move it, or into Hidden to take '+
       'it off the menu. Order within a group is the order it appears.</p>'+
+      '<div class="cust-size"><span>Menu size</span><div class="seg" id="cust-scale"></div>'+
+      '<span class="cust-note">applies to the floating docks and every right-click menu</span></div>'+
       '<div class="cust-tabs" id="cust-tabs"></div>'+
       '<div class="cust-cols" id="cust-cols"></div>'+
       '<div class="cust-foot"><button class="btn-ghost" id="cust-reset">Reset this menu</button>'+
@@ -7205,6 +7254,21 @@ const CSG = (function(){
       '<button class="btn-primary" id="cust-ok">Done</button></div></div>';
     document.body.appendChild(ov);
     const tabs=ov.querySelector('#cust-tabs'), cols=ov.querySelector('#cust-cols');
+    /* Size applies the moment it is clicked and is kept whatever the dialog's
+       Cancel does — it is a display preference, not part of the layout being
+       edited, and having it snap back after you had seen it take effect would
+       read as a bug. */
+    const scaleBox=ov.querySelector('#cust-scale'), scaleWas=uiScale();
+    function renderScale(){
+      scaleBox.innerHTML='';
+      UI_SCALES.forEach(s=>{
+        const b=document.createElement('button');
+        b.textContent=s.l; b.className=(Math.abs(uiScale()-s.v)<0.001?'active':'');
+        b.addEventListener('click',()=>{ setUiScale(s.v); renderScale(); });
+        scaleBox.appendChild(b);
+      });
+    }
+    renderScale();
     // edit copies, so Cancel really cancels
     const work={}; Object.keys(MENUS).forEach(k=>{
       work[k]={secs:cloneLayout(MENUS[k].layout),hidden:MENUS[k].hidden.slice()}; });
