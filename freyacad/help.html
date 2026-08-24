@@ -578,7 +578,9 @@ sketch, or an existing solid — stay greyed out until it exists.</p>
   <tr><td><b>Fillet</b></td><td>A solid</td><td>Rounds edges to a radius. Softens corners
     and removes stress risers.</td></tr>
   <tr><td><b>Chamfer</b></td><td>A solid</td><td>Cuts a flat bevel on an edge. Good for
-    lead-ins and de-burring.</td></tr>
+    lead-ins and de-burring. Three shapes: <b>equal</b> (one size, 45°), <b>distance ×
+    distance</b> for an asymmetric bevel, and <b>distance × angle</b> where the angle is
+    measured from the first face.</td></tr>
   <tr><td><b>Mirror</b></td><td>A solid</td><td>Reflects the model across a plane.
     Model half a symmetrical part, mirror the rest.</td></tr>
   <tr><td><b>Linear pattern</b></td><td>A solid</td><td>Repeats along a direction at a
@@ -602,6 +604,15 @@ inside, so it makes no face — that is the usual reason a shape seems to be ign
   <b>Done</b> without having changed anything, records nothing — so undo never fills up with
   entries for panels you only looked at.</p>
 </div>
+<div class="note">
+  <span class="tag">Worth knowing</span>
+  <p>A <b>distance &times; angle</b> chamfer is built as its equivalent distance pair &mdash;
+  the run along the second face is the first distance times the tangent of the angle. That is
+  exact wherever the two faces meet square, which is every edge you would put an angle on.
+  Open CASCADE has its own distance-angle routine, but it fails on the circular edges this
+  app produces, and the distance pair does not.</p>
+</div>
+
 <p>Fillets and chamfers are the usual place a rebuild fails, and it's rarely a bug: a
 radius bigger than the material it has to blend into has no valid solution. Reduce it, or
 put the fillet earlier in the tree before the geometry gets tight.</p>
