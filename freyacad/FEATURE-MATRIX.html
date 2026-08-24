@@ -135,7 +135,7 @@ code{font-family:var(--mono);font-size:.92em;background:var(--code-bg);border:1p
 /* ---- table ---- */
 .table-wrap{overflow-x:auto;overflow-y:visible;border:1px solid var(--border);border-radius:12px;
   background:var(--surface);max-height:78vh;overflow-y:auto}
-table{border-collapse:collapse;width:100%;min-width:740px;font-size:13.3px}
+table{border-collapse:collapse;width:100%;min-width:940px;font-size:13.3px}
 thead th{position:sticky;top:0;background:var(--surface-2);z-index:3;text-align:center;
   padding:11px 12px;border-bottom:2px solid var(--border-strong);font-size:11px;letter-spacing:.05em;
   text-transform:uppercase;color:var(--text-muted);white-space:nowrap}
@@ -156,6 +156,18 @@ tbody tr.section td{background:var(--accent-soft);color:var(--accent);font-weigh
 tbody tr.section:hover td{background:var(--accent-soft)}
 
 td.col-mark{text-align:center;width:150px;min-width:118px}
+td.col-tok{text-align:right;width:190px;min-width:150px;font-variant-numeric:tabular-nums}
+td.col-tok .num{font-family:var(--mono);font-size:13.5px;font-weight:600;color:var(--text)}
+td.col-tok.done{color:var(--text-faint)}
+td.col-tok.lo .num{color:var(--yes-fg)}
+td.col-tok.mid .num{color:var(--partial-fg)}
+td.col-tok.hi .num{color:var(--no-fg)}
+td.col-tok .tn{display:block;margin-top:2px;font-size:10.6px;line-height:1.35;
+  color:var(--text-muted);max-width:30ch;margin-left:auto}
+thead th.tok{text-align:right;color:var(--text-muted)}
+.tcard.cost{border-left-color:var(--text-muted)}
+.tcard.cost h3{color:var(--text)}
+p.honest.method{margin-top:0}
 .fname{display:block;font-weight:600;color:var(--text);font-size:13.4px}
 .note{display:block;margin-top:2px;font-size:11.3px;color:var(--text-muted);font-weight:400;
   line-height:1.35;max-width:34ch}
@@ -213,10 +225,23 @@ footer p{margin:0 0 6px}
       </div>
       <div class="tcard fy">
         <h3>freyacad</h3>
-        <div class="nums"><b>34</b> ✅ &nbsp;·&nbsp; <b>8</b> ◐ &nbsp;·&nbsp; <b>33</b> ❌ &nbsp;(of 75)</div>
+        <div class="nums"><b>31</b> ✅ &nbsp;·&nbsp; <b>11</b> ◐ &nbsp;·&nbsp; <b>33</b> ❌ &nbsp;(of 75)</div>
+      </div>
+    </div>
+      <div class="tcard cost">
+        <h3>Cost to close every gap</h3>
+        <div class="nums"><b>~7.9M</b> output tokens &nbsp;·&nbsp; 44 items</div>
       </div>
     </div>
   </div>
+
+  <p class="honest method"><b>About the cost column:</b> an order-of-magnitude estimate of the
+  agent output tokens needed to bring freyacad to the level of the two mature packages on that
+  row &mdash; the implementation itself plus the iteration, the verification by measurement,
+  and the manual update this project asks for on every user-visible change. It is not lines of
+  code and not developer hours. Treat each figure as accurate to about a factor of two, and the
+  large ones as assuming an existing library is integrated rather than a kernel written from
+  scratch. A dash means freyacad is already there.</p>
 
   <div class="table-wrap">
   <table>
@@ -226,482 +251,558 @@ footer p{margin:0 0 6px}
         <th class="sw">SolidWorks</th>
         <th class="fc">FreeCAD<span class="ver">1.0+</span></th>
         <th class="fy">freyacad</th>
+        <th class="tok">Cost to close<span class="ver">est. output tokens</span></th>
       </tr>
     </thead>
     <tbody>
 
-      <tr class="section"><td colspan="4">Sketching</td></tr>
+      <tr class="section"><td colspan="5">Sketching</td></tr>
 
       <tr>
         <td class="col-feat"><span class="fname">Line</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Rectangle</span><span class="note">corner, centre, 3-point, parallelogram variants</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk partial">◐</span><span class="q">corner-to-corner only</span></td>
+        <td class="col-tok lo"><span class="num">35k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Circle &amp; regular polygon</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Arc, slot, ellipse &amp; conics</span><span class="note">other standard 2D curve primitives</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok mid"><span class="num">180k</span><span class="tn">three primitives, each with handles, snapping, dimensions and edge building</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Interpolated spline</span><span class="note">smooth curve fitted through clicked points</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">centripetal fit, draggable handles</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Control-point B-splines &amp; equation curves</span><span class="note">style splines, maths-defined curves</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok mid"><span class="num">120k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Construction geometry</span><span class="note">reference-only lines, invisible to the solid</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Sketch mirror (static + dynamic)</span><span class="note">reflect existing geometry, or draw live on both sides</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Trim / offset / extend entities</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok mid"><span class="num">140k</span><span class="tn">needs curve/curve intersection across every entity pair</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Round / bevel sketch corners</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">per-corner, own radius</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">per-corner</span></td>
         <td class="col-mark"><span class="mk partial">◐</span><span class="q">whole sketch, one radius — no per-corner pick</span></td>
+        <td class="col-tok lo"><span class="num">45k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Geometric constraints</span><span class="note">H/V, parallel, perpendicular, tangent, equal, concentric, coincident, symmetric</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk partial">◐</span><span class="q">H/V, parallel, equal, concentric, coincident — no perpendicular, tangent, symmetric</span></td>
+        <td class="col-tok lo"><span class="num">90k</span><span class="tn">perpendicular, tangent, symmetric, midpoint, collinear</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Constraint solver</span><span class="note">every constraint and dimension solved together, in one pass</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span><span class="q">dims applied one at a time + relax-based drag solver</span></td>
+        <td class="col-tok hi"><span class="num">450k</span><span class="tn">integrating planegcs (FreeCAD's solver) as WASM, plus entity mapping and diagnostics</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Dimension-driven geometry</span><span class="note">typed values move the sketch; includes driven (reference) dims and dims to datum planes</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Degrees-of-freedom feedback</span><span class="note">live indicator of what's still free to move</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">live count + colour-coded geometry</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
 
-      <tr class="section"><td colspan="4">Part modelling</td></tr>
+      <tr class="section"><td colspan="5">Part modelling</td></tr>
 
       <tr>
         <td class="col-feat"><span class="fname">Extruded boss &amp; cut</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Revolved boss &amp; cut</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Swept boss/cut</span><span class="note">sweep a profile along a path</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok mid"><span class="num">150k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Lofted boss/cut</span><span class="note">blend between profiles on different planes</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok mid"><span class="num">170k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Constant-radius edge fillet</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Variable-radius edge fillet</span><span class="note">radius changes along the edge</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span><span class="q">one fixed radius per fillet feature</span></td>
+        <td class="col-tok lo"><span class="num">90k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Chamfer</span><span class="note">equal-distance, two-distance, distance-angle, vertex</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk partial">◐</span><span class="q">equal-distance only</span></td>
+        <td class="col-tok lo"><span class="num">40k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Shell</span><span class="note">hollow a solid to a wall thickness</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok lo"><span class="num">70k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Draft</span><span class="note">taper faces for moulding/casting</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok lo"><span class="num">80k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Hole Wizard</span><span class="note">fastener-aware holes from a size table — tapped, counterbore, countersink</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span><span class="q">sketch a circle and cut, by hand</span></td>
+        <td class="col-tok mid"><span class="num">200k</span><span class="tn">standards tables, counterbore/countersink/tap, and the drawing callouts</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Custom datum planes &amp; axes</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Keep modelling on an imported solid</span><span class="note">fillet, cut or pattern a body that arrived as a file import</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">STEP only — STL imports as a faceted mesh</span></td>
+        <td class="col-tok mid"><span class="num">120k</span><span class="tn">mesh-to-B-rep conversion; also closes the STL row below</span></td>
       </tr>
 
-      <tr class="section"><td colspan="4">Patterns &amp; transforms</td></tr>
+      <tr class="section"><td colspan="5">Patterns &amp; transforms</td></tr>
 
       <tr>
         <td class="col-feat"><span class="fname">Linear pattern</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
-        <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-mark"><span class="mk partial">◐</span><span class="q">copies the whole body, not chosen features</span></td>
+        <td class="col-tok lo"><span class="num">70k</span><span class="tn">scope a pattern to chosen features instead of the whole body</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Circular pattern</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
-        <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-mark"><span class="mk partial">◐</span><span class="q">copies the whole body, not chosen features</span></td>
+        <td class="col-tok lo"><span class="num">70k</span><span class="tn">same work as the linear pattern, shared</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Curve-driven / sketch-driven / fill pattern</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok mid"><span class="num">130k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Mirror feature</span><span class="note">reflect a whole feature or body across a plane</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
-        <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-mark"><span class="mk partial">◐</span><span class="q">copies the whole body, not chosen features</span></td>
+        <td class="col-tok lo"><span class="num">60k</span><span class="tn">same again for mirror</span></td>
       </tr>
 
-      <tr class="section"><td colspan="4">Assemblies</td></tr>
+      <tr class="section"><td colspan="5">Assemblies</td></tr>
 
       <tr>
         <td class="col-feat"><span class="fname">Insert a component</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Fix / float a component</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Concentric mate</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Coincident mate</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Distance &amp; angle mates</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok lo"><span class="num">60k</span><span class="tn">the solver already exists; this is two more mate kinds</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Advanced mechanical mates</span><span class="note">gear, cam, rack-and-pinion, screw, belt</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">joint types in the native 1.0 Assembly workbench</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok mid"><span class="num">220k</span><span class="tn">gear, cam, slot, path, width, screw</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Mate to assembly origin / datum</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Live mate solver</span><span class="note">mates are relations that hold through drags, not one-off moves</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">Gauss-Seidel solver, but only 2 mate types</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Sub-assemblies</span><span class="note">nested assemblies within an assembly</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok mid"><span class="num">180k</span><span class="tn">nested trees, composed transforms, solver scoping</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Interference / collision detection</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk partial">◐</span><span class="q">geometry check, not a dedicated live tool</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok lo"><span class="num">70k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Exploded views</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok lo"><span class="num">90k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Toolbox / standard-parts library</span><span class="note">bolts, bearings, etc. from a catalogue</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk partial">◐</span><span class="q">Fasteners addon workbench</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok mid"><span class="num">200k</span><span class="tn">parametric fastener generators plus a library browser</span></td>
       </tr>
 
-      <tr class="section"><td colspan="4">Drawings</td></tr>
+      <tr class="section"><td colspan="5">Drawings</td></tr>
 
       <tr>
         <td class="col-feat"><span class="fname">Standard projected views</span><span class="note">front/top/right/etc., automatic 1st/3rd-angle projection</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Isometric view</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">shaded by default</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Section views</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok mid"><span class="num">200k</span><span class="tn">cutting planes, hatching, and section-aware hidden-line removal</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Detail views</span><span class="note">magnified callout of part of a view</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok mid"><span class="num">110k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Auxiliary / broken-out / crop views</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok mid"><span class="num">160k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Linear dimensions</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Diameter, radius &amp; angular dimensions</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span><span class="q">linear corner-to-corner only</span></td>
+        <td class="col-tok lo"><span class="num">90k</span><span class="tn">needs arc and circle recognition in the projected views</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Centre marks &amp; centrelines</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok lo"><span class="num">50k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Notes, leaders &amp; balloons</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok lo"><span class="num">90k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Bill of materials</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok lo"><span class="num">80k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Title block &amp; standard sheet sizes</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">A4–A0, portrait/landscape, standard scale series</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Automatic hidden-line removal</span><span class="note">edges behind the solid draw dashed on their own</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Associative views</span><span class="note">a view re-projects when the model changes</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Vector / print export</span></td>
         <td class="col-mark"><span class="mk partial">◐</span><span class="q">PDF and DXF/DWG; no direct SVG</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">SVG export; print/PDF via the browser</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
 
-      <tr class="section"><td colspan="4">Import / Export</td></tr>
+      <tr class="section"><td colspan="5">Import / Export</td></tr>
 
       <tr>
         <td class="col-feat"><span class="fname">Native format</span><span class="note">full parametric recipe — reopen and keep editing</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">.sldprt / .sldasm</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">.FCStd</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">.sketchcad / .asmcad, plain JSON</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">STEP export</span><span class="note">true B-rep, not tessellated</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">STEP import as an editable solid</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">STL export &amp; import</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk partial">◐</span><span class="q">import lands as a faceted mesh, not editable B-rep</span></td>
+        <td class="col-tok done">&mdash;<span class="tn">covered by the imported-solid row above</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">IGES exchange</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok lo"><span class="num">40k</span><span class="tn">OCCT already carries an IGES reader and writer; mostly wiring</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">DXF / DWG (2D) import &amp; export</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk no">❌</span><span class="q">sheets export as SVG only</span></td>
+        <td class="col-tok mid"><span class="num">130k</span></td>
       </tr>
 
-      <tr class="section"><td colspan="4">Platform &amp; workflow</td></tr>
+      <tr class="section"><td colspan="5">Platform &amp; workflow</td></tr>
 
       <tr>
         <td class="col-feat"><span class="fname">Cross-platform / install-free</span></td>
         <td class="col-mark"><span class="mk no">❌</span><span class="q">Windows desktop only</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">native on Windows, macOS, Linux</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">any OS, any modern browser</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Free / open source</span></td>
         <td class="col-mark"><span class="mk no">❌</span><span class="q">paid, seat-licensed</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">LGPL</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Undo / redo</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk partial">◐</span><span class="q">60 steps; parameter-panel edits aren't captured</span></td>
+        <td class="col-tok lo"><span class="num">25k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Customisable UI</span><span class="note">reorder, hide or remap tools and menus</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk partial">◐</span><span class="q">right-click menu &amp; dock only, no toolbar editor</span></td>
+        <td class="col-tok lo"><span class="num">45k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Scripting, macros &amp; API</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">VBA / API</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">full Python API</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok mid"><span class="num">180k</span><span class="tn">a documented API, a script console, and a sandbox to run it in</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Works fully offline, no account</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">after install &amp; licence activation</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">once the ~11 MB kernel has loaded once</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
 
-      <tr class="section"><td colspan="4">Advanced / specialist</td></tr>
+      <tr class="section"><td colspan="5">Advanced / specialist</td></tr>
 
       <tr>
         <td class="col-feat"><span class="fname">Sheet metal</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">SheetMetal addon workbench</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok hi"><span class="num">600k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Advanced surfacing</span><span class="note">boundary/loft surfaces, freeform, knit &amp; thicken</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">Surface workbench</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok hi"><span class="num">700k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Simulation / FEM</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">Simulation add-in</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">FEM workbench (CalculiX)</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok hi"><span class="num">800k</span><span class="tn">a mesher plus a solver integration</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">CAM</span><span class="note">CNC toolpath generation</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">CAM add-in</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">Path workbench</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok hi"><span class="num">900k</span><span class="tn">toolpath generation and post-processors</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Configurations / design tables</span><span class="note">one file, many driven variants</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">spreadsheet-driven</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok mid"><span class="num">200k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">PDM, version control &amp; collaboration</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">PDM add-in / 3DEXPERIENCE</span></td>
         <td class="col-mark"><span class="mk partial">◐</span><span class="q">plain files, versions cleanly in git — no built-in PDM</span></td>
         <td class="col-mark"><span class="mk partial">◐</span><span class="q">plain JSON, diffs cleanly in git — no built-in PDM</span></td>
+        <td class="col-tok mid"><span class="num">150k</span></td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Photorealistic rendering</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">PhotoView 360 / Visualize</span></td>
         <td class="col-mark"><span class="mk yes">✅</span><span class="q">Render workbench (Cycles/LuxCore), built in since 0.20</span></td>
         <td class="col-mark"><span class="mk no">❌</span></td>
+        <td class="col-tok mid"><span class="num">180k</span></td>
       </tr>
 
     </tbody>
@@ -714,8 +815,9 @@ footer p{margin:0 0 6px}
     handful of addon workbenches noted inline), and freyacad as read from its own source
     (<code>index.html</code>) and manual (<code>help.html</code>) on 24 August 2026.</p>
     <p>freyacad's own <code>help.html</code> states its gaps candidly in a "Known limits" section —
-    this page cross-checked those claims against the source and found them accurate; nothing here
-    contradicts what the manual already admits.</p>
+    this page cross-checked those claims against the source and found them accurate. One gap the
+    manual does not name: the three pattern and mirror features copy every shape built so far
+    rather than the features you choose, which is why they are marked partial here.</p>
   </footer>
 
 </div>
