@@ -155,8 +155,12 @@ if(!window.THREE){
     border:1px solid var(--line);border-radius:var(--radius);padding:5px 7px;cursor:pointer}
   .tb-sel:hover{border-color:var(--g-blue)}
   /* the drawing sheet: a real sheet of paper, on a desk */
+  /* A drawing is a flat sheet of paper, so it covers the 3D view outright:
+     z-index above the canvas, an opaque desk behind it, and the canvas itself
+     hidden while the mode is open. Half-covering it was what left a grid
+     floating over the drawing. */
   .sheet-wrap{position:absolute;inset:0;overflow:auto;background:#11161c;display:none;
-    align-items:center;justify-content:center;padding:26px}
+    z-index:14;align-items:center;justify-content:center;padding:26px}
   .sheet-wrap.on{display:flex}
   #sheet{background:#fff;box-shadow:0 10px 40px rgba(0,0,0,.55);flex:0 0 auto}
   #sheet .vw{cursor:grab}
@@ -541,6 +545,8 @@ if(!window.THREE){
       <select id="dw-angle" class="tb-sel" title="Projection convention">
         <option value="3" selected>Third angle</option><option value="1">First angle</option>
       </select>
+      <button id="btn-dw-model" class="btn-ghost" title="Draw a saved part instead of the one that's open">Model…</button>
+      <button id="btn-dw-dim" class="btn-ghost" title="Dimension: click two points on a view, then click to place the line">Dimension</button>
       <button id="btn-dw-hidden" class="btn-ghost" title="Show or hide hidden-detail lines">Hidden</button>
       <button id="btn-dw-print" class="btn-ghost" title="Print the sheet, or save it as PDF">Print</button>
       <button id="btn-dw-svg" class="btn-ghost" title="Download the sheet as an SVG drawing">Export SVG</button>
@@ -557,6 +563,7 @@ if(!window.THREE){
       <button id="btn-load" class="btn-ghost">Open</button>
       <input type="file" id="file-load" style="display:none" accept=".json,.sketchcad,.asmcad,.step,.stp,.stl">
       <input type="file" id="file-insert" style="display:none" accept=".json,.sketchcad">
+      <input type="file" id="file-draw" style="display:none" accept=".json,.sketchcad">
     </div>
     <div class="tb-spacer"></div>
     <div class="tb-group">
@@ -7575,6 +7582,7 @@ const CSG = (function(){
     $('tb-draw-main').style.display=isD?'flex':'none';
     $('btn-demo-tgl').style.display=(isA||isD)?'none':'';
     $('sheet-wrap').classList.toggle('on',isD);
+    canvas.style.display=isD?'none':'block';   // nothing 3D behind a sheet of paper
     document.querySelector('.tree-head h2').textContent=isD?'Drawing':isA?'Components':'Feature Tree';
     [sketchOverlay,previewOverlay,refOverlay,hoverGroup,selGroup,handleGroup,draftGroup].forEach(g=>g.visible=!isA&&!isD);
     const modelHost=(isD?drawReturn:docMode);
@@ -7694,18 +7702,42 @@ const CSG = (function(){
     iso   :{n:[-1,-1,-1],up:[0,1,0], label:'Isometric'}
   };
   let draw={sheet:'A3',orient:'landscape',scale:0,angle:3,hidden:true,
-            title:'',views:[],uid:1};
+            title:'',views:[],dims:[],uid:1};
   let drawSel=null, sheetDrag=null;
+  let drawTool=null, dimPick2=null;   // the sheet's own tool, and a dimension part-picked
   function sheetSize(){
     const s=SHEETS[draw.sheet]||SHEETS.A3;
     return draw.orient==='portrait'?[s[1],s[0]]:[s[0],s[1]];
   }
-  /* Every triangle and every edge of what is currently modelled, in world
-     coordinates — a part or a whole assembly, whichever is in front. */
+  /* Every triangle and every edge of the model being drawn, in world
+     coordinates. Normally that is whatever is open — a part or a whole
+     assembly — but a drawing can also be made of a part from a file it has
+     never had open, which is `drawModel`: a feature list, built once on the
+     side and kept as geometry. */
+  let drawModel=null;      // {name, geoms:[BufferGeometry]} — a part loaded just to draw
   function drawSourceGeoms(){
-    if(docMode==='asm')return asmTransformedGeoms();
+    if(drawModel)return drawModel.geoms.map(g=>g.clone());
+    if(drawReturn==='asm'||docMode==='asm')return asmTransformedGeoms();
     return resultMeshes.map(m=>{m.updateMatrixWorld(true);
       return m.geometry.clone().applyMatrix4(m.matrixWorld);});
+  }
+  /* Build a saved part's geometry without disturbing what is open. The same
+     side-build the assembly uses for its components, so a drawing of a file
+     costs nothing more than inserting it would. */
+  function loadDrawModel(featList,name){
+    const {shapes,errs}=buildPartShapes(featList);
+    const geoms=[];
+    for(const s of shapes){ try{ geoms.push(OCK.mesh(s)); }catch(_){ } }
+    for(const s of shapes){ try{ s.delete(); }catch(_){ } }
+    if(!geoms.length){ setHint('That file has nothing solid in it to draw'
+      +(errs.length?' — '+errs[0]:'')); return false; }
+    if(drawModel)drawModel.geoms.forEach(g=>g.dispose());
+    drawModel={name:(name||'PART').replace(/\.[a-z]+$/i,''),geoms};
+    return true;
+  }
+  function clearDrawModel(){
+    if(drawModel)drawModel.geoms.forEach(g=>g.dispose());
+    drawModel=null;
   }
   function viewBasis(kind){
     const d=VIEW_DIRS[kind]||VIEW_DIRS.front;
@@ -7841,7 +7873,144 @@ const CSG = (function(){
   function removeDrawView(v){
     const i=draw.views.indexOf(v); if(i<0)return;
     draw.views.splice(i,1); if(drawSel===v.id)drawSel=null;
+    draw.dims=(draw.dims||[]).filter(d=>d.view!==v.id);   // a dimension of nothing is nothing
     renderSheet(); refreshDrawTree();
+  }
+  /* ---- dimensions on the sheet ----------------------------------------------
+     A drawing you cannot dimension is a picture. These are stored against the
+     view, in the view's own coordinates — which, because the projection is
+     orthographic and unscaled, ARE model millimetres. So the number written on
+     the sheet is measured off the model, never off the paper, and changing the
+     sheet scale moves the dimension without changing what it says. */
+  function dimPoints(v){
+    // every projected endpoint of the view is a place a dimension can start
+    const out=[], seen=new Set();
+    for(const list of [v.geo.vis,v.geo.hid])for(const seg of list)for(const q of seg){
+      const k=Math.round(q.x*1e3)+':'+Math.round(q.y*1e3);
+      if(seen.has(k))continue; seen.add(k); out.push(q);
+    }
+    return out;
+  }
+  /* Sheet millimetres -> the view's own coordinates, and back. */
+  function viewOf(id){ return draw.views.find(v=>v.id===id)||null; }
+  function toView(v,sx,sy){
+    const s=v.scale||fitScale();
+    const cx=(v.geo.bb.x0+v.geo.bb.x1)/2, cy=(v.geo.bb.y0+v.geo.bb.y1)/2;
+    return {x:(sx-v.x)/s+cx, y:-(sy-v.y)/s+cy};
+  }
+  function toSheet(v,vx,vy){
+    const s=v.scale||fitScale();
+    const cx=(v.geo.bb.x0+v.geo.bb.x1)/2, cy=(v.geo.bb.y0+v.geo.bb.y1)/2;
+    return {x:v.x+(vx-cx)*s, y:v.y-(vy-cy)*s};
+  }
+  /* The nearest projected vertex to a point on the sheet, in whichever view
+     owns it — snapping is what makes a dimension mean the corner and not
+     "roughly there". */
+  function snapDimPoint(sx,sy){
+    let best=null,bd=Infinity;
+    for(const v of draw.views){ if(!v.geo)continue;
+      for(const q of dimPoints(v)){
+        const p=toSheet(v,q.x,q.y), d=Math.hypot(p.x-sx,p.y-sy);
+        if(d<bd){bd=d;best={view:v.id,x:q.x,y:q.y,sx:p.x,sy:p.y,d};}
+      }
+    }
+    return (best&&best.d<=4)?best:null;      // 4 mm of paper
+  }
+  function startDrawDim(){
+    if(!draw.views.length)return setHint('Add a view first');
+    dimPick2=null; drawTool=(drawTool==='dim')?null:'dim';
+    $('btn-dw-dim').classList.toggle('btn-primary',drawTool==='dim');
+    renderSheet();
+    setHint(drawTool==='dim'
+      ? 'Dimension: click a corner on a view, then a second corner, then click where the line should sit (Esc cancels)'
+      : 'Dimensioning off');
+  }
+  function cancelDrawDim(quiet){
+    if(!drawTool&&!dimPick2)return false;
+    drawTool=null; dimPick2=null;
+    $('btn-dw-dim').classList.remove('btn-primary');
+    renderSheet(); if(!quiet)setHint('Dimension cancelled');
+    return true;
+  }
+  function sheetDimClick(sx,sy){
+    if(!dimPick2){
+      const a=snapDimPoint(sx,sy);
+      if(!a)return setHint('No corner there — click a corner or an end of a line in a view');
+      dimPick2={a,b:null}; renderSheet();
+      return setHint('Now the second corner');
+    }
+    if(!dimPick2.b){
+      const b=snapDimPoint(sx,sy);
+      if(!b)return setHint('No corner there — click the second corner');
+      if(b.view!==dimPick2.a.view)return setHint('Both points have to be on the same view');
+      if(Math.hypot(b.x-dimPick2.a.x,b.y-dimPick2.a.y)<1e-6)return setHint('Pick two different corners');
+      dimPick2.b=b; renderSheet();
+      return setHint('Now click where the dimension line should sit');
+    }
+    /* The placement click chooses the kind, exactly as a smart dimension does:
+       drag it out sideways and you asked for the vertical distance, drag it
+       above or below and you asked for the horizontal one. */
+    const v=viewOf(dimPick2.a.view); if(!v)return cancelDrawDim(true);
+    const A=dimPick2.a, B=dimPick2.b;
+    const mid={x:(A.sx+B.sx)/2,y:(A.sy+B.sy)/2};
+    const dx=Math.abs(B.sx-A.sx), dy=Math.abs(B.sy-A.sy);
+    const ox=sx-mid.x, oy=sy-mid.y;
+    let kind='aligned';
+    if(dx>1e-6&&dy>1e-6) kind=(Math.abs(oy)>Math.abs(ox))?'horiz':'vert';
+    else kind=(dx>dy)?'horiz':'vert';
+    const p=toView(v,sx,sy);
+    draw.dims.push({id:draw.uid++,view:v.id,kind,
+      a:{x:A.x,y:A.y}, b:{x:B.x,y:B.y}, at:{x:p.x,y:p.y}});
+    dimPick2=null; renderSheet();
+    setHint('Dimension placed — click it and press Delete to remove it');
+  }
+  function dimValue(d){
+    if(d.kind==='horiz')return Math.abs(d.b.x-d.a.x);
+    if(d.kind==='vert') return Math.abs(d.b.y-d.a.y);
+    return Math.hypot(d.b.x-d.a.x,d.b.y-d.a.y);
+  }
+  /* Witness lines, a dimension line with arrows, and the number — all built in
+     sheet millimetres so the text never comes out mirrored or scaled with the
+     view's transform. */
+  function drawDimGeom(svg,d){
+    const v=viewOf(d.view); if(!v||!v.geo)return;
+    const A=toSheet(v,d.a.x,d.a.y), B=toSheet(v,d.b.x,d.b.y), at=toSheet(v,d.at.x,d.at.y);
+    let p1,p2;
+    if(d.kind==='horiz'){ p1={x:A.x,y:at.y}; p2={x:B.x,y:at.y}; }
+    else if(d.kind==='vert'){ p1={x:at.x,y:A.y}; p2={x:at.x,y:B.y}; }
+    else {
+      const ux=B.x-A.x, uy=B.y-A.y, L=Math.hypot(ux,uy)||1;
+      const nx=-uy/L, ny=ux/L, off=((at.x-A.x)*nx+(at.y-A.y)*ny);
+      p1={x:A.x+nx*off,y:A.y+ny*off}; p2={x:B.x+nx*off,y:B.y+ny*off};
+    }
+    const sel=(drawSel==='d'+d.id);
+    const col=sel?'#4285F4':'#111';
+    const g=mk('g',{class:'dw-dim','data-dim':d.id,'pointer-events':'stroke'});
+    const line=(a,b,w,dash)=>g.appendChild(mk('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,
+      stroke:col,'stroke-width':w,'stroke-dasharray':dash||'none'}));
+    // witness lines stand off the geometry and overshoot the dimension line
+    const ext=(P,Q)=>{ const ux=Q.x-P.x,uy=Q.y-P.y,L=Math.hypot(ux,uy);
+      if(L<1e-9)return; const k=1.2/L;
+      line({x:P.x+ux*k,y:P.y+uy*k},{x:Q.x+ux*k*1.6,y:Q.y+uy*k*1.6},0.18); };
+    ext(A,p1); ext(B,p2);
+    line(p1,p2,0.25);
+    const ang=Math.atan2(p2.y-p1.y,p2.x-p1.x);
+    for(const [P,s] of [[p1,1],[p2,-1]]){
+      const a1=ang+s*0.22, a2=ang-s*0.22, L2=2.2;
+      g.appendChild(mk('path',{d:'M'+P.x+' '+P.y+'L'+(P.x+Math.cos(a1)*L2*s)+' '+(P.y+Math.sin(a1)*L2*s)+
+        'L'+(P.x+Math.cos(a2)*L2*s)+' '+(P.y+Math.sin(a2)*L2*s)+'Z',fill:col,stroke:'none'}));
+    }
+    const val=dimValue(d);
+    const t=mk('text',{x:(p1.x+p2.x)/2,y:(p1.y+p2.y)/2-1.1,'text-anchor':'middle',
+      'font-family':'sans-serif','font-size':3.2,fill:col,'pointer-events':'none'});
+    t.textContent=(Math.round(val*100)/100)+'';
+    const deg=ang*180/Math.PI, flip=(deg>90||deg<-90)?deg+180:deg;
+    t.setAttribute('transform','rotate('+flip.toFixed(2)+' '+((p1.x+p2.x)/2)+' '+((p1.y+p2.y)/2)+')');
+    g.appendChild(t);
+    // an invisible fat line so a 0.25 mm dimension is still clickable
+    g.appendChild(mk('line',{x1:p1.x,y1:p1.y,x2:p2.x,y2:p2.y,stroke:'transparent',
+      'stroke-width':3,'pointer-events':'stroke'}));
+    svg.appendChild(g);
   }
   const SVGNS='http://www.w3.org/2000/svg';
   const mk=(t,a)=>{const e=document.createElementNS(SVGNS,t);
@@ -7887,9 +8056,29 @@ const CSG = (function(){
       lab.textContent=VIEW_DIRS[v.kind].label+(v.scale?'  ('+scaleLabel(v.scale)+')':'');
       svg.appendChild(lab);
     }
+    for(const d of (draw.dims||[]))drawDimGeom(svg,d);
+    /* Half a dimension, drawn as you place it: the corners you have picked and
+       a rubber line between them, so you can see what you are measuring. */
+    if(dimPick2){
+      const dot=p=>svg.appendChild(mk('circle',{cx:p.sx,cy:p.sy,r:0.8,fill:'#4285F4'}));
+      dot(dimPick2.a); if(dimPick2.b)dot(dimPick2.b);
+      if(dimPick2.b)svg.appendChild(mk('line',{x1:dimPick2.a.sx,y1:dimPick2.a.sy,
+        x2:dimPick2.b.sx,y2:dimPick2.b.sy,stroke:'#4285F4','stroke-width':0.2,
+        'stroke-dasharray':'1 0.8'}));
+    }
     drawTitleBlock(svg,W,H,S);
+    svg.style.cursor=(drawTool==='dim')?'crosshair':'default';
+    svg.querySelectorAll('.dw-dim').forEach(g=>{
+      g.addEventListener('pointerdown',e=>{
+        if(drawTool==='dim')return;
+        e.preventDefault(); e.stopPropagation();
+        drawSel='d'+g.dataset.dim; renderSheet(); refreshDrawTree();
+        setHint('Dimension selected — Delete removes it');
+      });
+    });
     svg.querySelectorAll('.vw').forEach(g=>{
       g.addEventListener('pointerdown',e=>{
+        if(drawTool==='dim')return;      // clicking a view means "measure here"
         e.preventDefault();
         const id=+g.dataset.id, v=draw.views.find(x=>x.id===id); if(!v)return;
         drawSel=id; refreshDrawTree();
@@ -8158,7 +8347,7 @@ const CSG = (function(){
      cannot dimension is not a drawing anyone can issue, so the door stays shut
      until it is. Everything below is live code behind this one flag — flip it
      back to true and the mode returns exactly as it was. */
-  const DRAWINGS_ENABLED=false;
+  const DRAWINGS_ENABLED=true;
   $('btn-new-draw').addEventListener('click',()=>{
     if(!DRAWINGS_ENABLED&&docMode!=='draw'){
       askDialog('Drawings — coming soon',
@@ -8177,8 +8366,8 @@ const CSG = (function(){
     if(!resume){
       draw={sheet:$('dw-sheet').value||'A3',orient:$('dw-orient').value||'landscape',
             scale:+($('dw-scale').value||0),angle:+($('dw-angle').value||3),
-            hidden:true,title:'',views:[],uid:1};
-      drawSel=null;
+            hidden:true,title:'',views:[],dims:[],uid:1};
+      drawSel=null; clearDrawModel();
     }
     setDocMode('draw');
     /* Coming back to a drawing re-projects every view from the model as it is
@@ -8196,6 +8385,30 @@ const CSG = (function(){
   $('btn-dw-hidden').addEventListener('click',()=>{
     draw.hidden=!draw.hidden; $('btn-dw-hidden').classList.toggle('btn-primary',draw.hidden);
     renderSheet(); setHint(draw.hidden?'Hidden detail shown, dashed':'Hidden detail off');
+  });
+  $('btn-dw-dim').addEventListener('click',startDrawDim);
+  /* The sheet element outlives every redraw, so this is bound once. Binding it
+     inside renderSheet stacked a handler per redraw, and one click then walked
+     the dimension pick two or three steps at a time. */
+  $('sheet').addEventListener('pointerdown',e=>{
+    if(drawTool!=='dim')return;
+    e.preventDefault(); e.stopPropagation();
+    const svg=$('sheet'), r=svg.getBoundingClientRect(), k=sheetSize()[0]/r.width;
+    sheetDimClick((e.clientX-r.left)*k,(e.clientY-r.top)*k);
+  },true);
+  $('btn-dw-model').addEventListener('click',()=>$('file-draw').click());
+  $('file-draw').addEventListener('change',e=>{
+    const f=e.target.files[0]; e.target.value=''; if(!f)return;
+    const rd=new FileReader();
+    rd.onload=ev=>{
+      let data; try{ data=JSON.parse(ev.target.result); }catch(_){ return setHint('That is not a part file'); }
+      if(!Array.isArray(data))return setHint('Drawings are made from parts — open a .sketchcad file');
+      if(!loadDrawModel(data,f.name))return;
+      draw.title=drawModel.name.toUpperCase();
+      rebuildDrawViews(); refreshDrawTree();
+      setHint('Drawing '+drawModel.name+' — every view is projected from that file');
+    };
+    rd.readAsText(f);
   });
   $('btn-dw-print').addEventListener('click',printSheet);
   $('btn-dw-svg').addEventListener('click',exportSheetSVG);
@@ -8330,6 +8543,10 @@ const CSG = (function(){
     }
     if(e.key==='F1'){e.preventDefault();openManual();return;}
     if(e.key==='Escape'&&mateSel){e.preventDefault();cancelMate();return;}
+    if(docMode==='draw'){
+      // a sheet does not orbit, zoom or fit — those keys belong to the model
+      if(/^Arrow|^[fF]$/.test(e.key)||((e.ctrlKey||e.metaKey)&&/^[578]$/.test(e.key)))return;
+    }
     if(!e.ctrlKey&&!e.metaKey&&!e.altKey&&/^Arrow(Left|Right|Up|Down)$/.test(e.key)){
       e.preventDefault();
       const S=Math.PI/6;
@@ -8367,6 +8584,16 @@ const CSG = (function(){
       else if(e.key==='3'){tool='circle';dockSel();}else if(e.key==='4'){tool='polygon';dockSel();}
       else if(e.key==='5'){tool='spline';dockSel();}
       else if(e.key.toLowerCase()==='d'){e.preventDefault();tool='dim';dockSel();setHint('Dimension: click a line, circle or rectangle edge, then type a value');}
+    } else if(docMode==='draw'){
+      if(e.key==='Escape'){ if(!cancelDrawDim())setDocMode(drawReturn); }
+      else if(e.key==='Delete'||e.key==='Backspace'){
+        if(typeof drawSel==='string'&&drawSel[0]==='d'){
+          const id=+drawSel.slice(1);
+          draw.dims=draw.dims.filter(x=>x.id!==id); drawSel=null;
+          renderSheet(); setHint('Dimension removed');
+        } else { const v=draw.views.find(x=>x.id===drawSel); if(v)removeDrawView(v); }
+      }
+      else if(e.key.toLowerCase()==='d')startDrawDim();
     } else if(docMode==='asm'){
       if((e.key==='Delete'||e.key==='Backspace')&&asmSel){const c2=asm.components.find(x=>x.id===asmSel);if(c2)removeComponent(c2);}
       else if(e.key.toLowerCase()==='f')fitAll();

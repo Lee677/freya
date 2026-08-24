@@ -184,6 +184,20 @@ the overlay iframe.
     pinpricks over the sheet. It runs once per view, ~110 ms for a small part.
     Note that a bore's front and back rims legitimately project to the same 2D circle;
     those overlapping strokes are correct, not duplicates.
+    Three things the mode has to get right or it reads as broken: the sheet needs a
+    `z-index` above the WebGL canvas AND the canvas hidden (`display:none`) — half-covering
+    it left a rotatable grid floating over the drawing; the view keys (arrows, F, Ctrl+5/7/8)
+    must be refused in draw mode, because they drive a scene nobody can see; and the
+    sheet-level pointer handler must be bound ONCE, not inside `renderSheet` — the `<svg>`
+    element outlives every redraw, so binding it there stacked a handler per redraw and one
+    click walked the dimension pick two or three steps at a time.
+21. **Drawing dimensions are stored in view coordinates, which are model millimetres.**
+    The projection is orthographic and unscaled, so a distance measured in a view's own
+    coordinates IS the distance on the part. That is why changing the sheet scale to 1:2
+    halves the drawing and leaves the number reading 40, and why dimensions travel with a
+    view when it is dragged. Everything is *drawn* in sheet millimetres though (`toSheet`),
+    not inside the view's `scale(s,-s)` group — put text in there and it comes out
+    mirrored and scaled.
 
 ## Biggest thing still missing
 

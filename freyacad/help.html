@@ -721,15 +721,46 @@ and nothing moves, rather than half-applied.</p>
 positions from them, so a mated assembly comes back mated.</p>
 
 <h2 id="drawings">Drawings</h2>
-<div class="note warn">
-  <span class="tag">Not open yet</span>
-  <p><b>New drawing</b> says "coming soon" if you press it, and that is deliberate. The
-  machinery is built and working — sheets from A4 to A0, orthographic views in first or third
-  angle, genuine hidden-line removal, fit-to-page scaling from the standard series, print at
-  true paper size and SVG export. What is missing is the part that makes a drawing worth
-  issuing: <b>dimensions and annotations on the sheet</b>, and section and detail views.</p>
-  <p>A drawing you cannot dimension is a picture, not a drawing, so the door stays shut until
-  it is done rather than shipping half of one.</p>
+<p><b>New drawing</b> makes an engineering drawing of what you have modelled. It replaces the
+3D view with a flat sheet of paper — nothing rotates, nothing orbits, the model is put away
+until you come back to it. The same button takes you back and forth; the drawing keeps its
+layout, and every view is <b>re-projected from the model as it now stands</b> each time you
+return. Change a dimension on the part, come back, and the drawing has changed with it.</p>
+<h3>Views</h3>
+<p><b>Add view</b> offers front, top, right, left, bottom, back and isometric. Each is a real
+orthographic projection of the model's edges, not a picture of the screen: edges you can see
+draw solid, edges the solid stands in front of draw dashed as hidden detail, and <b>Hidden</b>
+turns that detail off. Drag a view to place it; the tree lists them with an × to remove one.</p>
+<p>A view added after the front view lands square with it, on the side the convention puts it:
+<b>third angle</b> puts the top view above and the right view to the right, <b>first angle</b>
+the other way about. The title block carries the matching symbol.</p>
+<p><b>Model…</b> draws a <em>saved</em> part instead of the one you have open — pick a
+<code>.sketchcad</code> file and every view re-projects from it, without disturbing your work.</p>
+<h3>Dimensioning</h3>
+<p><b>Dimension</b> (or <kbd>D</kbd>) arms the dimension tool. Click a corner on a view, click
+a second corner, then click where the line should sit. Corners snap, so a dimension always
+means the corner and not "roughly there". Where you place the line chooses the kind, as a
+smart dimension does: put it above or below and you asked for the horizontal distance, out to
+the side and you asked for the vertical one.</p>
+<p>The number is measured off the <b>model</b>, not off the paper. Change the sheet scale to
+1:2 and the drawing halves while the dimension still reads 40. Dimensions belong to their
+view, so they travel with it when you drag it, and go with it when you delete it. Click one
+and press <kbd>Delete</kbd> to remove it; <kbd>Esc</kbd> puts the tool down, and again leaves
+the drawing.</p>
+<h3>Sheet, scale and output</h3>
+<p>Sheet sizes run A4 to A0, portrait or landscape. The scale is one you pick from the usual
+series, or <b>fit</b>, which chooses the largest standard scale that still gets everything on
+the page — a drawing is read at a stated scale, so it picks 1:2 rather than inventing 1:1.83.
+Whatever it lands on is printed in the title block.</p>
+<p><b>Print</b> opens the sheet at its true paper size — print it, or use your browser's
+"Save as PDF". <b>Export SVG</b> saves it as vectors at real millimetre dimensions, which
+opens in Illustrator, Inkscape, or a laser cutter's software.</p>
+<div class="note">
+  <span class="tag">Where this stops</span>
+  <p>Dimensions are linear — between two corners. There are no diameter or radius dimensions,
+  no angular ones, and no notes, centre marks, centrelines, balloons or bill of materials.
+  There are no section, detail or auxiliary views. The drawing is not saved with the part: the
+  sheet lasts as long as the tab, so print or export it before you close.</p>
 </div>
 
 <h2 id="keys">Keyboard</h2>
@@ -761,9 +792,9 @@ positions from them, so a mated assembly comes back mated.</p>
   <li><b>The parameter panel is outside undo.</b></li>
   <li><b>Desktop only</b>, by design.</li>
   <li><b>No autosave.</b> The tab is the only copy until you save.</li>
-  <li><b>No drawings yet.</b> The sheet, the projected views and hidden-line removal all
-      work, but dimensioning them does not, so the mode is closed. See
-      <a href="#drawings">Drawings</a>.</li>
+  <li><b>Drawings are linear dimensions only.</b> No diameter, radius or angular dimensions,
+      no notes or centre marks, no section or detail views, and the sheet isn't saved with the
+      part. See <a href="#drawings">Drawings</a>.</li>
   <li><b>Only two assembly mates.</b> Concentric and coincident hold as real relations and
       are solved together, but distance, angle, parallel and the rest aren't there yet, and
       neither are joints or sub-assemblies.</li>
