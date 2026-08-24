@@ -221,6 +221,29 @@ the overlay iframe.
     work is behind a `FileReader` — that was how the engine first appeared to build in
     376 ms.
 
+25. **`rebuild()` is called from ~60 places and most change no geometry.** Selecting a
+    feature, opening a sketch, moving the selection and closing a panel all called it, and
+    every one replayed the whole feature stack through Open CASCADE. On the lantern demo
+    that is **20.6 seconds** — measured, not estimated — which is why clicking a feature
+    "took forever". There is now a fingerprint of everything the built geometry depends on
+    (doc mode, rollback index, the active features with `error`/`_previewGeoms` stripped,
+    the panel feature, the edge selection); when it is unchanged the shapes, meshes and
+    pick edges are reused and only overlays and UI are redone: **1.4 ms**. Two traps if you
+    touch it: the reuse test must require `resultGeoms.length > 0`, because an empty result
+    satisfies `0 === 0` and pins the emptiness in place for good; and anything that can
+    change geometry without changing a feature's JSON must go into the fingerprint.
+26. **Splines reach the kernel as polylines, and that is the single biggest remaining
+    cost.** `OCK.wireFromPts` builds every non-circular loop with
+    `BRepBuilderAPI_MakePolygon`. Circles are special-cased into real `gp_Circ` edges;
+    splines are not. The lantern's revolved spline hull therefore has **946 faces and 5,382
+    edges** where a few surfaces of revolution would do, and OCCT boolean cost climbs
+    steeply with face count: of a 20.6 s rebuild, **11.8 s is five `unionInto` calls and
+    6.4 s is two `subtractFrom` calls** — 88% in seven booleans. Extrude is 1.3 s, meshing
+    0.9 s, everything else noise. The fix is real curved edges: the app already converts
+    each spline span to a cubic Bezier for drawing, so the same control points can build a
+    `Geom_BezierCurve` edge per span instead of 16 straight ones. Expect roughly an order
+    of magnitude off the face count and most of those seven booleans.
+
 ## Biggest thing still missing
 
 **A real constraint solver *for sketches*.** Dimensions are applied one at a time, so

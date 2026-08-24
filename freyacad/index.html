@@ -3248,7 +3248,55 @@ const CSG = (function(){
     let out=[]; for(const s of shapes) out=OCK.unionInto(out,s); return out;
   }
 
+  /* ---- geometry cache ------------------------------------------------------
+     rebuild() is called from about sixty places, and most of them do not change
+     any geometry: selecting a feature, opening a sketch, moving the selection,
+     closing a panel. Every one of those was replaying the whole feature stack
+     through Open CASCADE, which on a 16-feature part is most of a second before
+     anything appears to happen — the reason clicking a feature "took forever".
+
+     So: fingerprint everything the built geometry depends on. If the print is
+     unchanged, the shapes, meshes and pick edges from last time are still
+     correct and only the cheap overlay and UI work is redone. Anything that is
+     not certain to be geometry-neutral belongs in the print; a print that is
+     too sensitive only costs a rebuild we would have done anyway, whereas one
+     that is too loose shows stale geometry, so this errs sensitive. */
+  const SIG_SKIP={error:1,errorDetail:1,_previewGeoms:1,_isNew:1};
+  let lastGeomSig=null;
+  function geomSignature(){
+    try{
+      const active=features.slice(0,rollbackIndex).map(f=>
+        (propsFeat&&draftFeat&&propsFeat.id===f.id)?draftFeat:f);
+      return JSON.stringify([docMode,rollbackIndex,
+        propsFeat?propsFeat.id:0, draftFeat?1:0,
+        selectedEdges.map(e=>e.mid), active],
+        (k,v)=>SIG_SKIP[k]?undefined:v);
+    }catch(_){ return null; }      // never let the cache break a rebuild
+  }
+  function rebuildOverlaysOnly(active){
+    while(sketchOverlay.children.length){const c=sketchOverlay.children.pop();if(c.geometry)c.geometry.dispose();}
+    drawSketchOverlays(active);
+    drawRefGeometry(active);
+    redrawHandles();
+    refreshTree(); refreshStatus(); refreshExport();
+    rebuildDimLabels();
+    updateDatumVis();
+    if(typeof updateHelp==='function')updateHelp();
+  }
   function rebuild(){
+    const sig=geomSignature();
+    /* There has to be something worth reusing. Without the first clause an
+       empty result — a failed mesh, a part not built yet — satisfies
+       0===0 and the cache pins that emptiness in place for good. */
+    const reusable=(resultGeoms.length>0 && resultGeoms.length===resultMeshes.length);
+    if(sig!==null && sig===lastGeomSig && reusable){
+      /* previewOverlay is left alone: it only changes when the panel feature
+         does, and that is part of the print. sketchData is left alone too — the
+         feature loop is what fills it. */
+      rebuildOverlaysOnly(features.slice(0,rollbackIndex));
+      return;
+    }
+    lastGeomSig=sig;
     resultMeshes.forEach(m=>{scene.remove(m);m.geometry.dispose();});
     resultMeshes=[]; resultGeoms=[];
     for(const s of resultShapes){ try{ s.delete(); }catch(_){} }
