@@ -355,9 +355,21 @@ if(!window.THREE){
   #rect-menu button.on{background:rgba(66,133,244,.16)}
   #rect-menu .dm-t{font-size:12.5px}
   #rect-menu .dm-sub{font-size:10.5px;color:var(--muted)}
-  #dock-rect{gap:5px}
-  #rk-caret{font-size:9px;opacity:.65;line-height:1}
+  /* split button: the arrow is its own target with a divider and its own hover,
+     the way a combo box separates the field from the drop-down */
+  #dock-rect{gap:0;padding-right:0;align-items:stretch}
+  /* the negative vertical margin lets the arrow bleed through the button's own
+     padding, so the divider runs the full height instead of floating mid-air —
+     and the button keeps the same height as its neighbours in the dock */
+  #rk-caret{display:inline-flex;align-items:center;justify-content:center;
+    min-width:26px;padding:0 7px;margin:-7px 0 -7px 8px;align-self:stretch;
+    font-size:12px;line-height:1;opacity:.75;
+    border-left:1px solid rgba(255,255,255,.22);border-radius:0 7px 7px 0}
   #dock-rect:hover #rk-caret{opacity:1}
+  #rk-caret:hover{background:rgba(66,133,244,.28);opacity:1}
+  /* the button's own padding stops at the divider, so the label keeps its gap */
+  #dock-rect .lbl{margin-right:2px}
+  body.icons-only #rk-caret{margin-left:6px;padding:0 6px}
 
   /* svg pictograms */
   .fi.ic-s{width:20px;height:20px;display:inline-flex;flex:0 0 auto}
