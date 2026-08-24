@@ -36,8 +36,8 @@ looks like the deploy failed when it did not.
 
 **The job in progress** is closing the gap to SolidWorks and FreeCAD, working through
 `FEATURE-MATRIX.html` **cheapest first**. The matrix carries a token estimate per gap and
-`dev/matrix_done.py` ticks a row and recomputes the tallies. As of this writing: **40 ✅ ·
-3 ◐ · 32 ✗**, 35 gaps, ~7.42M tokens. The working agreement has been: one item at a time,
+`dev/matrix_done.py` ticks a row and recomputes the tallies. As of this writing: **41 ✅ ·
+3 ◐ · 31 ✗**, 34 gaps, ~7.27M tokens. The working agreement has been: one item at a time,
 each committed, deployed and reported before starting the next.
 
 The three scope rows — Mirror, linear pattern, circular pattern — were taken together as one
@@ -51,6 +51,10 @@ Next up, in cost order (IGES was on this list at 40k and was explicitly dropped)
 | 70k | Shell · Interference detection |
 | 80k | Draft · Bill of materials |
 | 90k | Geometric constraints (the rest) · Variable-radius fillet · Exploded views · Diameter/radius/angular drawing dims · Notes, leaders & balloons |
+| 110k+ | Detail views · control-point splines · curve-driven patterns · DXF/DWG · trim/offset/extend · lofted boss |
+
+(IGES sits at 40k and would be the cheapest row left, but it was dropped on purpose and stays
+dropped unless someone asks for it.)
 
 **Performance is done for now.** Lantern 5.5 s cold, pillow block 0.6 s, jet engine 10.5 s,
 warm edits near the top of a tree under a second. See "Where the remaining time goes" at the
@@ -493,6 +497,42 @@ having a visible pane to paste into.
     on hover-free redraws, it simply never receives a click. `#dock-draw{z-index:15}` fixes it.
     Found by a real hit-tested click in the headless harness, not by reading the CSS — it
     is exactly the class of thing that only a real click finds.
+
+36. **`BRepOffsetAPI_MakePipeShell`: two of its flags will quietly ruin a sweep.** Both were
+    found by measuring against volumes that are known exactly, and neither announces itself.
+
+    * **`Add_1(profile, WithContact, WithCorrection)` must take `false, false`.** `WithContact`
+      reads as "put the profile on the path", and it does not: it translates the profile until
+      it *touches* the spine, which for a centred section moves it off the axis by its own
+      half-width. A Ø4 tube swept round a Ø20 ring then sweeps about Ø24. The torus is what
+      settles it, because its volume is exactly 2πR·πr²: **947.48 with contact on, 789.568 with
+      it off, and 789.568 is the answer.** Every curved path was reading about 10% heavy and it
+      looked like a kernel quirk rather than a flag. The profile is swept where it was drawn.
+    * **`BRepBuilderAPI_Transformed`, OCCT's DEFAULT transition mode, silently truncates.** On a
+      path of a 20 leg and a 15 leg it sweeps the first leg, drops the second, reports `IsDone`,
+      returns a solid that `BRepCheck_Analyzer` calls valid, and measures exactly the first 20.
+      `RightCorner` is used instead and measures exact on every path shape tried; `RoundCorner`
+      is the fallback and differs by about half a percent on a right angle. Transformed is not
+      in the list at all.
+
+    A third trap has no flag behind it: **`IsDone()` and `MakeSolid()` both return true for a
+    shape with no volume.** A bend whose radius equals the profile's half-width pinches the
+    inside of the tube to a line, and OCCT hands back a zero-volume solid rather than refusing.
+    That would reach the tree as a feature that silently does nothing, so `runPipe` measures the
+    result and treats zero as a failure, which sends it to the next transition mode — and
+    `RoundCorner` builds that case correctly.
+
+    Two things about the sweep that are not OCCT's doing. The path is chained by `pathChain`,
+    which is `stitchLoops` for OPEN runs — a profile that does not close is not a profile, but a
+    path that does not close is the normal case, so it could not simply reuse it. And the path
+    honours **sketch fillets** (trap 32): without that, a rounded corner drawn on the path would
+    show rounded on screen and sweep square, and rounding the path corner is the right answer to
+    a sharp bend anyway.
+
+    Regression cover is four cases in `dev/verify.js`, all analytic rather than baseline:
+    a swept solid of section A along a path of length L has volume **A·L exactly**, on a
+    straight path and round a mitred corner alike, because the wedge the mitre cuts off one leg
+    is the wedge it adds to the other.
 
 ## Biggest thing still missing
 

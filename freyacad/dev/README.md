@@ -28,8 +28,10 @@ diff /tmp/base.json /tmp/new.json
 By hand it is the same thing: stash, reload the page (hard — see HANDOVER trap 10),
 paste `verify.js`, save the JSON, unstash, reload, paste again, diff the two.
 
-Ten of the eleven cases are exact to the last digit; only the lantern needs judgement,
-and `verify.js` explains why at the top.
+Fourteen of the fifteen cases are exact to the last digit; only the lantern needs
+judgement, and `verify.js` explains why at the top. Seven of them (the three scoped
+mirror/pattern cases and the four sweeps) carry an analytic volume rather than a
+baseline, so they say the answer is *right*, not merely unchanged.
 
 This is what caught every regression in the boolean-batching and checkpoint work,
 and it is also what proved the lantern's geometry had *not* changed when OCCT's

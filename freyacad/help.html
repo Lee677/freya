@@ -657,6 +657,10 @@ sketch, or an existing solid — stay greyed out until it exists.</p>
     Anything turned on a lathe — shafts, knobs, bottles.</td></tr>
   <tr><td><b>Revolve cut</b></td><td>A sketch + a solid</td><td>The same spin, subtracted.
     Grooves and undercuts.</td></tr>
+  <tr><td><b>Swept boss</b></td><td>Two sketches</td><td>Carries a profile along a path.
+    Pipework, handles, trim, cable runs, O-ring grooves.</td></tr>
+  <tr><td><b>Swept cut</b></td><td>Two sketches + a solid</td><td>The same carry, subtracted.
+    Channels and bores that do not run straight.</td></tr>
   <tr><td><b>Fillet</b></td><td>A solid</td><td>Rounds edges to a radius. Softens corners
     and removes stress risers.</td></tr>
   <tr><td><b>Chamfer</b></td><td>A solid</td><td>Cuts a flat bevel on an edge. Good for
@@ -695,6 +699,29 @@ inside, so it makes no face — that is the usual reason a shape seems to be ign
   app produces, and the distance pair does not.</p>
 </div>
 
+<h3 id="sweep">Sweeping along a path</h3>
+<p>A sweep needs <b>two</b> sketches: the <b>profile</b>, which is the cross-section, and the
+<b>path</b> it travels. Draw the path first, then draw the profile on a plane the path starts
+on, and pick <b>Swept boss</b> or <b>Swept cut</b>. The panel's <b>Path</b> row lists every
+other sketch — it guesses the one before the profile, which is the order they are usually
+drawn in.</p>
+<p>The profile is carried <b>exactly as you drew it</b>, staying square to the path the whole
+way. So where the profile sits matters: draw it centred on the start of the path and you get a
+tube down the middle of that path. If the path never reaches the profile's plane the feature
+says so rather than sweeping it off into space.</p>
+<p><b>Round the corners in the path sketch.</b> A path with a square corner sweeps to a mitred
+corner, which is right for a bar but not for a pipe. Give the path sketch a fillet and the
+bend comes out as a real bend — the path honours sketch fillets exactly as a profile does.</p>
+<p>A profile with a <b>hole</b> in it sweeps as you would expect: two concentric circles give a
+tube with a bore, in one feature. A sweep can be mirrored and patterned like any other
+feature.</p>
+<div class="note">
+  <span class="tag">Worth knowing</span>
+  <p>The path has to be <b>one connected run</b>. Several lines drawn end to end are joined
+  automatically, but a gap, a fork or a stray second line is refused rather than guessed at.
+  A sweep also cannot twist along its path or change section as it goes, and it takes one path
+  rather than a path plus guide curves.</p>
+</div>
 <h3 id="scope">What a mirror or pattern copies</h3>
 <p>Mirror, linear pattern and circular pattern all ask the same question, at the top of
 their panel:</p>
@@ -1001,6 +1028,9 @@ three view keys — can all be changed under <b>Customise tools… → Keyboard<
       no notes or balloons, no section or detail views, and the sheet isn't saved with the
       part. Centre marks and centrelines <em>are</em> there — see
       <a href="#cmarks">Centre marks and centrelines</a>.</li>
+  <li><b>No loft, and no twist on a sweep.</b> A swept feature carries one profile along one
+      path at a constant section. There is no lofted boss between two profiles, no twist, and
+      no guide curves. See <a href="#sweep">Sweeping along a path</a>.</li>
   <li><b>A pattern can't copy a fillet or chamfer.</b> Bosses, cuts, revolves and imports
       can each be mirrored or patterned on their own; edge treatments can't, because they
       reshape the body rather than add a shape to it. Put the pattern before the fillet.</li>

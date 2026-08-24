@@ -730,6 +730,8 @@ if(!window.THREE){
     <button data-add="extrude" data-ic="extrude">Extrude boss</button>
     <button data-add="cut" data-ic="cut">Extrude cut</button>
     <button data-add="revolve" data-ic="revolve">Revolve boss</button>
+    <button data-add="sweep" data-ic="sweep">Swept boss</button>
+    <button data-add="swcut" data-ic="swcut">Swept cut</button>
     <button data-add="rcut" data-ic="rcut">Revolve cut</button>
     <button data-add="fillet" data-ic="fillet">Fillet</button>
     <button data-add="chamfer" data-ic="chamfer">Chamfer</button>
@@ -1908,6 +1910,95 @@ const CSG = (function(){
   function orientSegs(segs,L,wantCW){
     return ((polyArea(L)<0)===!!wantCW)?segs:revSegs(segs);
   }
+  /* The path of a sweep: one connected run through a sketch.
+     stitchLoops next door does the same joining for PROFILES, but it only ever
+     hands back closed loops — a profile that does not close is not a profile.
+     A path is the opposite case: usually open, a line up and then along, and
+     the run has to survive without a closing edge to prove it joined up. Same
+     endpoint tolerance, so a path and a profile agree on what "joined" means. */
+  function pathChain(sk){
+    const parts=[];
+    /* Lines from a point list, so a rounded corner reaches the kernel as the
+       arc the sketch shows rather than as the square corner underneath it. */
+    const lineSegs=(L,shut)=>{
+      const out=[];
+      for(let k=0;k+1<L.length;k++)out.push({line:[L[k],L[k+1]]});
+      if(shut)out.push({line:[L[L.length-1],L[0]]});
+      return out;
+    };
+    (sk.entities||[]).forEach((e,ei)=>{
+      if(e.construction)return;
+      if(e.type==='circle'){ parts.push({circle:e,closed:true}); return; }
+      if(e.type==='rect'||e.type==='polygon'){
+        const raw=(e.type==='rect')
+          ? [{x:e.a.x,y:e.a.y},{x:e.b.x,y:e.a.y},{x:e.b.x,y:e.b.y},{x:e.a.x,y:e.b.y}]
+          : polyCorners(e);
+        const L=applyCorner(sk,raw,true,ei);
+        parts.push({pts:L.concat([L[0]]),segs:lineSegs(L,true),closed:true});
+        return;
+      }
+      if(e.type!=='poly')return;
+      if(isSpline(e)){
+        const pts=splinePts(e);
+        if(pts.length<2)return;
+        parts.push({pts,segs:entSegs(e),closed:!!e.closed});
+        return;
+      }
+      const raw=(e.pts||[]).map(q=>({x:q.x,y:q.y}));
+      if(raw.length<2)return;
+      /* A sweep round a sharp corner comes out squared off, because that is
+         what OCCT's right-corner transition builds. Rounding the corner in the
+         PATH sketch is the proper answer and gives a real bend, so a sketch
+         fillet has to reach the path — sketchLoops does the same for profiles,
+         and a path that ignored it would show a rounded corner on screen and
+         sweep a square one. */
+      const L=applyCorner(sk,raw,!!e.closed,ei);
+      parts.push({pts:L,segs:lineSegs(L,!!e.closed),closed:!!e.closed});
+    });
+    if(!parts.length)throw new Error('the path sketch is empty');
+    const open=parts.filter(p=>!p.closed), shut=parts.filter(p=>p.closed);
+    if(!open.length){
+      if(shut.length>1)throw new Error('the path sketch has more than one closed shape — a path is one run');
+      return shut[0];
+    }
+    if(shut.length)throw new Error('the path sketch mixes a closed shape with an open run — it has to be one or the other');
+    if(open.length===1)return open[0];
+    const K=p=>Math.round(p.x/STITCH_TOL)+':'+Math.round(p.y/STITCH_TOL);
+    const ends=p=>[K(p.pts[0]),K(p.pts[p.pts.length-1])];
+    /* Start at a free end so the run comes out in order. A closed ring has no
+       free end, and starting anywhere on one is equally correct. */
+    const cnt=new Map();
+    for(const p of open)for(const k of ends(p))cnt.set(k,(cnt.get(k)||0)+1);
+    let cur=0, rev=false;
+    for(let i=0;i<open.length;i++){
+      const [a,b]=ends(open[i]);
+      if(cnt.get(a)===1){ cur=i; rev=false; break; }
+      if(cnt.get(b)===1){ cur=i; rev=true;  break; }
+    }
+    const used=open.map(()=>false);
+    let pts=[], segs=[];
+    for(;;){
+      used[cur]=true;
+      const P=open[cur];
+      const ps=rev?P.pts.slice().reverse():P.pts;
+      const ss=rev?revSegs(P.segs):P.segs;
+      pts = pts.length ? pts.concat(ps.slice(1)) : ps.slice();
+      segs = segs.concat(ss);
+      const tail=K(pts[pts.length-1]);
+      let nxt=-1,nrev=false;
+      for(let j=0;j<open.length;j++){
+        if(used[j])continue;
+        const [a,b]=ends(open[j]);
+        if(a===tail){ nxt=j; nrev=false; break; }
+        if(b===tail){ nxt=j; nrev=true;  break; }
+      }
+      if(nxt<0)break;
+      cur=nxt; rev=nrev;
+    }
+    if(used.some(u=>!u))
+      throw new Error('the path has to be one connected run — part of that sketch does not join the rest');
+    return {pts,segs,closed:K(pts[0])===K(pts[pts.length-1])};
+  }
   function stitchLoops(sk){
     const paths=[];
     (sk.entities||[]).forEach((e,i)=>{
@@ -2590,6 +2681,105 @@ const CSG = (function(){
     const ax = new oc.gp_Ax1_2(new oc.gp_Pnt_3(o.x, o.y, o.z), new oc.gp_Dir_4(dir.x, dir.y, dir.z));
     const solids = faces.map(f=>new oc.BRepPrimAPI_MakeRevol_1(f, ax, ang, true).Shape());
     if(!solids.length) return null;
+    return OCK.unionOne(solids);
+  };
+  OCK.pathWire = function(sk){
+    const c=pathChain(sk);
+    return c.circle ? OCK.circleWire(c.circle.c, c.circle.r, sk.frame, 0)
+                    : OCK.wireFromSegs(c.segs, sk.frame, 0);
+  };
+  /* One profile region swept along one spine.
+     RightCorner mitres a turn in the path, and measures exact: a circle of area
+     A swept along a path of length L comes out at A*L on a straight path, a
+     mitred corner, a filleted corner and a spline alike.
+     RoundCorner is the fallback and rounds the turn instead, which costs about
+     half a percent on a right angle — a different corner, not a wrong one.
+     BRepBuilderAPI_Transformed, which is OCCT's own default, is deliberately
+     NOT in this list: on any path with a corner it silently sweeps the first
+     leg and drops the rest, and it reports success while doing it. A 20+15 path
+     came back measuring exactly the first 20. */
+  const PIPE_MODES=['BRepBuilderAPI_RightCorner','BRepBuilderAPI_RoundCorner'];
+  function runPipe(oc, spine, profile, opt){
+    for(const mode of (opt.mode?[opt.mode]:PIPE_MODES)){
+      let mk=null;
+      try{
+        mk=new oc.BRepOffsetAPI_MakePipeShell(spine);
+        /* Corrected Frenet, not plain Frenet: plain Frenet flips the section
+           over at an inflection in the path, which puts a visible twist in a
+           swept bar for no reason the drawing can explain. */
+        mk.SetMode_1(false);
+        mk.SetTransitionMode(oc.BRepBuilderAPI_TransitionMode[mode]);
+        /* Both flags OFF, and this is not a detail. `WithContact` translates
+           the profile until it TOUCHES the spine — touching, not centred on it
+           — so a Ø4 tube swept round a Ø20 ring comes out swept about Ø24
+           instead. Measured: that torus reads 947.48 with contact on and
+           789.568 with it off, and 2*pi^2*R*r^2 is 789.568 exactly. Every
+           curved path was ~10% heavy until this came off, and it looked like a
+           kernel quirk rather than a flag. Sweep what was drawn. */
+        mk.Add_1(profile, false, false);
+        mk.Build(new oc.Message_ProgressRange_1());
+        if(mk.IsDone() && mk.MakeSolid()){
+          const shp=mk.Shape();
+          /* IsDone and MakeSolid both say yes on a shape with NO VOLUME. A bend
+             whose radius equals the profile's own half-width pinches the inside
+             of the tube to a line, and OCCT hands back a solid measuring zero
+             rather than refusing — which would reach the tree as a feature that
+             silently does nothing. Measure it. */
+          if(solidVolume(oc,shp)>1e-9) return shp;
+        }
+      }catch(_){ /* try the next mode */ }
+    }
+    return null;
+  }
+  function solidVolume(oc,shp){
+    try{
+      const g=new oc.GProp_GProps_1();
+      oc.BRepGProp.VolumeProperties_1(shp,g,1e-2,false,false);
+      return Math.abs(g.Mass());
+    }catch(_){ return 0; }
+  }
+  /* Sweep a profile sketch along a path sketch. Holes in the profile are swept
+     too and cut out of their region, so a tube is one contour with a hole in it
+     rather than two features. */
+  /* The profile is swept exactly where it was drawn, so a path that never
+     reaches the profile's plane sweeps it off into space and produces a shape
+     nobody asked for. Catching it here beats letting the user wonder. */
+  function checkPierce(profSk, pathSk){
+    const n=profSk.frame.n, o=profSk.frame.o;
+    let lo=Infinity, hi=-Infinity, span=0;
+    for(const e of (pathSk.entities||[])){
+      const pts = e.type==='circle' ? [{x:e.c.x+e.r,y:e.c.y},{x:e.c.x-e.r,y:e.c.y},
+                                       {x:e.c.x,y:e.c.y+e.r},{x:e.c.x,y:e.c.y-e.r}]
+                 : (e.pts||(e.a?[e.a,e.b]:[]));
+      for(const q of pts){
+        const p=fpt(pathSk.frame,q.x,q.y,0);
+        const d=p.clone().sub(o).dot(n);
+        lo=Math.min(lo,d); hi=Math.max(hi,d); span=Math.max(span,p.length());
+      }
+    }
+    if(!isFinite(lo))return;
+    const tol=Math.max(1e-6, span*1e-6);
+    if(lo>tol || hi<-tol)
+      throw new Error('the path never reaches the profile — draw the path so it starts at, or passes through, the plane the profile is on');
+  }
+  OCK.sweep = function(profSk, pathSk, opt){
+    const oc = OC(); opt = opt || {};
+    checkPierce(profSk, pathSk);
+    const spine = OCK.pathWire(pathSk);
+    const regs = OCK.regions(profSk, 0);
+    if(!regs.length) throw new Error('the profile sketch has no closed profile');
+    const pick = opt.contours;
+    const solids = [];
+    regs.forEach((g,i)=>{
+      if(pick && pick.length && pick.indexOf(i) < 0) return;
+      const body = runPipe(oc, spine, g.outer.mk(false), opt);
+      if(!body) throw new Error('the sweep failed — most often the path turns tighter than the profile is wide, or the profile does not sit on the path');
+      if(!g.holes.length){ solids.push(body); return; }
+      const tools = [];
+      for(const h of g.holes){ const t = runPipe(oc, spine, h.mk(false), opt); if(t) tools.push(t); }
+      solids.push(tools.length ? OCK.cutAll(body, tools) : body);
+    });
+    if(!solids.length) throw new Error('no contour selected');
     return OCK.unionOne(solids);
   };
   OCK.transformed = function(s, setup){
@@ -3422,7 +3612,7 @@ const CSG = (function(){
   /* Only a feature that contributes a shape can be copied. The fillet is the
      interesting exclusion: it rounds edges of the body rather than adding
      anything, so there is no tool to hand a pattern. */
-  const SCOPEABLE={extrude:1,cut:1,revolve:1,import:1,mirror:1,lpattern:1,cpattern:1};
+  const SCOPEABLE={extrude:1,cut:1,revolve:1,sweep:1,import:1,mirror:1,lpattern:1,cpattern:1};
   const isScoped=f=>Array.isArray(f.scope)&&f.scope.length>0;
   function scopeCands(f){
     const i=features.findIndex(x=>x.id===f.id);
@@ -3508,6 +3698,25 @@ const CSG = (function(){
       const shp=OCK.revolve(sk,f.angle,resolveAxis(f.axis),f.contours);
       noteTool(f,f.operation==='cut'?'cut':'merge',shp);
       if(f.operation==='cut'){ if(!resultShapes.length)throw new Error('nothing to cut'); pendOp('cut',shp,f); }
+      else if(f.merge && resultShapes.length) pendOp('merge',shp,f);
+      else { flushPending(); resultShapes.push(shp); }
+      return;
+    }
+    if(f.type==='sweep'){
+      const sd=sketchData[f.sketchId]; if(!sd)throw new Error('needs a profile sketch');
+      if(f.pathId==null)throw new Error('needs a path — pick one in the panel');
+      if(f.pathId===f.sketchId)throw new Error('the profile and the path have to be two different sketches');
+      const pd=sketchData[f.pathId]; if(!pd)throw new Error('its path sketch was deleted');
+      const prof={entities:sd.sk.entities,fillet:sd.sk.fillet,chamfer:sd.sk.chamfer,
+                  corners:sd.sk.corners,frame:sd.frame};
+      const path={entities:pd.sk.entities,fillet:pd.sk.fillet,chamfer:pd.sk.chamfer,
+                  corners:pd.sk.corners,frame:pd.frame};
+      const shp=OCK.sweep(prof,path,{contours:f.contours});
+      noteTool(f,f.operation==='cut'?'cut':'merge',shp);
+      if(f.operation==='cut'){
+        if(!resultShapes.length)throw new Error('nothing to cut');
+        pendOp('cut',shp,f);
+      }
       else if(f.merge && resultShapes.length) pendOp('merge',shp,f);
       else { flushPending(); resultShapes.push(shp); }
       return;
@@ -6584,6 +6793,13 @@ const CSG = (function(){
   function sketchCount(){return features.filter(f=>f.type==='sketch').length+1;}
 
   function lastSketchId(){for(let i=Math.min(rollbackIndex,features.length)-1;i>=0;i--){if(features[i].type==='sketch')return features[i].id;}return null;}
+  // the sketch before a given one, which is a sweep's most likely path
+  function prevSketchId(id){
+    const ids=features.slice(0,Math.min(rollbackIndex,features.length))
+      .filter(x=>x.type==='sketch').map(x=>x.id);
+    const i=ids.indexOf(id);
+    return i>0?ids[i-1]:(ids.length&&ids[0]!==id?ids[0]:null);
+  }
   function defaults(type){
     const sid=lastSketchId();
     if(type==='extrude')return {id:nextId(),type:'extrude',name:'Extrude'+cnt('extrude'),sketchId:sid,depth:3,symmetric:false,flip:false,merge:true,suppressed:false};
@@ -6592,6 +6808,13 @@ const CSG = (function(){
     if(type==='fillet')return {id:nextId(),type:'fillet',name:'Fillet'+cnt('fillet'),kind:'fillet',r:0.5,propagate:true,seeds:selectedEdges.map(s=>({mid:s.mid.slice(),dir:s.dir.slice()})),suppressed:false};
     if(type==='chamfer')return {id:nextId(),type:'fillet',name:'Chamfer'+cnt('fillet'),kind:'chamfer',r:0.5,propagate:true,seeds:selectedEdges.map(s=>({mid:s.mid.slice(),dir:s.dir.slice()})),suppressed:false};
     if(type==='rcut'){const f={id:nextId(),type:'revolve',name:'RevolveCut'+cnt('revolve'),sketchId:sid,angle:360,axis:'v',operation:'cut',merge:true,segments:48,suppressed:false};return f;}
+    /* The path defaults to the sketch BELOW the profile, because that is the
+       order they get drawn in: path first, then the profile on a plane that
+       crosses it. It is one control away from wrong either way. */
+    if(type==='sweep'||type==='swcut')return {id:nextId(),type:'sweep',
+      name:(type==='sweep'?'Sweep':'SweepCut')+cnt('sweep'),
+      sketchId:sid, pathId:prevSketchId(sid),
+      operation:(type==='swcut'?'cut':'add'), merge:true, suppressed:false};
     if(type==='dplane')return {id:nextId(),type:'dplane',name:'Plane'+cnt('dplane'),base:'Top',about:'u',angle:30,suppressed:false};
     if(type==='daxis')return {id:nextId(),type:'daxis',name:'Axis'+cnt('daxis'),method:'planes',pa:'Top',pb:'Front',dir:'Y',px:0,py:0,pz:0,suppressed:false};
     if(type==='mirror')return {id:nextId(),type:'mirror',name:'Mirror'+cnt('mirror'),plane:'Right',merge:true,suppressed:false};
@@ -6600,7 +6823,7 @@ const CSG = (function(){
   }
   function cnt(t){return features.filter(f=>f.type===t).length+1;}
   function addFeature(type,sketchId){
-    if(type==='extrude'||type==='cut'||type==='revolve'||type==='rcut'){ if(!sketchId&&!lastSketchId()){setHint('Create a sketch first');return;} }
+    if(type==='extrude'||type==='cut'||type==='revolve'||type==='rcut'||type==='sweep'||type==='swcut'){ if(!sketchId&&!lastSketchId()){setHint('Create a sketch first');return;} }
     const f=defaults(type); f._isNew=true;
     if(sketchId!=null&&'sketchId' in f)f.sketchId=sketchId;
     if(type==='fillet'||type==='chamfer'){ selectedEdges=[]; redrawEdgeSel(); }
@@ -6655,6 +6878,8 @@ const CSG = (function(){
     'face-sketch':_sw(`<rect x="4" y="4" width="16" height="16" stroke="${_B}" opacity=".55"/><path d="M9 15 16 8l1.8 1.8-7 7-3 1.2z" stroke="${_Y}"/>`),
     extrude:_sw(`<path d="M5 17l7 3.2 7-3.2-7-3.2z" stroke="${_B}"/><path d="M5 17v-6.5l7 3.2 7-3.2V17" stroke="${_B}" opacity=".6"/><path d="M12 13.7V7.5" stroke="${_B}" opacity=".6"/><path d="M12 8V2.5M9.5 5 12 2.5 14.5 5" stroke="${_Y}"/>`),
     cut:_sw(`<path d="M4 21v-8h16v8z" stroke="${_B}"/><path d="M9 13h6v4H9z" stroke="${_Y}"/><path d="M12 3v6M9.5 6.5 12 9l2.5-2.5" stroke="${_Y}"/>`),
+    sweep:_sw(`<path d="M3.5 19c0-7 5.5-8.5 8.5-8.5s8.5-1.5 8.5-8" stroke="${_Y}" stroke-dasharray="3.4 2"/><rect x="1.6" y="15.6" width="6.4" height="6.4" rx="1" stroke="${_B}"/><rect x="16.8" y="1.6" width="6.4" height="6.4" rx="1" stroke="${_B}" opacity=".55"/>`),
+    swcut:_sw(`<path d="M3.5 19c0-7 5.5-8.5 8.5-8.5s8.5-1.5 8.5-8" stroke="${_R}" stroke-dasharray="3.4 2"/><rect x="1.6" y="15.6" width="6.4" height="6.4" rx="1" stroke="${_B}"/><path d="M17.2 2.2 22.8 7.8M22.8 2.2 17.2 7.8" stroke="${_R}"/>`),
     revolve:_sw(`<path d="M5 3v18" stroke="${_B}" stroke-dasharray="4.5 2 1.2 2"/><path d="M9 6.5c6 0 10 2.2 10 5.5s-4 5.5-10 5.5z" stroke="${_B}"/><path d="M8 3.5c5 .2 8.6 1 10.2 2.4M15.5 6.5l2.7-.6-.5-2.7" stroke="${_Y}"/>`),
     rcut:_sw(`<path d="M5 3v18" stroke="${_B}" stroke-dasharray="4.5 2 1.2 2"/><path d="M9 6.5c6 0 10 2.2 10 5.5s-4 5.5-10 5.5z" stroke="${_B}"/><path d="M9 10h5.5v4H9z" stroke="${_Y}"/>`),
     fillet:_sw(`<path d="M4 4v16h16" stroke="${_B}" stroke-dasharray="3 2.4" opacity=".45"/><path d="M4 4v6a10 10 0 0 0 10 10h6" stroke="${_Y}" stroke-width="1.9"/>`),
@@ -6690,6 +6915,7 @@ const CSG = (function(){
   function iconFor(f){
     if(f.type==='fillet') return f.kind==='chamfer'?'chamfer':'fillet';
     if(f.type==='revolve') return f.operation==='cut'?'rcut':'revolve';
+    if(f.type==='sweep')   return f.operation==='cut'?'swcut':'sweep';
     if(f.type==='sketch') return f.plane&&f.plane.kind==='face'?'face-sketch':'sketch';
     return ICONS[f.type]?f.type:'edit';
   }
@@ -6975,7 +7201,7 @@ const CSG = (function(){
      ones this feature should use. Nothing ticked means all of them, so parts
      made before this existed keep behaving exactly as they did. */
   function addContourPicker(add,f){
-    if(!['extrude','cut','revolve','rcut'].includes(f.type))return;
+    if(!['extrude','cut','revolve','rcut','sweep'].includes(f.type))return;
     const sd=sketchData[f.sketchId]; if(!sd)return;
     let regs; try{ regs=OCK.regions({entities:sd.sk.entities,fillet:sd.sk.fillet,
       chamfer:sd.sk.chamfer,corners:sd.sk.corners,frame:sd.frame},0); }catch(_){ return; }
@@ -7052,6 +7278,30 @@ const CSG = (function(){
         .concat(features.filter(x=>x.type==='daxis').map(a=>({l:a.name,v:'ax:'+a.id})));
       add(fieldSeg('Axis',axOpts,f.axis,v=>{f.axis=v;rerun();}));
       add(fieldNumber('Angle',f.angle,5,1,360,'deg',v=>{f.angle=Math.min(360,v);rerun();}));
+    } else if(f.type==='sweep'){
+      add(fieldSeg('Operation',[{l:'Boss',v:'add'},{l:'Cut',v:'cut'}],f.operation,v=>{
+        f.operation=v;
+        f.name=(v==='cut'?'SweepCut':'Sweep')+f.name.replace(/\D+/,'');
+        propsEl.querySelector('h3').textContent=f.name;
+        rerun(); openProps(propsFeat);
+      }));
+      /* Every sketch except this feature's own profile is a candidate path.
+         A sketch cannot be its own path, and offering it only invites the
+         error message. */
+      const paths=features.filter(x=>x.type==='sketch'&&x.id!==f.sketchId)
+                          .map(x=>({l:x.name,v:x.id}));
+      if(!paths.length){
+        const nt=document.createElement('div'); nt.className='note';
+        nt.textContent='A sweep needs a second sketch for the path. Draw the path on a plane the profile crosses, then come back.';
+        add(nt);
+      } else {
+        add(fieldSeg('Path',paths,f.pathId,v=>{f.pathId=v;rerun();}));
+      }
+      if(f.operation!=='cut')
+        add(fieldCheck('Merge with body',f.merge,v=>{f.merge=v;rerun();}));
+      const nt2=document.createElement('div'); nt2.className='note';
+      nt2.textContent='The profile is swept from where you drew it, staying square to the path as it travels. Draw the path so it starts on the profile\u2019s plane, and round any corner in the path sketch for a proper bend.';
+      add(nt2);
     } else if(f.type==='fillet'){
       add(fieldSeg('Type',[{l:'Fillet',v:'fillet'},{l:'Chamfer',v:'chamfer'}],f.kind,v=>{f.kind=v;f.name=(v==='fillet'?'Fillet':'Chamfer')+f.name.replace(/\D+/,''); propsEl.querySelector('h3').textContent=f.name; rerun(); openProps(propsFeat); }));
       /* Chamfers get SolidWorks' three shapes. `cmode` is absent on parts made
@@ -7805,6 +8055,8 @@ const CSG = (function(){
     f_cut    :{ic:'cut',    label:'Extrude cut', fn:()=>addFeature('cut'),    need:'sketch'},
     f_revolve:{ic:'revolve',label:'Revolve boss',fn:()=>addFeature('revolve'),need:'sketch'},
     f_rcut   :{ic:'rcut',   label:'Revolve cut', fn:()=>addFeature('rcut'),   need:'sketch'},
+    f_sweep  :{ic:'sweep',  label:'Swept boss',  fn:()=>addFeature('sweep'),  need:'sketch'},
+    f_swcut  :{ic:'swcut',  label:'Swept cut',   fn:()=>addFeature('swcut'),  need:'sketch'},
     f_fillet :{ic:'fillet', label:'Fillet',      fn:()=>addFeature('fillet'), need:'solid'},
     f_chamfer:{ic:'chamfer',label:'Chamfer',     fn:()=>addFeature('chamfer'),need:'solid'},
     t_mirror :{ic:'mirror', label:'Mirror',      fn:()=>addFeature('mirror'), need:'solid'},
@@ -7816,7 +8068,7 @@ const CSG = (function(){
   const DEFAULT_MODEL_LAYOUT=[
     {name:'View',     ids:['normal','iso','fit','proj']},
     {name:'Sketch',   ids:['sk_top','sk_front','sk_right','sk_face']},
-    {name:'Features', ids:['f_extrude','f_cut','f_revolve','f_rcut','f_fillet','f_chamfer']},
+    {name:'Features', ids:['f_extrude','f_cut','f_revolve','f_rcut','f_sweep','f_swcut','f_fillet','f_chamfer']},
     {name:'Transform',ids:['t_mirror','t_lpat','t_cpat']},
     {name:'Reference',ids:['r_plane','r_axis']}
   ];
@@ -8222,6 +8474,8 @@ const CSG = (function(){
       items.push({ic:'cut',label:'Extrude cut',fn:()=>addFeature('cut',f.id)});
       items.push({ic:'revolve',label:'Revolve boss',fn:()=>addFeature('revolve',f.id)});
       items.push({ic:'rcut',label:'Revolve cut',fn:()=>addFeature('rcut',f.id)});
+      items.push({ic:'sweep',label:'Swept boss',fn:()=>addFeature('sweep',f.id)});
+      items.push({ic:'swcut',label:'Swept cut',fn:()=>addFeature('swcut',f.id)});
     } else if(f.type==='dplane'){
       items.push({ic:'sketch',label:'Sketch on this plane',fn:()=>addSketchOnDPlane(f)});
       items.push({ic:'edit',label:'Edit plane',fn:()=>openProps(f)});
@@ -10257,7 +10511,7 @@ const CSG = (function(){
     const r=$('btn-add').getBoundingClientRect();
     menu.style.left=r.left+'px';menu.style.top=(r.bottom+6)+'px';menu.classList.toggle('open');
     const hasSketch=!!lastSketchId();
-    menu.querySelectorAll('[data-add]').forEach(b=>{const a=b.dataset.add;b.disabled=(['extrude','cut','revolve','rcut'].includes(a)&&!hasSketch);});
+    menu.querySelectorAll('[data-add]').forEach(b=>{const a=b.dataset.add;b.disabled=(['extrude','cut','revolve','rcut','sweep','swcut'].includes(a)&&!hasSketch);});
     e.stopPropagation();
   });
   document.addEventListener('click',e=>{if(!menu.contains(e.target)&&e.target.id!=='btn-add')menu.classList.remove('open');});

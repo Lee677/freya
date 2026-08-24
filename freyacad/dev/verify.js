@@ -28,6 +28,11 @@
  *   scopemirror a mirror scoped to a boss AND a bore at once, which pins the
  *               order down: the copied boss must be fused before the copied
  *               bore is cut, or the boss fills the hole back in
+ *   sweep       a circle swept down a straight path
+ *   sweepbend   the same round a right-angle corner — a mitred corner measures
+ *               A*L exactly, so this is a real check and not a smoke test
+ *   sweeptube   a profile with a HOLE in it, swept: the hole is swept too
+ *   sweepcut    a bore swept straight through a block
  *
  * The three scoped cases are all prisms and cylinders, so their volumes are
  * known exactly rather than only comparable — each carries its analytic `want`
@@ -127,6 +132,39 @@ window.__VER = 'running';
     out.push(F({id:ID(),type:'mirror',name:'m',plane:'Right',merge:false,
                 scope:[boss.id,bore.id]}));
     return out; }
+  /* A swept solid of section A along a path of length L has volume A*L —
+     exactly, on a straight path and round a mitred corner alike, because the
+     wedge the mitre cuts off one leg is the wedge it adds to the other. So
+     every sweep case below is a right-or-wrong answer, not a baseline.
+     Top plane is u=(1,0,0) v=(0,0,-1), so a Top-sketch line from (0,0) to
+     (0,-L) runs along +Z, square to a profile drawn on Front. */
+  const path=(pts)=>({type:'poly',closed:false,pts:pts});
+  function mkSweep(){ id=0; const out=[];
+    const p=sk([path([{x:0,y:0},{x:0,y:-30}])]); out.push(p);
+    const pr=sk([circ({x:0,y:0},2)],'Front'); out.push(pr);
+    out.push(F({id:ID(),type:'sweep',name:'sw',sketchId:pr.id,pathId:p.id,
+                operation:'add',merge:true}));
+    return out; }
+  function mkSweepBend(){ id=0; const out=[];
+    const p=sk([path([{x:0,y:0},{x:0,y:-20},{x:15,y:-20}])]); out.push(p);
+    const pr=sk([circ({x:0,y:0},2)],'Front'); out.push(pr);
+    out.push(F({id:ID(),type:'sweep',name:'sw',sketchId:pr.id,pathId:p.id,
+                operation:'add',merge:true}));
+    return out; }
+  function mkSweepTube(){ id=0; const out=[];
+    const p=sk([path([{x:0,y:0},{x:0,y:-20}])]); out.push(p);
+    const pr=sk([circ({x:0,y:0},3),circ({x:0,y:0},1.5)],'Front'); out.push(pr);
+    out.push(F({id:ID(),type:'sweep',name:'sw',sketchId:pr.id,pathId:p.id,
+                operation:'add',merge:true}));
+    return out; }
+  function mkSweepCut(){ id=0; const out=[];
+    const b=sk([rect({x:-20,y:-10},{x:20,y:10})]); out.push(b);
+    out.push(F({id:ID(),type:'extrude',name:'blk',sketchId:b.id,depth:10,merge:true}));
+    const p=sk([path([{x:-30,y:0},{x:30,y:0}])],'Front'); out.push(p);
+    const pr=sk([circ({x:0,y:5},2)],'Right'); out.push(pr);
+    out.push(F({id:ID(),type:'sweep',name:'swc',sketchId:pr.id,pathId:p.id,
+                operation:'cut',merge:true}));
+    return out; }
   function mkFilletRun(){ id=0; const out=[];
     const s1=sk([rect({x:-8,y:-5},{x:8,y:5})]); out.push(s1);
     out.push(F({id:ID(),type:'extrude',name:'a',sketchId:s1.id,depth:4,merge:true}));
@@ -185,7 +223,11 @@ window.__VER = 'running';
                       ['filletrun',mkFilletRun()],
                       ['scopecut',mkScopeCut(),815.243],
                       ['scopeboss',mkScopeBoss(),822.796],
-                      ['scopemirror',mkScopeMirror(),2051.947]]){
+                      ['scopemirror',mkScopeMirror(),2051.947],
+                      ['sweep',mkSweep(),376.991],
+                      ['sweepbend',mkSweepBend(),439.823],
+                      ['sweeptube',mkSweepTube(),424.115],
+                      ['sweepcut',mkSweepCut(),7497.345]]){
     const r=run(l); res[n]=r;
     if(want!=null){ r.want=want;
       r.ok = r.vol!=null && Math.abs(r.vol-want)<0.01 && r.bodies===1 && !(r.errs||[]).length; }
@@ -211,4 +253,8 @@ window.__VER = 'running';
  *   scopecut    815.243 = 259.5π  |  9f 42e 1b   bbox is still the disc's own
  *   scopeboss   822.796 = 672+48π | 18f 56e 1b
  *   scopemirror 2051.947= 1920+42π| 14f 52e 1b   com x = 0
+ *   sweep        376.991 = 120π
+ *   sweepbend    439.823 = 140π    <- a mitred corner, so still A*L
+ *   sweeptube    424.115 = 135π
+ *   sweepcut    7497.345 = 8000-160π
  */
