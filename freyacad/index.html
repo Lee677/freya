@@ -1841,12 +1841,31 @@ const CSG = (function(){
      simply left out — a stray line beside a closed rectangle doesn't stop the
      rectangle being a profile. */
   const STITCH_TOL=1e-4;
+  /* The pieces an entity is really made of, in order: a spline contributes one
+     cubic Bezier per span, a straight run one line per segment. These go to the
+     kernel as real edges instead of a polyline — see OCK.wireFromSegs. */
+  function entSegs(e){
+    if(isSpline(e)) return splineSpans(e).map(s=>({bez:[s[0],s[1],s[2],s[3]]}));
+    const p=e.pts||[], out=[];
+    for(let i=0;i+1<p.length;i++)
+      out.push({line:[{x:p[i].x,y:p[i].y},{x:p[i+1].x,y:p[i+1].y}]});
+    if(e.closed&&p.length>2)
+      out.push({line:[{x:p[p.length-1].x,y:p[p.length-1].y},{x:p[0].x,y:p[0].y}]});
+    return out;
+  }
+  const revSeg=s=>s.bez?{bez:s.bez.slice().reverse()}:{line:[s.line[1],s.line[0]]};
+  const revSegs=a=>a.slice().reverse().map(revSeg);
+  /* Point the wire the same way wireFromPts would have: outer loops CCW, holes
+     CW, so a face built from these still cuts its holes the right way. */
+  function orientSegs(segs,L,wantCW){
+    return ((polyArea(L)<0)===!!wantCW)?segs:revSegs(segs);
+  }
   function stitchLoops(sk){
     const paths=[];
     (sk.entities||[]).forEach((e,i)=>{
       if(e.construction||e.type!=='poly'||e.closed)return;
       const pts=isSpline(e)?splinePts(e):(e.pts||[]).map(q=>({x:q.x,y:q.y}));
-      if(pts.length>=2)paths.push({ei:i,pts,curved:isSpline(e)});
+      if(pts.length>=2)paths.push({ei:i,pts,curved:isSpline(e),segs:entSegs(e)});
     });
     if(paths.length<2)return [];
     const K=p=>Math.round(p.x/STITCH_TOL)+':'+Math.round(p.y/STITCH_TOL);
@@ -1871,15 +1890,16 @@ const CSG = (function(){
         k=K(r.end===0?P.pts[P.pts.length-1]:P.pts[0]);
       }
       if(!closed){ for(const c of chain)if(c.i!==s)used[c.i]=false; continue; }
-      const L=[]; let curved=false;
+      const L=[], segs=[]; let curved=false;
       chain.forEach((c,ci)=>{
         const P=paths[c.i]; curved=curved||P.curved;
         const seq=c.rev?P.pts.slice().reverse():P.pts;
         for(let q=(ci===0?0:1);q<seq.length;q++)L.push({x:seq[q].x,y:seq[q].y});
+        for(const s of (c.rev?revSegs(P.segs):P.segs)) segs.push(s);
       });
       // the walk ends back on the first point; a loop states it once
       if(L.length>2&&Math.hypot(L[0].x-L[L.length-1].x,L[0].y-L[L.length-1].y)<STITCH_TOL*4)L.pop();
-      if(L.length>=3)out.push({pts:L,curved});
+      if(L.length>=3)out.push({pts:L,curved,segs});
     }
     return out;
   }
@@ -2201,6 +2221,36 @@ const CSG = (function(){
     mp.Close();
     return mp.Wire();
   };
+  /* A wire from a mixed run of straight and curved pieces. Splines used to
+     reach the kernel through wireFromPts as a polyline of sixteen chords per
+     span, which gave the lantern demo 946 faces and 5,382 edges — and OCCT
+     boolean cost climbs steeply with face count, so seven booleans took 18 of
+     a 20-second rebuild. The app already fits each spline span as a cubic
+     Bezier to draw it, so the same four control points make one real
+     Geom_BezierCurve edge here: identical geometry, a fraction of the faces,
+     and a STEP export with true surfaces in it rather than facets. */
+  OCK.wireFromSegs = function(segs, frame, zoff){
+    const oc = OC();
+    const mw = new oc.BRepBuilderAPI_MakeWire_1();
+    const P = q => { const p = fpt(frame, q.x, q.y, zoff); return new oc.gp_Pnt_3(p.x, p.y, p.z); };
+    const near = (a,b) => Math.abs(a.x-b.x) < 1e-9 && Math.abs(a.y-b.y) < 1e-9;
+    let added = 0;
+    for(const s of segs){
+      let edge;
+      if(s.bez){
+        const arr = new oc.TColgp_Array1OfPnt_2(1, 4);
+        for(let i = 0; i < 4; i++) arr.SetValue(i+1, P(s.bez[i]));
+        edge = new oc.BRepBuilderAPI_MakeEdge_24(
+          new oc.Handle_Geom_Curve_2(new oc.Geom_BezierCurve_1(arr))).Edge();
+      } else {
+        if(near(s.line[0], s.line[1])) continue;   // a zero-length edge fails the wire
+        edge = new oc.BRepBuilderAPI_MakeEdge_3(P(s.line[0]), P(s.line[1])).Edge();
+      }
+      mw.Add_1(edge); added++;
+    }
+    if(!added) throw new Error('empty profile');
+    return mw.Wire();
+  };
   OCK.circleWire = function(c, r, frame, zoff){
     const oc = OC();
     const o3 = fpt(frame, c.x, c.y, zoff);
@@ -2224,20 +2274,24 @@ const CSG = (function(){
         for(let i = 0; i < segs; i++){ const a = i/segs*2*Math.PI; poly.push({x: e.c.x + e.r*Math.cos(a), y: e.c.y + e.r*Math.sin(a)}); }
         items.push({ poly, area: Math.PI*e.r*e.r, mk: (hole)=>{ const w = OCK.circleWire(e.c, e.r, frame, zoff); if(hole) w.Reverse(); return w; } });
       } else {
-        let L = null, curved = false;
+        let L = null, curved = false, segs = null;
         if(e.type === 'polygon'){
           L = []; for(let i = 0; i < e.sides; i++){ const a = e.rot + i/e.sides*Math.PI*2; L.push({x: e.c.x + e.r*Math.cos(a), y: e.c.y + e.r*Math.sin(a)}); }
         } else if(e.type === 'rect'){
           L = [{x:e.a.x,y:e.a.y},{x:e.b.x,y:e.a.y},{x:e.b.x,y:e.b.y},{x:e.a.x,y:e.b.y}];
         } else if(isSpline(e) && e.closed && e.pts.length >= 3){
-          L = splinePts(e); curved = true;    // the tessellated curve IS the profile
+          L = splinePts(e); curved = true;    // points for area and picking...
+          segs = entSegs(e);                  // ...real Bezier edges for the kernel
         } else if(e.type === 'poly' && e.closed && e.pts.length >= 3){
           L = e.pts;
         }
         if(!L) continue;
         if(!curved) L = applyCorner(sk, L, true);
+        const SG = segs;                      // a corner treatment would invalidate them
         items.push({ poly: L, area: Math.abs(polyArea(L)),
-          mk: (hole)=> OCK.wireFromPts(hole ? cw(L) : ccw(L), frame, zoff) });
+          mk: (hole)=> SG
+            ? OCK.wireFromSegs(orientSegs(SG, L, hole), frame, zoff)
+            : OCK.wireFromPts(hole ? cw(L) : ccw(L), frame, zoff) });
       }
     }
     /* A profile stitched from several runs is a profile like any other once it
@@ -2245,8 +2299,14 @@ const CSG = (function(){
        it came from two entities rather than one. */
     for(const st of stitchLoops(sk)){
       const L = st.curved ? st.pts : applyCorner(sk, st.pts, true);
+      /* Only a curved loop goes through the segment path: an uncurved one may
+         have had its corners rounded, and the segments describe the profile
+         before that happened. */
+      const SG = (st.curved && st.segs && st.segs.length) ? st.segs : null;
       items.push({ poly: L, area: Math.abs(polyArea(L)),
-        mk: (hole)=> OCK.wireFromPts(hole ? cw(L) : ccw(L), frame, zoff) });
+        mk: (hole)=> SG
+          ? OCK.wireFromSegs(orientSegs(SG, L, hole), frame, zoff)
+          : OCK.wireFromPts(hole ? cw(L) : ccw(L), frame, zoff) });
     }
     return items;
   };
