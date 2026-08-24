@@ -225,12 +225,12 @@ footer p{margin:0 0 6px}
       </div>
       <div class="tcard fy">
         <h3>freyacad</h3>
-        <div class="nums"><b>36</b> ✅ &nbsp;·&nbsp; <b>6</b> ◐ &nbsp;·&nbsp; <b>33</b> ❌ &nbsp;(of 75)</div>
+        <div class="nums"><b>39</b> ✅ &nbsp;·&nbsp; <b>3</b> ◐ &nbsp;·&nbsp; <b>33</b> ❌ &nbsp;(of 75)</div>
       </div>
     </div>
       <div class="tcard cost">
         <h3>Cost to close every gap</h3>
-        <div class="nums"><b>~7.67M</b> output tokens &nbsp;·&nbsp; 39 items</div>
+        <div class="nums"><b>~7.47M</b> output tokens &nbsp;·&nbsp; 36 items</div>
       </div>
     </div>
   </div>
@@ -450,15 +450,15 @@ footer p{margin:0 0 6px}
         <td class="col-feat"><span class="fname">Linear pattern</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
-        <td class="col-mark"><span class="mk partial">◐</span><span class="q">copies the whole body, not chosen features</span></td>
-        <td class="col-tok lo"><span class="num">70k</span><span class="tn">scope a pattern to chosen features instead of the whole body</span></td>
+        <td class="col-mark"><span class="mk yes">✅</span><span class="q">whole body or chosen features</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Circular pattern</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
-        <td class="col-mark"><span class="mk partial">◐</span><span class="q">copies the whole body, not chosen features</span></td>
-        <td class="col-tok lo"><span class="num">70k</span><span class="tn">same work as the linear pattern, shared</span></td>
+        <td class="col-mark"><span class="mk yes">✅</span><span class="q">whole body or chosen features</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
       <tr>
         <td class="col-feat"><span class="fname">Curve-driven / sketch-driven / fill pattern</span></td>
@@ -471,8 +471,8 @@ footer p{margin:0 0 6px}
         <td class="col-feat"><span class="fname">Mirror feature</span><span class="note">reflect a whole feature or body across a plane</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
         <td class="col-mark"><span class="mk yes">✅</span></td>
-        <td class="col-mark"><span class="mk partial">◐</span><span class="q">copies the whole body, not chosen features</span></td>
-        <td class="col-tok lo"><span class="num">60k</span><span class="tn">same again for mirror</span></td>
+        <td class="col-mark"><span class="mk yes">✅</span><span class="q">whole body or chosen features</span></td>
+        <td class="col-tok done">&mdash;</td>
       </tr>
 
       <tr class="section"><td colspan="5">Assemblies</td></tr>
@@ -815,9 +815,10 @@ footer p{margin:0 0 6px}
     handful of addon workbenches noted inline), and freyacad as read from its own source
     (<code>index.html</code>) and manual (<code>help.html</code>) on 24 August 2026.</p>
     <p>freyacad's own <code>help.html</code> states its gaps candidly in a "Known limits" section —
-    this page cross-checked those claims against the source and found them accurate. One gap the
-    manual does not name: the three pattern and mirror features copy every shape built so far
-    rather than the features you choose, which is why they are marked partial here.</p>
+    this page cross-checked those claims against the source and found them accurate. The one gap
+    the manual used to leave unnamed — that mirror and both patterns copied every shape built so
+    far rather than the features you choose — has since been closed: all three now take a scope,
+    and the manual describes it under “What a mirror or pattern copies”.</p>
   </footer>
 
 </div>

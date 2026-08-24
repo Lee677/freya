@@ -36,33 +36,31 @@ looks like the deploy failed when it did not.
 
 **The job in progress** is closing the gap to SolidWorks and FreeCAD, working through
 `FEATURE-MATRIX.html` **cheapest first**. The matrix carries a token estimate per gap and
-`dev/matrix_done.py` ticks a row and recomputes the tallies. As of this writing: **36 ✅ ·
-6 ◐ · 33 ✗**, 39 gaps, ~7.67M tokens. The working agreement has been: one item at a time,
+`dev/matrix_done.py` ticks a row and recomputes the tallies. As of this writing: **39 ✅ ·
+3 ◐ · 33 ✗**, 36 gaps, ~7.47M tokens. The working agreement has been: one item at a time,
 each committed, deployed and reported before starting the next.
+
+The three scope rows — Mirror, linear pattern, circular pattern — were taken together as one
+job, because they were one bug (trap 22). All three are ticked.
 
 Next up, in cost order (IGES was on this list at 40k and was explicitly dropped):
 
 | | |
 |---|---|
 | 50k | Centre marks & centrelines (drawings) |
-| 60k | Scope Mirror to chosen features rather than the whole body |
 | 60k | Distance & angle mates |
-| 70k | Scope linear / circular patterns the same way |
 | 70k | Shell · Interference detection |
 | 80k | Draft · Bill of materials |
 | 90k | Geometric constraints (the rest) · Variable-radius fillet · Exploded views · Diameter/radius/angular drawing dims · Notes, leaders & balloons |
-
-Three of those are related and worth doing together if anyone wants a bigger swing: Mirror,
-linear pattern and circular pattern all copy the **whole body** today (trap 22), which is
-both the wrong behaviour and the reason the demo models avoid patterns entirely. Fixing the
-scope once fixes all three.
 
 **Performance is done for now.** Lantern 5.5 s cold, pillow block 0.6 s, jet engine 10.5 s,
 warm edits near the top of a tree under a second. See "Where the remaining time goes" at the
 foot of this file for the one lever left, which is not a kernel change at all.
 
 **Verify with `dev/verify.js`.** Read `dev/README.md` first — the A/B-against-the-previous-
-commit routine is what caught every regression in this work, and it is cheap.
+commit routine is what caught every regression in this work, and it is cheap. `dev/headless.js`
+now runs any of the suites without a browser window, so verification no longer depends on
+having a visible pane to paste into.
 
 ## Shape of the thing
 
@@ -236,16 +234,48 @@ commit routine is what caught every regression in this work, and it is cheap.
     not inside the view's `scale(s,-s)` group — put text in there and it comes out
     mirrored and scaled.
 
-22. **`cpattern` and `lpattern` copy the whole body, not the feature above them.** Both
-    take `resultShapes.slice()` as their base, so a circular pattern placed after one flute
-    clones the hull, the flute and everything else built so far — and with `merge:true`
-    that is a boolean union per copy. An early lantern demo chained a 7-, a 3- and a
-    5-count pattern and produced 105 bodies to fuse; the page never came back, and the
-    symptom read as "the app hangs on this model" rather than "this model is wrong". Where
-    the pattern is really a ring of identical features, prefer several loops in one sketch:
-    both demo models get four-fold symmetry from two mirrored profiles on Front repeated on
-    Right, and each engine rotor is one sketch of a dozen curved blades extruded in a single
-    feature. Neither uses a pattern at all.
+22. **Mirror and both patterns take a scope; without one they still copy the whole body.**
+    They used to have no choice about it: all three took `resultShapes.slice()` as their
+    base, so a circular pattern placed after one flute cloned the hull, the flute and
+    everything else built so far — and with `merge:true` that is a boolean union per copy.
+    An early lantern demo chained a 7-, a 3- and a 5-count pattern and produced 105 bodies
+    to fuse; the page never came back, and the symptom read as "the app hangs on this model"
+    rather than "this model is wrong".
+
+    `f.scope` is now a list of feature ids. Absent or empty still means the whole body, which
+    is what every part saved before this expects, so the old behaviour had to stay reachable
+    rather than be replaced. With a scope, the copies are the scoped features' **tool**
+    shapes — the prism an extrude fused in, the prism a cut removed — transformed and applied
+    again with the operation their source used. That is the whole trick: patterning a hole
+    cuts more holes because the hole's tool is a cutting prism, not a lump.
+
+    Five things hold it together, and each one is load-bearing:
+
+    * **`featTools` only lives for one rebuild.** `noteTool` files each tool under its
+      feature's id as it is built. Nothing owns those shapes — booleans run
+      non-destructive (trap 29), so a tool outlives the boolean that consumed it.
+    * **A checkpoint may not skip a scoped source.** The tool exists only if the feature
+      actually ran, so `rebuild` refuses any checkpoint at or above the shallowest feature a
+      scope points at (`scopeFloor`). Take that guard out and `dev/verify-live.js` case
+      `patternPanel` reads 894.272 instead of 745.832 — the pattern silently drops every
+      copy, and worse, the wrong body gets pinned into a checkpoint. It fails exactly when
+      you open the pattern's own panel, which bars the checkpoint taken AT the pattern and
+      sends the search down to the flush just below it.
+    * **Tools are resolved in tree order, not tick order.** Scope a boss and a cut together
+      and the boss has to be fused before the cut is cut, or the boss fills the hole back
+      in. `scopeTools` walks `features`, not `f.scope`.
+    * **Copies are grouped tool-major**, so all N instances of one boss are a single fuse.
+      Trap 26 again: what bills is the number of booleans.
+    * **`deleteFeature` strips the id from every scope.** Ids get reissued, so a dangling
+      reference would eventually point at something unrelated rather than at nothing.
+
+    A fillet cannot be scoped and this is not an oversight: it reshapes the body's edges
+    rather than contributing a shape, so there is no tool to copy. Put the pattern before the
+    fillet. `SCOPEABLE` is the list; the manual states the limit.
+
+    The demo models still use mirrored loops in one sketch rather than patterns — that was
+    the right call for other reasons (one sketch, one extrude, no booleans at all) and it was
+    not revisited. Rebuilding them on patterns is now possible, and would be a fair test.
 23. **Loops in one sketch must not overlap each other.** The first jet-engine rotor set the
     blade half-thickness as an arc *length*, so the angular half-width was `half/r` — at the
     root radius that made each blade wider than the gap between blades, and the profiles

@@ -22,6 +22,17 @@
  *   filletrun   a run of fillets and cuts, which forces flush points
  *   lantern     the spline demo, fetched from models/ so both runs measure the
  *               same file
+ *   scopecut    a circular pattern SCOPED to a hole — six holes in one disc,
+ *               not six copies of the disc (the trap-22 case)
+ *   scopeboss   a linear pattern scoped to a boss
+ *   scopemirror a mirror scoped to a boss AND a bore at once, which pins the
+ *               order down: the copied boss must be fused before the copied
+ *               bore is cut, or the boss fills the hole back in
+ *
+ * The three scoped cases are all prisms and cylinders, so their volumes are
+ * known exactly rather than only comparable — each carries its analytic `want`
+ * and reports `ok`. Those are worth more than an A/B: they say the answer is
+ * RIGHT, not merely unchanged.
  *
  * WARNING about the lantern: BRepGProp::VolumeProperties is inaccurate on a
  * single multi-span BSpline surface — it reads the hull ~1.46% light and reports
@@ -76,6 +87,46 @@ window.__VER = 'running';
     out.push(F({id:ID(),type:'extrude',name:'a',sketchId:s1.id,depth:3,merge:true}));
     out.push(F({id:ID(),type:'lpattern',name:'p',dir:'X',count:4,spacing:3,merge:true}));
     return out; }
+  /* The trap-22 case, and the reason the scoping work happened: a pattern of a
+     HOLE has to cut more holes. Copying the whole body instead clones the disc
+     five times over, which is both the wrong shape and a boolean per copy.
+     disc 300π less six holes of 6.75π = 259.5π. */
+  function mkScopeCut(){ id=0; const out=[];
+    const s1=sk([circ({x:0,y:0},10)]); out.push(s1);
+    out.push(F({id:ID(),type:'extrude',name:'disc',sketchId:s1.id,depth:3,merge:true}));
+    const s2=sk([circ({x:6,y:0},1.5)]); out.push(s2);
+    const hole=F({id:ID(),type:'cut',name:'hole',sketchId:s2.id,depth:3,through:true,flip:true});
+    out.push(hole);
+    out.push(F({id:ID(),type:'cpattern',name:'p',axis:'Y',count:6,angle:360,equal:true,
+                merge:false,scope:[hole.id]}));
+    return out; }
+  /* plate 672 plus four bosses standing 3 proud of it, 12π each. `merge` is
+     deliberately false: in feature scope it means nothing and must be ignored. */
+  function mkScopeBoss(){ id=0; const out=[];
+    const s1=sk([rect({x:-6,y:-6},{x:22,y:6})]); out.push(s1);
+    out.push(F({id:ID(),type:'extrude',name:'plate',sketchId:s1.id,depth:2,merge:true}));
+    const s2=sk([circ({x:0,y:0},2)]); out.push(s2);
+    const boss=F({id:ID(),type:'extrude',name:'boss',sketchId:s2.id,depth:5,merge:true});
+    out.push(boss);
+    out.push(F({id:ID(),type:'lpattern',name:'p',dir:'X',count:4,spacing:6,
+                merge:false,scope:[boss.id]}));
+    return out; }
+  /* Two features in one scope. plate 1920, two bosses of 27π, two bores of 6π:
+     1920 + 42π = 2051.947. Cut the copied bore BEFORE fusing the copied boss and
+     the boss fills it straight back in, giving 1920 + 48π = 2070.796 — which is
+     what makes this the case that pins the ordering down. */
+  function mkScopeMirror(){ id=0; const out=[];
+    const s1=sk([rect({x:-20,y:-8},{x:20,y:8})]); out.push(s1);
+    out.push(F({id:ID(),type:'extrude',name:'plate',sketchId:s1.id,depth:3,merge:true}));
+    const s2=sk([circ({x:10,y:0},3)]); out.push(s2);
+    const boss=F({id:ID(),type:'extrude',name:'boss',sketchId:s2.id,depth:6,merge:true});
+    out.push(boss);
+    const s3=sk([circ({x:10,y:0},1)]); out.push(s3);
+    const bore=F({id:ID(),type:'cut',name:'bore',sketchId:s3.id,depth:3,through:true,flip:true});
+    out.push(bore);
+    out.push(F({id:ID(),type:'mirror',name:'m',plane:'Right',merge:false,
+                scope:[boss.id,bore.id]}));
+    return out; }
   function mkFilletRun(){ id=0; const out=[];
     const s1=sk([rect({x:-8,y:-5},{x:8,y:5})]); out.push(s1);
     out.push(F({id:ID(),type:'extrude',name:'a',sketchId:s1.id,depth:4,merge:true}));
@@ -128,9 +179,17 @@ window.__VER = 'running';
   }
 
   const res={};
-  for(const [n,l] of [['pillow',PILLOW],['order',mkOrder()],['multibody',mkMultibody()],
+  /* third element, where there is one, is the analytic volume */
+  for(const [n,l,want] of [['pillow',PILLOW],['order',mkOrder()],['multibody',mkMultibody()],
                       ['mirror',mkMirror()],['cpattern',mkCPattern()],['lpattern',mkLPattern()],
-                      ['filletrun',mkFilletRun()]]) res[n]=run(l);
+                      ['filletrun',mkFilletRun()],
+                      ['scopecut',mkScopeCut(),815.243],
+                      ['scopeboss',mkScopeBoss(),822.796],
+                      ['scopemirror',mkScopeMirror(),2051.947]]){
+    const r=run(l); res[n]=r;
+    if(want!=null){ r.want=want;
+      r.ok = r.vol!=null && Math.abs(r.vol-want)<0.01 && r.bodies===1 && !(r.errs||[]).length; }
+  }
   fetch('models/lantern-rocket.sketchcad').then(r=>r.json()).then(list=>{
     res.lantern=run(list); window.__VER=res;
   }).catch(e=>{ res.lantern={fail:'fetch: '+e.message}; window.__VER=res; });
@@ -146,4 +205,10 @@ window.__VER = 'running';
  *   lpattern   156      | 30f 120e 1b
  *   filletrun  655.708  | 12f  68e 1b
  *   lantern    11268.126| 32f 164e 1b     <- see the VolumeProperties warning
+ *
+ * And the three scoped cases, which are right or wrong rather than merely
+ * changed — check `ok` on each:
+ *   scopecut    815.243 = 259.5π  |  9f 42e 1b   bbox is still the disc's own
+ *   scopeboss   822.796 = 672+48π | 18f 56e 1b
+ *   scopemirror 2051.947= 1920+42π| 14f 52e 1b   com x = 0
  */

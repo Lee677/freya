@@ -663,12 +663,12 @@ sketch, or an existing solid — stay greyed out until it exists.</p>
     lead-ins and de-burring. Three shapes: <b>equal</b> (one size, 45°), <b>distance ×
     distance</b> for an asymmetric bevel, and <b>distance × angle</b> where the angle is
     measured from the first face.</td></tr>
-  <tr><td><b>Mirror</b></td><td>A solid</td><td>Reflects the model across a plane.
-    Model half a symmetrical part, mirror the rest.</td></tr>
-  <tr><td><b>Linear pattern</b></td><td>A solid</td><td>Repeats along a direction at a
-    fixed spacing.</td></tr>
+  <tr><td><b>Mirror</b></td><td>A solid</td><td>Reflects the whole body, or just the
+    features you choose, across a plane. Model half a symmetrical part, mirror the rest.</td></tr>
+  <tr><td><b>Linear pattern</b></td><td>A solid</td><td>Repeats along a direction at a fixed
+    spacing — the whole body, or chosen features.</td></tr>
   <tr><td><b>Circular pattern</b></td><td>A solid</td><td>Repeats around an axis — bolt
-    circles, splines, cooling fins.</td></tr>
+    circles, splines, cooling fins. The whole body, or chosen features.</td></tr>
 </table>
 <p>Select a feature in the tree and its parameters appear in a panel — depth, radius,
 count, spacing. Edit them and the model rebuilds.</p>
@@ -694,6 +694,36 @@ inside, so it makes no face — that is the usual reason a shape seems to be ign
   Open CASCADE has its own distance-angle routine, but it fails on the circular edges this
   app produces, and the distance pair does not.</p>
 </div>
+
+<h3 id="scope">What a mirror or pattern copies</h3>
+<p>Mirror, linear pattern and circular pattern all ask the same question, at the top of
+their panel:</p>
+<table>
+  <tr><th>Copy</th><th>What you get</th></tr>
+  <tr><td><b>Whole body</b></td><td>Everything built so far is reflected or repeated. Right
+    for a symmetrical part you have modelled half of, or for laying out copies of a finished
+    body.</td></tr>
+  <tr><td><b>Chosen features</b></td><td>Only the features you tick are copied. A tick list of
+    every boss, cut, revolve and import above this point in the tree appears underneath.</td></tr>
+</table>
+<p>The second is the one you want most of the time, and it is the difference between a bolt
+circle and a mess. Pattern <b>one hole</b> six ways round a disc and you get six holes.
+Pattern the <b>whole body</b> and you get six overlapping copies of the entire disc, hole and
+all — the wrong shape, and six times the work to build it.</p>
+<p>Each copy is applied the way its own feature was applied: a boss adds material, a cut
+removes it. That is what makes a patterned hole cut more holes rather than deposit lumps.
+Tick a boss and a cut together and they go on in tree order, so the copied cut passes through
+the copied boss exactly as the original does.</p>
+<div class="note">
+  <span class="tag">Worth knowing</span>
+  <p>Fillets and chamfers can't be ticked. They reshape edges of the body rather than add a
+  shape of their own, so there is nothing to copy — put the mirror or pattern
+  <em>before</em> the fillet in the tree and the copies get rounded too, which is the usual
+  order anyway. <b>Merge result</b> disappears when you choose features: a copied feature
+  belongs to the body it came from, so there is nothing left to decide.</p>
+</div>
+<p>Parts saved before this existed open exactly as they did — no choice recorded means
+whole body. Delete a feature that something was copying and that tick simply drops off.</p>
 
 <p>Fillets and chamfers are the usual place a rebuild fails, and it's rarely a bug: a
 radius bigger than the material it has to blend into has no valid solution. Reduce it, or
@@ -946,6 +976,9 @@ three view keys — can all be changed under <b>Customise tools… → Keyboard<
   <li><b>Drawings are linear dimensions only.</b> No diameter, radius or angular dimensions,
       no notes or centre marks, no section or detail views, and the sheet isn't saved with the
       part. See <a href="#drawings">Drawings</a>.</li>
+  <li><b>A pattern can't copy a fillet or chamfer.</b> Bosses, cuts, revolves and imports
+      can each be mirrored or patterned on their own; edge treatments can't, because they
+      reshape the body rather than add a shape to it. Put the pattern before the fillet.</li>
   <li><b>Only two assembly mates.</b> Concentric and coincident hold as real relations and
       are solved together, but distance, angle, parallel and the rest aren't there yet, and
       neither are joints or sub-assemblies.</li>
