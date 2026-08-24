@@ -597,6 +597,7 @@ if(!window.THREE){
 
   <main class="viewport" id="viewport">
     <div class="sheet-wrap" id="sheet-wrap"><svg id="sheet" xmlns="http://www.w3.org/2000/svg"></svg></div>
+    <div class="dock" id="dock-draw" style="display:none"></div>
     <div class="dock" id="dock" style="display:none">
       <button data-tool="select" title="Pointer — rotate the view, drag points and dimensions, click a line and press Delete">Pointer</button>
       <button data-tool="line" class="active">Line</button>
@@ -6772,7 +6773,8 @@ const CSG = (function(){
   const MENUS={
     sketch:{title:'Sketch menu',cmds:CMD, def:DEFAULT_LAYOUT,      key:'fcad-sketch-layout',layout:null,hidden:[]},
     model :{title:'Model menu', cmds:MCMD,def:DEFAULT_MODEL_LAYOUT,key:'fcad-model-layout', layout:null,hidden:[]},
-    asm   :{title:'Assembly menu',cmds:null,def:null,key:'fcad-asm-layout',layout:null,hidden:[]}
+    asm   :{title:'Assembly menu',cmds:null,def:null,key:'fcad-asm-layout',layout:null,hidden:[]},
+    draw  :{title:'Drawing menu',cmds:null,def:null,key:'fcad-draw-layout',layout:null,hidden:[]}
   };
   loadMenu(MENUS.sketch); loadMenu(MENUS.model);
   function openCustomise(which){
@@ -6841,6 +6843,7 @@ const CSG = (function(){
     ov.querySelector('#cust-cancel').addEventListener('click',close);
     ov.querySelector('#cust-ok').addEventListener('click',()=>{
       Object.keys(MENUS).forEach(k=>{ MENUS[k].layout=cloneLayout(work[k].secs); saveMenu(MENUS[k]); });
+      if(docMode==='draw')refreshDrawDock();
       close(); setHint('Menu layout saved');
     });
     ov.querySelector('#cust-reset').addEventListener('click',()=>{
@@ -7582,6 +7585,8 @@ const CSG = (function(){
     $('tb-draw-main').style.display=isD?'flex':'none';
     $('btn-demo-tgl').style.display=(isA||isD)?'none':'';
     $('sheet-wrap').classList.toggle('on',isD);
+    $('dock-draw').style.display=isD?'flex':'none';
+    if(isD)refreshDrawDock();
     canvas.style.display=isD?'none':'block';   // nothing 3D behind a sheet of paper
     document.querySelector('.tree-head h2').textContent=isD?'Drawing':isA?'Components':'Feature Tree';
     [sketchOverlay,previewOverlay,refOverlay,hoverGroup,selGroup,handleGroup,draftGroup].forEach(g=>g.visible=!isA&&!isD);
@@ -7705,6 +7710,8 @@ const CSG = (function(){
             title:'',views:[],dims:[],uid:1};
   let drawSel=null, sheetDrag=null;
   let drawTool=null, dimPick2=null;   // the sheet's own tool, and a dimension part-picked
+  let projDrag=null;                  // pulling a projected view off its parent
+  let dimDrag=null, dimHover=null;    // moving a dimension, and the point under the cursor
   function sheetSize(){
     const s=SHEETS[draw.sheet]||SHEETS.A3;
     return draw.orient==='portrait'?[s[1],s[0]]:[s[0],s[1]];
@@ -7843,6 +7850,67 @@ const CSG = (function(){
     if(s>=1)return (Math.round(s*100)/100)+':1';
     return '1:'+(Math.round(100/s)/100);
   }
+  /* Which view belongs on which side of which, in third angle. Written out
+     rather than derived from the bases: the derivation has a handedness trap
+     in it that is easy to get subtly wrong and hard to see on a symmetric
+     part, and a drawing convention is a lookup table anyway. First angle is
+     the same table with both axes swapped — that is exactly what the two
+     conventions differ by. */
+  const NEIGHBOUR={
+    front :{right:'right',left:'left', up:'top',   down:'bottom'},
+    back  :{right:'left', left:'right',up:'top',   down:'bottom'},
+    top   :{right:'right',left:'left', up:'back',  down:'front'},
+    bottom:{right:'right',left:'left', up:'front', down:'back'},
+    right :{right:'back', left:'front',up:'top',   down:'bottom'},
+    left  :{right:'front',left:'back', up:'top',   down:'bottom'},
+    iso   :{right:'right',left:'left', up:'top',   down:'bottom'}
+  };
+  function projectedKind(parentKind,dir){
+    const t=NEIGHBOUR[parentKind]||NEIGHBOUR.front;
+    if(draw.angle===3)return t[dir];
+    const flip={right:'left',left:'right',up:'down',down:'up'};
+    return t[flip[dir]];
+  }
+  /* A view's box on the sheet, in sheet millimetres. */
+  function viewBox(v){
+    const s=v.scale||fitScale();
+    const w=(v.geo.bb.x1-v.geo.bb.x0)*s, h=(v.geo.bb.y1-v.geo.bb.y0)*s;
+    return {x0:v.x-w/2,x1:v.x+w/2,y0:v.y-h/2,y1:v.y+h/2,w,h};
+  }
+  /* Pull a projected view straight off its parent, the way SolidWorks does —
+     the direction you pull decides which view you get, and the result stays in
+     line with the parent because that alignment is what makes a drawing
+     readable. Grabbing inside a view still moves it. */
+  function projectDrag(parent,sx,sy){
+    const B=viewBox(parent);
+    const dx=sx-parent.x, dy=sy-parent.y;
+    const outX=Math.max(0,Math.abs(dx)-B.w/2), outY=Math.max(0,Math.abs(dy)-B.h/2);
+    if(outX<3&&outY<3)return null;                 // still over the parent: a move
+    let dir;
+    if(outX>4&&outY>4)dir='iso';
+    else if(outX>=outY)dir=dx>0?'right':'left';
+    else dir=dy<0?'up':'down';
+    const kind=(dir==='iso')?'iso':projectedKind(parent.kind,dir);
+    if(!kind)return null;
+    return {kind,dir};
+  }
+  function addProjectedView(parent,sx,sy){
+    const p=projectDrag(parent,sx,sy); if(!p)return false;
+    if(draw.views.some(v=>v.kind===p.kind))
+      return setHint('There is already a '+VIEW_DIRS[p.kind].label.toLowerCase()+' view on this sheet'),false;
+    const geo=buildView(p.kind); if(!geo)return false;
+    const [W,H]=sheetSize();
+    const v={id:draw.uid++,kind:p.kind,x:sx,y:sy,scale:0,hidden:null,geo,
+             align:(p.dir==='iso')?null:{par:parent.id,axis:(p.dir==='right'||p.dir==='left')?'h':'v'}};
+    // a projected view is in line with its parent: only the one axis is yours
+    if(v.align&&v.align.axis==='h')v.y=parent.y; else if(v.align)v.x=parent.x;
+    v.x=Math.max(20,Math.min(W-20,v.x)); v.y=Math.max(24,Math.min(H-30,v.y));
+    draw.views.push(v); drawSel=v.id;
+    renderSheet(); refreshDrawTree();
+    setHint(VIEW_DIRS[p.kind].label+' view projected from '+VIEW_DIRS[parent.kind].label.toLowerCase()
+      +(v.align?' — it stays in line with it':' — free to sit anywhere'));
+    return true;
+  }
   function addDrawView(kind){
     const geo=buildView(kind);
     if(!geo)return setHint('Nothing to draw — model something first');
@@ -7920,15 +7988,15 @@ const CSG = (function(){
     if(!draw.views.length)return setHint('Add a view first');
     dimPick2=null; drawTool=(drawTool==='dim')?null:'dim';
     $('btn-dw-dim').classList.toggle('btn-primary',drawTool==='dim');
-    renderSheet();
+    renderSheet(); refreshDrawDock();
     setHint(drawTool==='dim'
       ? 'Dimension: click a corner on a view, then a second corner, then click where the line should sit (Esc cancels)'
       : 'Dimensioning off');
   }
   function cancelDrawDim(quiet){
     if(!drawTool&&!dimPick2)return false;
-    drawTool=null; dimPick2=null;
-    $('btn-dw-dim').classList.remove('btn-primary');
+    drawTool=null; dimPick2=null; dimHover=null;
+    $('btn-dw-dim').classList.remove('btn-primary'); refreshDrawDock();
     renderSheet(); if(!quiet)setHint('Dimension cancelled');
     return true;
   }
@@ -8048,17 +8116,47 @@ const CSG = (function(){
       g.appendChild(inner);
       // an invisible box so the whole view is grabbable, not just its lines
       const bw=(v.geo.bb.x1-v.geo.bb.x0)||1, bh=(v.geo.bb.y1-v.geo.bb.y0)||1;
-      g.appendChild(mk('rect',{class:'vwbox',x:-bw/2-1,y:-bh/2-1,width:bw+2,height:bh+2,
+      /* The box reaches 5 mm past the geometry: inside it a drag moves the
+         view, out in that border band a drag pulls a projected view off it.
+         Without the margin there is nothing to grab in the band at all. */
+      const pad=5/s;
+      g.appendChild(mk('rect',{class:'vwbox',x:-bw/2-pad,y:-bh/2-pad,width:bw+pad*2,height:bh+pad*2,
         'stroke-width':0.3/s,'pointer-events':'all'}));
+      g.appendChild(mk('rect',{class:'vwband',x:-bw/2-pad*0.62,y:-bh/2-pad*0.62,
+        width:bw+pad*1.24,height:bh+pad*1.24,fill:'none',stroke:'#4285F4','stroke-width':0.25/s,
+        'stroke-dasharray':(1.4/s)+' '+(1.2/s),opacity:0,'pointer-events':'none'}));
       svg.appendChild(g);
       const lab=mk('text',{x:v.x,y:v.y+(bh/2)*s+5,'text-anchor':'middle',
         'font-family':'sans-serif','font-size':3.6,fill:'#111'});
       lab.textContent=VIEW_DIRS[v.kind].label+(v.scale?'  ('+scaleLabel(v.scale)+')':'');
       svg.appendChild(lab);
     }
+    if(projDrag&&projDrag.to){
+      const p=projectDrag(projDrag.parent,projDrag.to.x,projDrag.to.y);
+      if(p){
+        const B=viewBox(projDrag.parent);
+        let gx=projDrag.to.x, gy=projDrag.to.y;
+        if(p.dir==='right'||p.dir==='left')gy=projDrag.parent.y;
+        else if(p.dir!=='iso')gx=projDrag.parent.x;
+        svg.appendChild(mk('rect',{x:gx-B.w/2,y:gy-B.h/2,width:B.w,height:B.h,fill:'none',
+          stroke:'#4285F4','stroke-width':0.3,'stroke-dasharray':'2 1.5'}));
+        svg.appendChild(mk('line',{x1:projDrag.parent.x,y1:projDrag.parent.y,x2:gx,y2:gy,
+          stroke:'#4285F4','stroke-width':0.2,'stroke-dasharray':'1 1',opacity:0.7}));
+        const kk=(p.dir==='iso')?'iso':projectedKind(projDrag.parent.kind,p.dir);
+        const t=mk('text',{x:gx,y:gy-B.h/2-2,'text-anchor':'middle','font-family':'sans-serif',
+          'font-size':3.4,fill:'#4285F4'});
+        t.textContent=kk?VIEW_DIRS[kk].label:''; svg.appendChild(t);
+      }
+    }
     for(const d of (draw.dims||[]))drawDimGeom(svg,d);
     /* Half a dimension, drawn as you place it: the corners you have picked and
        a rubber line between them, so you can see what you are measuring. */
+    if(drawTool==='dim'&&dimHover){
+      /* The point the click would take, lit up. Without it you are aiming at
+         a corner you cannot see and hoping the snap agrees with you. */
+      svg.appendChild(mk('circle',{cx:dimHover.sx,cy:dimHover.sy,r:2.2,fill:'#4285F4',opacity:0.2}));
+      svg.appendChild(mk('circle',{cx:dimHover.sx,cy:dimHover.sy,r:1.0,fill:'#4285F4'}));
+    }
     if(dimPick2){
       const dot=p=>svg.appendChild(mk('circle',{cx:p.sx,cy:p.sy,r:0.8,fill:'#4285F4'}));
       dot(dimPick2.a); if(dimPick2.b)dot(dimPick2.b);
@@ -8072,9 +8170,15 @@ const CSG = (function(){
       g.addEventListener('pointerdown',e=>{
         if(drawTool==='dim')return;
         e.preventDefault(); e.stopPropagation();
-        drawSel='d'+g.dataset.dim; renderSheet(); refreshDrawTree();
-        setHint('Dimension selected — Delete removes it');
+        const d=(draw.dims||[]).find(x=>x.id===+g.dataset.dim); if(!d)return;
+        drawSel='d'+d.id;
+        // a dimension you cannot move is a dimension in the wrong place
+        const r=svg.getBoundingClientRect(), k=W/r.width;
+        dimDrag={d,x:(e.clientX-r.left)*k,y:(e.clientY-r.top)*k,at:{x:d.at.x,y:d.at.y}};
+        renderSheet(); refreshDrawTree();
+        setHint('Drag to place it · Delete removes it');
       });
+      g.style.cursor='move';
     });
     svg.querySelectorAll('.vw').forEach(g=>{
       g.addEventListener('pointerdown',e=>{
@@ -8083,10 +8187,22 @@ const CSG = (function(){
         const id=+g.dataset.id, v=draw.views.find(x=>x.id===id); if(!v)return;
         drawSel=id; refreshDrawTree();
         const r=svg.getBoundingClientRect(), k=W/r.width;
-        sheetDrag={v,ox:v.x-(e.clientX-r.left)*k,oy:v.y-(e.clientY-r.top)*k};
+        const sx=(e.clientX-r.left)*k, sy=(e.clientY-r.top)*k;
+        if(projectDrag(v,sx,sy)){ projDrag={parent:v,x:sx,y:sy}; renderSheet(); return; }
+        sheetDrag={v,ox:v.x-sx,oy:v.y-sy};
         g.setPointerCapture&&g.setPointerCapture(e.pointerId);
         renderSheet();
       });
+      g.addEventListener('pointermove',e=>{
+        if(drawTool==='dim'||sheetDrag||projDrag)return;
+        const id=+g.dataset.id, v=draw.views.find(x=>x.id===id); if(!v)return;
+        const r=svg.getBoundingClientRect(), k=W/r.width;
+        const inBand=!!projectDrag(v,(e.clientX-r.left)*k,(e.clientY-r.top)*k);
+        const band=g.querySelector('.vwband'); if(band)band.setAttribute('opacity',inBand?0.85:0);
+        g.style.cursor=inBand?'copy':'grab';
+      });
+      g.addEventListener('pointerleave',()=>{ const b=g.querySelector('.vwband');
+        if(b&&!projDrag)b.setAttribute('opacity',0); });
     });
   }
   function drawTitleBlock(svg,W,H,S){
@@ -8173,6 +8289,67 @@ const CSG = (function(){
       tree.appendChild(el);
     });
     $('tree-pill').textContent=draw.views.length;
+  }
+  /* The drawing's commands live in a registry like every other mode's, so the
+     right-click menu, the floating dock and the customise dialog are all built
+     from one list — and rearranging it rearranges all three. */
+  const DCMD={
+    v_front  :{ic:'normal', label:'Front view',     fn:()=>addDrawView('front')},
+    v_top    :{ic:'normal', label:'Top view',       fn:()=>addDrawView('top')},
+    v_right  :{ic:'normal', label:'Right view',     fn:()=>addDrawView('right')},
+    v_left   :{ic:'normal', label:'Left view',      fn:()=>addDrawView('left')},
+    v_bottom :{ic:'normal', label:'Bottom view',    fn:()=>addDrawView('bottom')},
+    v_back   :{ic:'normal', label:'Back view',      fn:()=>addDrawView('back')},
+    v_iso    :{ic:'iso',    label:'Isometric view', fn:()=>addDrawView('iso')},
+    d_dim    :{ic:'dim',    label:'Dimension',      fn:()=>startDrawDim()},
+    d_model  :{ic:'open',   label:'Draw a saved part…',fn:()=>$('file-draw').click()},
+    d_hidden :{ic:'suppress',label:'Hidden detail', fn:()=>$('btn-dw-hidden').click(),
+                 dyn:()=>draw.hidden?'Hide hidden detail':'Show hidden detail'},
+    d_angle  :{ic:'mirror', label:'Projection angle',
+                 fn:()=>{ draw.angle=(draw.angle===3)?1:3; $('dw-angle').value=String(draw.angle);
+                   renderSheet(); setHint(draw.angle===3?'Third angle':'First angle'); },
+                 dyn:()=>draw.angle===3?'Switch to first angle':'Switch to third angle'},
+    d_fit    :{ic:'fit',    label:'Fit to the page', fn:()=>{ draw.scale=0; $('dw-scale').value='0';
+                 renderSheet(); refreshDrawTree(); setHint('Scale '+scaleLabel(fitScale())); }},
+    d_print  :{ic:'export', label:'Print…',         fn:()=>printSheet()},
+    d_svg    :{ic:'export', label:'Export SVG',     fn:()=>exportSheetSVG()},
+    d_back   :{ic:'edit',   label:'Back to the model',fn:()=>setDocMode(drawReturn)}
+  };
+  const DEFAULT_DRAW_LAYOUT=[
+    {name:'Drawing',   ids:['d_dim','d_model','d_back']},
+    {name:'Views',     ids:['v_front','v_top','v_right','v_left','v_bottom','v_back','v_iso']},
+    {name:'Sheet',     ids:['d_hidden','d_angle','d_fit']},
+    {name:'Output',    ids:['d_print','d_svg']}
+  ];
+  MENUS.draw.cmds=DCMD; MENUS.draw.def=DEFAULT_DRAW_LAYOUT; loadMenu(MENUS.draw);
+  function drawMenuItems(){
+    const items=[];
+    for(const sec of MENUS.draw.layout){
+      const live=sec.ids.filter(id=>DCMD[id]);
+      if(!live.length)continue;
+      items.push({sect:sec.name});
+      for(const id of live){ const c=DCMD[id];
+        items.push({ic:c.ic,label:c.dyn?c.dyn():c.label,fn:c.fn}); }
+    }
+    items.push({sect:'Tools'});
+    items.push({ic:'edit',label:'Customise tools…',fn:()=>openCustomise('draw')});
+    return items;
+  }
+  function openDrawMenu(x,y){ buildCtxMenu(x,y,drawMenuItems(),{cols:true}); }
+  /* The floating dock is the same list again, so a command hidden from the
+     menu is gone from the dock too — one place to arrange, both obey. */
+  function refreshDrawDock(){
+    const d=$('dock-draw'); if(!d)return;
+    d.innerHTML='';
+    for(const sec of MENUS.draw.layout)for(const id of sec.ids){
+      const c=DCMD[id]; if(!c)continue;
+      const b=document.createElement('button');
+      b.innerHTML=icHTML(c.ic)+'<span class="lbl">'+(c.dyn?c.dyn():c.label).replace(/[…:].*$/,'')+'</span>';
+      b.title=c.dyn?c.dyn():c.label;
+      if(id==='d_dim')b.classList.toggle('active',drawTool==='dim');
+      b.addEventListener('click',()=>{ c.fn(); refreshDrawDock(); });
+      d.appendChild(b);
+    }
   }
   function openDrawViewPicker(){
     const items=[{sect:'Add a view'}];
@@ -8387,6 +8564,14 @@ const CSG = (function(){
     renderSheet(); setHint(draw.hidden?'Hidden detail shown, dashed':'Hidden detail off');
   });
   $('btn-dw-dim').addEventListener('click',startDrawDim);
+  /* The sheet takes the right-click, not the canvas — the canvas is hidden in
+     this mode, so it never sees the event. */
+  $('sheet-wrap').addEventListener('contextmenu',e=>{
+    if(docMode!=='draw')return;
+    e.preventDefault(); e.stopPropagation();
+    if(cancelDrawDim(true)){ refreshDrawDock(); }
+    openDrawMenu(e.clientX,e.clientY);
+  });
   /* The sheet element outlives every redraw, so this is bound once. Binding it
      inside renderSheet stacked a handler per redraw, and one click then walked
      the dimension pick two or three steps at a time. */
@@ -8412,14 +8597,53 @@ const CSG = (function(){
   });
   $('btn-dw-print').addEventListener('click',printSheet);
   $('btn-dw-svg').addEventListener('click',exportSheetSVG);
+  /* The glow follows the cursor whenever the dimension tool is in hand, so
+     you can see which corner the next click takes before you commit to it. */
+  $('sheet').addEventListener('pointermove',e=>{
+    if(docMode!=='draw'||drawTool!=='dim'||dimDrag)return;
+    const svg=$('sheet'), r=svg.getBoundingClientRect(), k=sheetSize()[0]/r.width;
+    const h=snapDimPoint((e.clientX-r.left)*k,(e.clientY-r.top)*k);
+    const was=dimHover?dimHover.sx+','+dimHover.sy:null;
+    const now=h?h.sx+','+h.sy:null;
+    if(was!==now){ dimHover=h; renderSheet(); }
+  });
   window.addEventListener('pointermove',e=>{
-    if(!sheetDrag)return;
+    if(!sheetDrag&&!projDrag&&!dimDrag)return;
     const svg=$('sheet'), r=svg.getBoundingClientRect(), [W,H]=sheetSize(), k=W/r.width;
-    sheetDrag.v.x=Math.max(14,Math.min(W-14,(e.clientX-r.left)*k+sheetDrag.ox));
-    sheetDrag.v.y=Math.max(20,Math.min(H-14,(e.clientY-r.top)*k+sheetDrag.oy));
+    const sx=(e.clientX-r.left)*k, sy=(e.clientY-r.top)*k;
+    if(dimDrag){
+      const v=viewOf(dimDrag.d.view);
+      if(v){ const a=toView(v,sx-(dimDrag.x-toSheet(v,dimDrag.at.x,dimDrag.at.y).x),
+                              sy-(dimDrag.y-toSheet(v,dimDrag.at.x,dimDrag.at.y).y));
+        dimDrag.d.at={x:a.x,y:a.y}; renderSheet(); }
+      return;
+    }
+    if(projDrag){ projDrag.to={x:sx,y:sy}; renderSheet(); return; }
+    const v=sheetDrag.v;
+    let nx=Math.max(14,Math.min(W-14,sx+sheetDrag.ox));
+    let ny=Math.max(20,Math.min(H-14,sy+sheetDrag.oy));
+    /* A projected view is in line with its parent, so only one axis of it is
+       yours to move. Drag the parent and the children come along — break that
+       and the sheet stops reading as a drawing. */
+    const par=v.align?draw.views.find(x=>x.id===v.align.par):null;
+    if(par){ if(v.align.axis==='h')ny=par.y; else nx=par.x; }
+    const dx=nx-v.x, dy=ny-v.y;
+    v.x=nx; v.y=ny;
+    for(const c of draw.views){
+      if(!c.align||c.align.par!==v.id)continue;
+      c.x=Math.max(14,Math.min(W-14,c.x+dx));
+      c.y=Math.max(20,Math.min(H-14,c.y+dy));
+    }
     renderSheet();
   });
-  window.addEventListener('pointerup',()=>{ if(sheetDrag){sheetDrag=null;} });
+  window.addEventListener('pointerup',()=>{
+    if(dimDrag){ dimDrag=null; setHint('Dimension moved'); }
+    if(projDrag){
+      const p=projDrag; projDrag=null;
+      if(p.to)addProjectedView(p.parent,p.to.x,p.to.y); else renderSheet();
+    }
+    if(sheetDrag){sheetDrag=null;}
+  });
   $('btn-insert').addEventListener('click',()=>$('file-insert').click());
   $('file-insert').addEventListener('change',e=>{
     const file=e.target.files[0]; if(!file)return;

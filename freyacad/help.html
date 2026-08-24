@@ -731,9 +731,14 @@ return. Change a dimension on the part, come back, and the drawing has changed w
 orthographic projection of the model's edges, not a picture of the screen: edges you can see
 draw solid, edges the solid stands in front of draw dashed as hidden detail, and <b>Hidden</b>
 turns that detail off. Drag a view to place it; the tree lists them with an × to remove one.</p>
-<p>A view added after the front view lands square with it, on the side the convention puts it:
+<p><b>Pull a view straight off another one.</b> Hover a view and a dashed frame appears round
+it; drag from that frame and you get the view that belongs on the side you pulled towards —
+right for the right view, up for the top, a corner for isometric. It lands <b>in line</b> with
+its parent and stays there: drag a projected view and it slides along its one free axis, drag
+the parent and its projections come along. Which view you get follows the sheet's convention:
 <b>third angle</b> puts the top view above and the right view to the right, <b>first angle</b>
-the other way about. The title block carries the matching symbol.</p>
+the other way about, and the title block carries the matching symbol. Dragging from inside a
+view still just moves it, and <b>Add view</b> is still there when you want to name one.</p>
 <p><b>Model…</b> draws a <em>saved</em> part instead of the one you have open — pick a
 <code>.sketchcad</code> file and every view re-projects from it, without disturbing your work.</p>
 <h3>Dimensioning</h3>
@@ -742,11 +747,19 @@ a second corner, then click where the line should sit. Corners snap, so a dimens
 means the corner and not "roughly there". Where you place the line chooses the kind, as a
 smart dimension does: put it above or below and you asked for the horizontal distance, out to
 the side and you asked for the vertical one.</p>
-<p>The number is measured off the <b>model</b>, not off the paper. Change the sheet scale to
-1:2 and the drawing halves while the dimension still reads 40. Dimensions belong to their
-view, so they travel with it when you drag it, and go with it when you delete it. Click one
-and press <kbd>Delete</kbd> to remove it; <kbd>Esc</kbd> puts the tool down, and again leaves
-the drawing.</p>
+<p>The corner the next click would take <b>glows</b> as the cursor passes it, so you are never
+aiming at a snap you cannot see. The number is measured off the <b>model</b>, not off the
+paper: change the sheet scale to 1:2 and the drawing halves while the dimension still reads
+40. Dimensions belong to their view, so they travel with it when you drag it and go with it
+when you delete it. Drag a dimension to move it where you want it; click one and press
+<kbd>Delete</kbd> to remove it. <kbd>Esc</kbd> puts the tool down, and again leaves the
+drawing.</p>
+<h3>The drawing tools</h3>
+<p>Right-click anywhere on the sheet for every drawing command, grouped the same way the
+sketch menu is, with the same floating dock along the top of the sheet. <b>Customise tools…</b>
+at the foot of that menu opens the same dialog the other modes use — the drawing has its own
+tab, and dragging a command into another group, or into Hidden, rearranges the menu and the
+dock together.</p>
 <h3>Sheet, scale and output</h3>
 <p>Sheet sizes run A4 to A0, portrait or landscape. The scale is one you pick from the usual
 series, or <b>fit</b>, which chooses the largest standard scale that still gets everything on
