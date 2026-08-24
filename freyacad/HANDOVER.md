@@ -1,6 +1,6 @@
 # freyacad — handover
 
-Browser CAD at `/freyacad`. One ~9,500-line `index.html`, no build step, no framework.
+Browser CAD at `/freyacad`. One ~10,300-line `index.html`, no build step, no framework.
 Open CASCADE compiled to WASM (CDN, 50 MB raw / 13 MB brotli over the wire) does the
 geometry; three.js r128 draws it.
 
@@ -27,6 +27,42 @@ npm run deploy                                  # deploys the whole site
 Unlike `/grid`, freyacad has no `?v=` problem — everything is inline in `index.html`,
 which is never cached. `help.html` is a separate file but is only ever loaded fresh into
 the overlay iframe.
+
+Note Cloudflare Pages 308-redirects `/freyacad/help.html` to `/freyacad/help`, so check the
+live manual with `curl -sL`, not plain `curl` — without `-L` you get an empty body and it
+looks like the deploy failed when it did not.
+
+## Where to pick up
+
+**The job in progress** is closing the gap to SolidWorks and FreeCAD, working through
+`FEATURE-MATRIX.html` **cheapest first**. The matrix carries a token estimate per gap and
+`dev/matrix_done.py` ticks a row and recomputes the tallies. As of this writing: **36 ✅ ·
+6 ◐ · 33 ✗**, 39 gaps, ~7.67M tokens. The working agreement has been: one item at a time,
+each committed, deployed and reported before starting the next.
+
+Next up, in cost order (IGES was on this list at 40k and was explicitly dropped):
+
+| | |
+|---|---|
+| 50k | Centre marks & centrelines (drawings) |
+| 60k | Scope Mirror to chosen features rather than the whole body |
+| 60k | Distance & angle mates |
+| 70k | Scope linear / circular patterns the same way |
+| 70k | Shell · Interference detection |
+| 80k | Draft · Bill of materials |
+| 90k | Geometric constraints (the rest) · Variable-radius fillet · Exploded views · Diameter/radius/angular drawing dims · Notes, leaders & balloons |
+
+Three of those are related and worth doing together if anyone wants a bigger swing: Mirror,
+linear pattern and circular pattern all copy the **whole body** today (trap 22), which is
+both the wrong behaviour and the reason the demo models avoid patterns entirely. Fixing the
+scope once fixes all three.
+
+**Performance is done for now.** Lantern 5.5 s cold, pillow block 0.6 s, jet engine 10.5 s,
+warm edits near the top of a tree under a second. See "Where the remaining time goes" at the
+foot of this file for the one lever left, which is not a kernel change at all.
+
+**Verify with `dev/verify.js`.** Read `dev/README.md` first — the A/B-against-the-previous-
+commit routine is what caught every regression in this work, and it is cheap.
 
 ## Shape of the thing
 
