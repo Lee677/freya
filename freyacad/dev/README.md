@@ -6,7 +6,7 @@ changes and keep the feature matrix honest.
 | file | what it is |
 |---|---|
 | `verify.js` | The geometry regression suite. Paste into the browser console with freyacad open, read `window.__VER`. Eleven models covering fillets, a merge/cut ordering trap, multi-body, mirror, both patterns, three scoped mirror/pattern cases and the spline demo. The scoped three carry their analytic volume and report `ok`, so they are right-or-wrong rather than only comparable. |
-| `verify-live.js` | The half `verify.js` cannot reach. It builds through the real document — `insertFeature`, `openProps`, `rebuild` — so it sees the geometry cache and the checkpoints, which `buildPartShapes` switches off. Read `window.__VERLIVE`. Its invariant is that a checkpointed rebuild equals a cold one. |
+| `verify-live.js` | The half `verify.js` cannot reach. It builds through the real document — `insertFeature`, `openProps`, `rebuild` — so it sees the geometry cache and the checkpoints, which `buildPartShapes` switches off. Read `window.__VERLIVE`. Its invariant is that a checkpointed rebuild equals a cold one. It also covers the drawing (circle and axis detection, centre marks, centrelines), for the same reason: a view is built from the live document. |
 | `headless.js` | Runs either suite in a headless browser instead of a console. `node dev/headless.js --script dev/verify.js`. It serves the site itself and prints the result global as JSON, so an A/B is a `diff` of two files. `--occt <dir>` answers the kernel request from a local `opencascade.js` install, which is what makes any of this work behind an egress policy that blocks the CDN. |
 | `pappus-hull-volume.js` | `node pappus-hull-volume.js` — the analytic volume of the lantern hull (10942.7983 mm³) by Pappus over the centripetal Catmull-Rom profile. Ground truth when OCCT's own volume figure is in doubt. |
 | `matrix_done.py` | `python dev/matrix_done.py "Row name" "note"` — ticks a row in FEATURE-MATRIX.html and recomputes the tallies from the table. |
@@ -34,6 +34,15 @@ and `verify.js` explains why at the top.
 This is what caught every regression in the boolean-batching and checkpoint work,
 and it is also what proved the lantern's geometry had *not* changed when OCCT's
 `VolumeProperties` claimed it had.
+
+## Clicking things for real
+
+`headless.js` runs a script *inside* the page, which is enough for geometry and
+for anything reachable through `window.__C`. It is not enough for the UI. Drive
+Playwright directly for that — a 1400×900 viewport gives a real canvas and real
+hit-tested clicks, and that is how the drawing dock was found to be sitting
+underneath the sheet (HANDOVER trap 35). A synthetic `element.click()` would
+have passed: it ignores what is on top.
 
 ## Measuring build time
 

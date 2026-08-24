@@ -36,8 +36,8 @@ looks like the deploy failed when it did not.
 
 **The job in progress** is closing the gap to SolidWorks and FreeCAD, working through
 `FEATURE-MATRIX.html` **cheapest first**. The matrix carries a token estimate per gap and
-`dev/matrix_done.py` ticks a row and recomputes the tallies. As of this writing: **39 ✅ ·
-3 ◐ · 33 ✗**, 36 gaps, ~7.47M tokens. The working agreement has been: one item at a time,
+`dev/matrix_done.py` ticks a row and recomputes the tallies. As of this writing: **40 ✅ ·
+3 ◐ · 32 ✗**, 35 gaps, ~7.42M tokens. The working agreement has been: one item at a time,
 each committed, deployed and reported before starting the next.
 
 The three scope rows — Mirror, linear pattern, circular pattern — were taken together as one
@@ -47,7 +47,6 @@ Next up, in cost order (IGES was on this list at 40k and was explicitly dropped)
 
 | | |
 |---|---|
-| 50k | Centre marks & centrelines (drawings) |
 | 60k | Distance & angle mates |
 | 70k | Shell · Interference detection |
 | 80k | Draft · Bill of materials |
@@ -455,6 +454,45 @@ having a visible pane to paste into.
     Taking a key from another command clears that command's override — and if the key taken was
     that command's own default, it is set to "no key" instead, otherwise it would silently take
     the key straight back.
+
+34. **Find a circle in SPACE, not on the sheet.** A centre mark needs a hole's centre and a
+    centreline needs its axis, and by the time the model reaches a drawing there are no
+    circles left to ask: the solid is tessellated, so a Ø6 bore is a ring of chords, and
+    `buildView` projects those chords. Two things went wrong before this landed, and both are
+    worth keeping.
+
+    * **Chaining the PROJECTED chords finds nothing at all.** A through hole's near and far
+      rims are different edges in space that land on exactly the same circle on the sheet
+      (trap 20 says so about the drawn result; it is just as true of the graph underneath).
+      Every 2D vertex therefore has four edges at it rather than two, no walk can continue
+      past one, and not a single loop closes. Measured, not guessed: the degree histogram of
+      a plate with two holes was `{4: 76}` projected and `{2: 144, 3: 8}` in space. Dedupe
+      the projected segments and it works — `chainLoops` does, and says why.
+    * **A projected circle is only ever a circle you are looking straight at.** That is
+      enough for a centre mark and useless for a centreline: a shaft seen from the side has
+      no circle on the sheet at all. The first version took "the line midway between two
+      parallel edges" instead, which on a shaft picks the two rim projections — and those
+      are square across the axis, so the centreline came out at ninety degrees to the truth.
+      The fix was to move the whole detector into 3D: `modelCircles` fits plane-and-circle to
+      each closed 3D loop, `axisGroups` merges circles that share an axis, and `buildView`
+      then asks one question per view — is this axis pointing at the eye or across it.
+      Face-on within 12° draws a cross, edge-on within 12° draws a line, and anything between
+      is an ellipse on the sheet and gets neither, which is what a draughtsman would do.
+
+    The polygon exclusion is a real limit, not a bug: a regular polygon's corners lie exactly
+    on a circle, so the fit alone cannot tell a hexagonal boss from a bore. `CIRC_MIN_SIDES`
+    is 12 and the manual states the consequence. `fitCircle3D` also refuses a non-planar loop,
+    which is what keeps the round-in-plan top of a fillet from collecting a centre mark.
+
+35. **The drawing dock was underneath the sheet, and had been all along.** `.sheet-wrap` is
+    `z-index:14` so a drawing covers the 3D canvas outright (trap 20), and it is `inset:0`, so
+    it covers the whole viewport. `.dock` is `z-index:10`. Every button in the drawing's
+    floating dock — Dimension included — was therefore sitting under a sheet of paper and
+    could not be clicked at all, and the right-click menu was the only way to reach a drawing
+    command. Nothing looked wrong, which is why it survived: the dock is drawn, it lights up
+    on hover-free redraws, it simply never receives a click. `#dock-draw{z-index:15}` fixes it.
+    Found by a real hit-tested click in the headless harness, not by reading the CSS — it
+    is exactly the class of thing that only a real click finds.
 
 ## Biggest thing still missing
 

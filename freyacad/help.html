@@ -918,6 +918,30 @@ paper: change the sheet scale to 1:2 and the drawing halves while the dimension 
 when you delete it. Drag a dimension to move it where you want it; click one and press
 <kbd>Delete</kbd> to remove it. <kbd>Esc</kbd> puts the tool down, and again leaves the
 drawing.</p>
+<h3 id="cmarks">Centre marks and centrelines</h3>
+<p>A hole on a drawing is expected to say where its centre is. <b>Centre mark</b> arms the
+tool; click the rim of any hole or round boss and it gets the standard cross, with chain-dashed
+arms reaching just past the rim. <b>Centreline</b> does the same job for round things seen from
+the side: click along a hole or a shaft and you get the chain-dashed line down its axis.</p>
+<p><b>Mark every circle and axis</b> does the whole of the selected view in one go, which is
+usually what you want. Run it again after changing the model and it only adds what is missing.</p>
+<p>Both know what they are looking at because freyacad finds the model's circular edges <em>in
+space</em>, not on the paper. That is what lets one command serve both cases: a hole whose axis
+points at you is a circle on the sheet and takes a cross, and the same hole in the view next
+door is edge-on and takes a line down its middle — correctly along the hole, not across it.
+A hole at some angle in between draws as an ellipse and gets neither, which is what a
+draughtsman would do too.</p>
+<p>Marks belong to their view exactly as dimensions do: they travel with it when you drag it,
+they stay the same size on the paper when you change the sheet scale, and they go when the view
+goes. Click one and press <kbd>Delete</kbd> to remove it. <kbd>Esc</kbd> puts the tool down.</p>
+<div class="note">
+  <span class="tag">Worth knowing</span>
+  <p>A round edge is recognised by being round, so a <b>regular polygon of twelve or more
+  sides</b> would be taken for a circle. Six- and eight-sided bosses are safely below that line.
+  And a mark records where the centre was when you placed it — move the hole in the model and
+  the mark stays put, the same as a dimension does. Re-run <b>Mark every circle and axis</b>
+  after a change of that kind.</p>
+</div>
 <h3>The drawing tools</h3>
 <p>Right-click anywhere on the sheet for every drawing command, grouped the same way the
 sketch menu is, with the same floating dock along the top of the sheet. <b>Customise tools…</b>
@@ -936,10 +960,10 @@ Whatever it lands on is printed in the title block.</p>
 opens in Illustrator, Inkscape, or a laser cutter's software.</p>
 <div class="note">
   <span class="tag">Where this stops</span>
-  <p>Dimensions are linear — between two corners. There are no diameter or radius dimensions,
-  no angular ones, and no notes, centre marks, centrelines, balloons or bill of materials.
-  There are no section, detail or auxiliary views. The drawing is not saved with the part: the
-  sheet lasts as long as the tab, so print or export it before you close.</p>
+  <p>Dimensions are linear — between two corners. There are no diameter or radius dimensions
+  and no angular ones, and no notes, balloons or bill of materials. There are no section, detail
+  or auxiliary views. The drawing is not saved with the part: the sheet lasts as long as the
+  tab, so print or export it before you close.</p>
 </div>
 
 <h2 id="keys">Keyboard</h2>
@@ -974,8 +998,9 @@ three view keys — can all be changed under <b>Customise tools… → Keyboard<
   <li><b>Desktop only</b>, by design.</li>
   <li><b>No autosave.</b> The tab is the only copy until you save.</li>
   <li><b>Drawings are linear dimensions only.</b> No diameter, radius or angular dimensions,
-      no notes or centre marks, no section or detail views, and the sheet isn't saved with the
-      part. See <a href="#drawings">Drawings</a>.</li>
+      no notes or balloons, no section or detail views, and the sheet isn't saved with the
+      part. Centre marks and centrelines <em>are</em> there — see
+      <a href="#cmarks">Centre marks and centrelines</a>.</li>
   <li><b>A pattern can't copy a fillet or chamfer.</b> Bosses, cuts, revolves and imports
       can each be mirrored or patterned on their own; edge treatments can't, because they
       reshape the body rather than add a shape to it. Put the pattern before the fillet.</li>
