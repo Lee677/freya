@@ -1636,6 +1636,20 @@ const CSG = (function(){
   }
   /* '0' means the user hid the demo and wants it to stay hidden; a key names the
      model to bring back. '1' is what older builds stored for "show it". */
+  /* Picking a demo remembers it, but an assembly demo is about a minute of
+     kernel work and an OCCT build blocks the page — so remembering the jet
+     engine meant every launch froze on it. Startup only ever auto-loads a part;
+     a remembered assembly is named in the hint instead, and the choice is left
+     in storage so nothing the user picked is thrown away. */
+  function bootDemo(){
+    const k=demoPref(), d=k&&demoByKey(k);
+    if(d && d.kind!=='part'){
+      loadDemo('pillow');
+      setHint('The '+d.label.toLowerCase()+' is not loaded automatically — it takes about a minute to build. Pick it from the Demo menu when you want it.');
+      return;
+    }
+    loadDemo(k);
+  }
   function demoPref(){ try{
       const v=localStorage.getItem('fcad-demo');
       if(v==='0')return null;
@@ -7877,7 +7891,11 @@ const CSG = (function(){
     // and nothing that drives a 3D view belongs above a sheet of paper
     ['btn-normal','btn-iso','btn-fitall','btn-proj','btn-export','btn-step']
       .forEach(id=>{ const el=$(id); if(el)el.style.display=isD?'none':''; });
-    $('btn-demo-tgl').style.display=(isA||isD)?'none':'';
+    /* The Demo control used to be a part-only toggle, so it hid itself in an
+       assembly or a drawing. It is a menu of documents now — one of them an
+       assembly — and hiding it left no way back out of an assembly demo. It
+       stays visible in every mode. */
+    $('btn-demo-tgl').style.display='';
     $('sheet-wrap').classList.toggle('on',isD);
     $('dock-draw').style.display=isD?'flex':'none';
     if(isD)refreshDrawDock();
@@ -9272,7 +9290,7 @@ const CSG = (function(){
   };
 
   function boot(){
-    if(demoPref()){ loadDemo(); }
+    if(demoPref()){ bootDemo(); }
     else { rebuild(); setHint('Click a plane to start a sketch · right-click for all commands'); }
     updateHelp(); refreshDemoTgl();
   }
