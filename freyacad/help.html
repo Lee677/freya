@@ -276,6 +276,15 @@ whatever you're mid-way through, and again to leave the sketch.</p>
     keeping everything drawn; <kbd>Backspace</kbd> steps back one point.</td></tr>
   <tr><td><b>Rectangle</b></td><td><kbd>2</kbd></td><td>Click one corner, then the
     opposite one.</td></tr>
+  <tr><td><b>Centre rectangle</b></td><td></td><td>Click the middle, then a corner. The
+    rectangle grows symmetrically about that first point.</td></tr>
+  <tr><td><b>3-point rectangle</b></td><td></td><td>Click the two ends of one edge, then
+    a third point to set the width. Unlike the two above it can sit at <em>any angle</em>,
+    so use it when the rectangle isn't square to the sketch axes.</td></tr>
+  <tr><td><b>3-point centre rect</b></td><td></td><td>Click the middle, then a point that
+    fixes the direction and half-length of one axis, then a third for the half-width.
+    Angled, and centred on the first click.</td></tr>
+
   <tr><td><b>Circle</b></td><td><kbd>3</kbd></td><td>Click the centre, then a point on
     the radius.</td></tr>
   <tr><td><b>Polygon</b></td><td><kbd>4</kbd></td><td>Regular n-sided polygon: centre
@@ -302,6 +311,14 @@ whatever you're mid-way through, and again to leave the sketch.</p>
   <p>Extrude and revolve need a <b>closed</b> loop. A chain of lines that doesn't return
   to its start has no inside, so there's nothing to give thickness to. If a feature refuses
   to build, an open profile is the first thing to check.</p>
+</div>
+
+<div class="note">
+  <span class="tag">Worth knowing</span>
+  <p>The two axis-aligned rectangles are stored as rectangles, so they keep the width and
+  height dimensions and the two corner handles. The two three-point ones can sit at any
+  angle, which that storage can't express, so they commit as a closed four-sided profile —
+  every corner is draggable, and you dimension the sides like any other lines.</p>
 </div>
 
 <h2 id="snap">Snapping</h2>

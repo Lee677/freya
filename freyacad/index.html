@@ -615,7 +615,10 @@ if(!window.THREE){
     <div class="dock" id="dock" style="display:none">
       <button data-tool="select" title="Pointer — rotate the view, drag points and dimensions, click a line and press Delete">Pointer</button>
       <button data-tool="line" class="active">Line</button>
-      <button data-tool="rect">Rect</button>
+      <button data-tool="rect" title="Rectangle: click two opposite corners">Rect</button>
+      <button data-tool="crect" title="Centre rectangle: click the middle, then a corner">&#9647; Ctr rect</button>
+      <button data-tool="rect3" title="3-point rectangle: click along one edge, then set the width — any angle">&#9671; 3-pt rect</button>
+      <button data-tool="crect3" title="3-point centre rectangle: click the middle, then a half-axis, then the width">&#9670; 3-pt ctr</button>
       <button data-tool="circle">Circle</button>
       <button data-tool="polygon">Polygon</button>
       <button data-tool="spline" title="Spline: click through the points it should pass through; click the first point to close">&#8767; Spline</button>
@@ -3299,6 +3302,7 @@ const CSG = (function(){
   let draftPts=[];
   let draftStage=0;        
   let draftA=null;
+  let draftB=null;         // second click of a three-point rectangle
   let snapOn=false, snapSize=1;
   let polygonSides=6;
   const raycaster=new THREE.Raycaster(); raycaster.params.Line={threshold:0.25};
@@ -3683,7 +3687,32 @@ const CSG = (function(){
     return best;
   }
   const snapMarkGroup=new THREE.Group(); scene.add(snapMarkGroup);
-  const DRAW_TOOLS=['line','cline','rect','circle','polygon','spline'];
+  const DRAW_TOOLS=['line','cline','rect','crect','rect3','crect3','circle','polygon','spline'];
+
+  /* The four rectangle variants SolidWorks has. The two axis-aligned ones stay
+     `rect` entities — two stored corners, so width/height dims and the corner
+     handles keep working. The two three-point ones can sit at any angle, which
+     `rect` cannot express, so they commit as a closed four-point poly. */
+  const perp=v=>({x:-v.y,y:v.x});
+  const sub=(a,b)=>({x:a.x-b.x,y:a.y-b.y});
+  const dot2=(a,b)=>a.x*b.x+a.y*b.y;
+  function rect3Corners(p1,p2,p3){          // p1→p2 is one edge, p3 sets the width
+    const d=sub(p2,p1), L=Math.hypot(d.x,d.y);
+    if(L<1e-6)return null;
+    const n=perp({x:d.x/L,y:d.y/L}), w=dot2(sub(p3,p2),n);
+    if(Math.abs(w)<1e-6)return null;
+    return [{x:p1.x,y:p1.y},{x:p2.x,y:p2.y},
+            {x:p2.x+n.x*w,y:p2.y+n.y*w},{x:p1.x+n.x*w,y:p1.y+n.y*w}];
+  }
+  function crect3Corners(c,p2,p3){          // c is the centre, c→p2 a half-axis
+    const a=sub(p2,c), L=Math.hypot(a.x,a.y);
+    if(L<1e-6)return null;
+    const n=perp({x:a.x/L,y:a.y/L}), h=dot2(sub(p3,c),n);
+    if(Math.abs(h)<1e-6)return null;
+    const nh={x:n.x*h,y:n.y*h};
+    return [{x:c.x-a.x-nh.x,y:c.y-a.y-nh.y},{x:c.x+a.x-nh.x,y:c.y+a.y-nh.y},
+            {x:c.x+a.x+nh.x,y:c.y+a.y+nh.y},{x:c.x-a.x+nh.x,y:c.y-a.y+nh.y}];
+  }
   function drawSnapMark(){
     while(snapMarkGroup.children.length){const c=snapMarkGroup.children.pop();if(c.geometry)c.geometry.dispose();}
     if(mode!=='sketch'||!editing||!editing.frame)return;
@@ -4074,6 +4103,24 @@ const CSG = (function(){
     } else if(tool==='rect' && draftStage===1 && draftA && cur){
       const a=draftA,b=cur;const L=[{x:a.x,y:a.y},{x:b.x,y:a.y},{x:b.x,y:b.y},{x:a.x,y:b.y},{x:a.x,y:a.y}];
       const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(L.map(p=>worldFromSketch(fr,p.x,p.y))),lineMat);ln.renderOrder=5;draftGroup.add(ln);
+    } else if(tool==='crect' && draftStage===1 && draftA && cur){
+      const dx=Math.abs(cur.x-draftA.x), dy=Math.abs(cur.y-draftA.y), a=draftA;
+      const L=[{x:a.x-dx,y:a.y-dy},{x:a.x+dx,y:a.y-dy},{x:a.x+dx,y:a.y+dy},{x:a.x-dx,y:a.y+dy},{x:a.x-dx,y:a.y-dy}];
+      const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(L.map(p=>worldFromSketch(fr,p.x,p.y))),lineMat);ln.renderOrder=5;draftGroup.add(ln);vmesh(draftA,0xEA4335);
+    } else if((tool==='rect3'||tool==='crect3') && draftA && cur){
+      if(draftStage===1){          // still setting the edge, or the half-axis
+        const b=new THREE.Line(new THREE.BufferGeometry().setFromPoints(
+          [worldFromSketch(fr,draftA.x,draftA.y),worldFromSketch(fr,cur.x,cur.y)]),dashMat);
+        b.computeLineDistances();b.renderOrder=5;draftGroup.add(b);
+        if(tool==='crect3')vmesh(draftA,0xEA4335);
+      } else if(draftStage===2 && draftB){
+        const cor=(tool==='rect3'?rect3Corners:crect3Corners)(draftA,draftB,cur);
+        if(cor){
+          const L=cor.concat([cor[0]]);
+          const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(L.map(p=>worldFromSketch(fr,p.x,p.y))),lineMat);ln.renderOrder=5;draftGroup.add(ln);
+        }
+        if(tool==='crect3')vmesh(draftA,0xEA4335);
+      }
     } else if(tool==='circle' && draftStage===1 && draftA && cur){
       const r=Math.hypot(cur.x-draftA.x,cur.y-draftA.y),L=[];for(let i=0;i<=48;i++){const ang=i/48*Math.PI*2;L.push({x:draftA.x+r*Math.cos(ang),y:draftA.y+r*Math.sin(ang)});}
       const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(L.map(p=>worldFromSketch(fr,p.x,p.y))),lineMat);ln.renderOrder=5;draftGroup.add(ln);vmesh(draftA,0xEA4335);
@@ -4094,7 +4141,8 @@ const CSG = (function(){
     }
     // one snapshot per committed shape; the in-progress polyline is covered by
     // Backspace/Escape, so only the commit is worth an undo step
-    if(tool==='rect'||tool==='circle'||tool==='polygon'){ if(draftStage===1)pushUndo('draw '+tool); }
+    if(tool==='rect'||tool==='crect'||tool==='circle'||tool==='polygon'){ if(draftStage===1)pushUndo('draw '+tool); }
+    else if(tool==='rect3'||tool==='crect3'){ if(draftStage===2)pushUndo('draw '+tool); }
     else if(tool==='erase'||tool==='horiz'||tool==='vert'||tool==='paral'||tool==='equal'||tool==='coinc'){ pushUndo(tool); }
     if(tool==='line'||tool==='cline'||tool==='spline'){
       if(chain&&chain.ei!=null){
@@ -4143,6 +4191,31 @@ const CSG = (function(){
         if(draftA._g)storeGround({ent:ei,idx:0},draftA._g);
         if(p._g)storeGround({ent:ei,idx:2},p._g);
         dynMirrorAdd(ei); flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
+    } else if(tool==='crect'){
+      /* centre rectangle: the first click is the middle, the second a corner */
+      if(draftStage===0){draftA=p;draftStage=1;}
+      else {
+        const dx=Math.abs(p.x-draftA.x), dy=Math.abs(p.y-draftA.y);
+        if(dx>1e-4&&dy>1e-4){
+          const ent={type:'rect',a:{x:draftA.x-dx,y:draftA.y-dy},b:{x:draftA.x+dx,y:draftA.y+dy}};
+          editing.entities.push(ent);
+          dynMirrorAdd(editing.entities.length-1); flashLoop(editing,ent);
+        }
+        draftStage=0;draftA=null;rebuild();
+      }
+    } else if(tool==='rect3'||tool==='crect3'){
+      /* three clicks: an edge (or a half-axis from the centre), then the width */
+      if(draftStage===0){draftA=p;draftStage=1;}
+      else if(draftStage===1){draftB=p;draftStage=2;}
+      else {
+        const cor=(tool==='rect3'?rect3Corners:crect3Corners)(draftA,draftB,p);
+        if(cor){
+          const ent={type:'poly',closed:true,pts:cor};
+          editing.entities.push(ent);
+          dynMirrorAdd(editing.entities.length-1); flashLoop(editing,ent);
+        }
+        draftStage=0;draftA=null;draftB=null;rebuild();
+      }
     } else if(tool==='circle'){
       if(draftStage===0){draftA=p;draftStage=1;} else {const r=Math.hypot(p.x-draftA.x,p.y-draftA.y);if(r>1e-3){const ent={type:'circle',c:{x:draftA.x,y:draftA.y},r};editing.entities.push(ent);
         const ei=editing.entities.length-1;
@@ -5750,6 +5823,9 @@ const CSG = (function(){
     move:_sw(`<path d="M12 3v18M3 12h18" stroke="${_B}"/><path d="M9.8 5.2 12 3l2.2 2.2M9.8 18.8 12 21l2.2-2.2M5.2 9.8 3 12l2.2 2.2M18.8 9.8 21 12l-2.2 2.2" stroke="${_Y}"/>`),
     select:_sw(`<path d="M6.5 3.2 6.5 17.8 10.3 14.2 12.9 20 15.5 18.8 12.9 13.1 17.9 12.7z" stroke="#fff"/>`),
     rect:_sw(`<rect x="4" y="6" width="16" height="12" stroke="${_B}"/><circle cx="4" cy="6" r="1.7" fill="${_Y}"/><circle cx="20" cy="18" r="1.7" fill="${_Y}"/>`),
+    crect:_sw(`<rect x="4" y="6" width="16" height="12" stroke="${_B}"/><path d="M12 9.5v5M9.5 12h5" stroke="${_B}" opacity=".55"/><circle cx="12" cy="12" r="1.7" fill="${_Y}"/><circle cx="20" cy="18" r="1.7" fill="${_Y}"/>`),
+    rect3:_sw(`<path d="M3 15.4 8.6 5l12.4 6.6L15.4 22z" stroke="${_B}"/><circle cx="3" cy="15.4" r="1.7" fill="${_Y}"/><circle cx="8.6" cy="5" r="1.7" fill="${_Y}"/><circle cx="21" cy="11.6" r="1.7" fill="${_Y}"/>`),
+    crect3:_sw(`<path d="M3 15.4 8.6 5l12.4 6.6L15.4 22z" stroke="${_B}"/><path d="M10.4 11.9v3M8.9 13.4h3" stroke="${_B}" opacity=".55"/><circle cx="12" cy="13.5" r="1.7" fill="${_Y}"/><circle cx="21" cy="11.6" r="1.7" fill="${_Y}"/>`),
     circle:_sw(`<circle cx="12" cy="12" r="8" stroke="${_B}"/><circle cx="12" cy="12" r="1.6" fill="${_Y}"/>`),
     polygon:_sw(`<path d="M12 4.5l6.5 3.75v7.5L12 19.5l-6.5-3.75v-7.5z" stroke="${_B}"/><circle cx="12" cy="12" r="1.6" fill="${_Y}"/>`),
     spline:_sw(`<path d="M3.5 17.5c3.5 0 3.5-11 8.5-11s5 11 8.5 11" stroke="${_B}"/><circle cx="3.5" cy="17.5" r="1.6" fill="${_Y}"/><circle cx="12" cy="6.5" r="1.6" fill="${_Y}"/><circle cx="20.5" cy="17.5" r="1.6" fill="${_Y}"/>`),
@@ -6870,7 +6946,7 @@ const CSG = (function(){
       pushUndo('dynamic mirror off'); editing.dynMirror=null; tool='select';
       rebuild(); drawSketchSel(); dockSel(); setHint('Dynamic mirror off'); return;
     }
-    tool=t;chain=null;mirrorAxis=null;hoverSeg=null;draftStage=0;draftA=null;
+    tool=t;chain=null;mirrorAxis=null;hoverSeg=null;draftStage=0;draftA=null;draftB=null;
     paralRef=null;equalRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;
     hoverSnap=null;dimPick=null;drawSnapMark();redrawHandles();dockSel();};
   const CMD={
@@ -6880,6 +6956,9 @@ const CSG = (function(){
     select   :{ic:'move',   label:'Pointer',    tool:'select'},
     line     :{ic:'line',   label:'Line',       tool:'line'},
     rect     :{ic:'rect',   label:'Rectangle',  tool:'rect'},
+    crect    :{ic:'crect',  label:'Centre rectangle', tool:'crect'},
+    rect3    :{ic:'rect3',  label:'3-point rectangle', tool:'rect3'},
+    crect3   :{ic:'crect3', label:'3-point centre rect', tool:'crect3'},
     circle   :{ic:'circle', label:'Circle',     tool:'circle'},
     polygon  :{ic:'polygon',label:'Polygon',    tool:'polygon'},
     spline   :{ic:'spline', label:'Spline',     tool:'spline'},
@@ -6903,7 +6982,7 @@ const CSG = (function(){
   };
   const DEFAULT_LAYOUT=[
     {name:'Sketch',          ids:['finish','finishext','cancel']},
-    {name:'Sketch entities', ids:['select','line','cline','rect','circle','polygon','spline','mirror','dynmirror','dim','erase','corners']},
+    {name:'Sketch entities', ids:['select','line','cline','rect','crect','rect3','crect3','circle','polygon','spline','mirror','dynmirror','dim','erase','corners']},
     {name:'Relations',       ids:['horiz','vert','paral','equal','coinc']},
     {name:'View',            ids:['normal','iso','fit','proj']}
   ];
