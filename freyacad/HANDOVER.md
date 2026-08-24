@@ -34,7 +34,14 @@ looks like the deploy failed when it did not.
 
 ## Where to pick up
 
-**The job in progress** is closing the gap to SolidWorks and FreeCAD, working through
+**The direction changed on 24 August 2026: freyacad is becoming a 3D-printing tool.**
+Read `PRINT-PIVOT.md` — it is the product plan of record (trimmed default toolset,
+/grid integration, printing demos, the export pipeline). The feature matrix below is
+still the engine roadmap and continues underneath, but the pivot work takes priority.
+Already done from that plan: the Print/Export dialog with 3MF export, the unit fix
+(trap 39) and print orientation.
+
+**The engine job** remains closing the gap to SolidWorks and FreeCAD, working through
 `FEATURE-MATRIX.html` **cheapest first**. The matrix carries a token estimate per gap and
 `dev/matrix_done.py` ticks a row and recomputes the tallies. As of this writing: **42 ✅ ·
 3 ◐ · 31 ✗**, 34 gaps, ~7.27M tokens (the 42nd row is tablet support, added done).
@@ -576,6 +583,23 @@ having a visible pane to paste into.
     `buildPartShapes`' borrowed state is never written. Note `dev/verify-live.js` ends by
     clearing the document, which empties the autosave — run it in a browser you care about
     and your net is gone until the next edit.
+
+39. **The STL export was 10× the modelled size, and nobody had a policy.** `exportSTL`
+    multiplied every coordinate by 10 while `exportSTEP` wrote raw — the same part left
+    the app 140 mm in one file and 14 mm in the other, and the manual's "stored in mm"
+    claim matched only the STEP path. Fixed with the print pivot: a dimension of 14 is
+    14 mm in every export (3MF, STL, STEP), and the mesh exports map the app's Y-up world
+    to the printer's Z-up as (x,y,z)→(x,−z,y) — determinant +1, so triangle winding
+    survives — which lands a Top-plane part flat on the slicer bed. The demo models are
+    still modelled small (a 25 mm lantern); remodelling them at true size is on the pivot
+    plan. If a user reports an old print at 10× size, this is why.
+
+    The 3MF exporter that shipped alongside writes core 3MF (an OPC zip built by a ~40-line
+    stored-entry writer, one welded-vertex object per body, `unit="millimeter"`). The weld
+    is what makes a slicer see a closed shell rather than triangle soup, and the sliver
+    guard (a!==b&&b!==c&&c!==a after welding) is what keeps a degenerate triangle from
+    poisoning it. Verified headlessly: a 20×10×5 box comes out as exactly 8 vertices and
+    12 triangles at z 0..5.
 
 ## Biggest thing still missing
 

@@ -701,8 +701,7 @@ if(!window.THREE){
     <div class="tb-gap"></div>
     <div class="tb-group">
       <button id="btn-save" class="btn-ghost">Save</button>
-      <button id="btn-export" disabled>Export STL</button>
-      <button id="btn-step" disabled title="True B-rep STEP straight from the Open CASCADE kernel — real planes, cylinders and blend surfaces, not tessellated facets.">Export STEP</button>
+      <button id="btn-print" disabled title="Print or export — 3MF and STL for your slicer, true STEP for other CAD">Print / Export</button>
     </div>
   </header>
 
@@ -7646,25 +7645,171 @@ const CSG = (function(){
   }
 
   /* ============================ STL EXPORT & SAVE / LOAD ============================ */
-  function exportSTL(){
-    const srcGeoms = docMode==='asm' ? asmTransformedGeoms() : resultGeoms;
-    if(!srcGeoms.length)return;
-    const MM=10;let s='solid sketchcad\n';
-    const a=new THREE.Vector3(),b=new THREE.Vector3(),c=new THREE.Vector3(),ab=new THREE.Vector3(),cb=new THREE.Vector3(),nn=new THREE.Vector3();
+  /* Print exports are HONEST MILLIMETRES and PRINT-ORIENTED, and both facts
+     are new. The old STL multiplied by 10 while STEP exported raw — the same
+     part left the app 140 mm in one file and 14 mm in the other. A dimension
+     of 14 is 14 mm in every file now. And the app's Y-up world maps to the
+     printer's Z-up as (x,y,z) -> (x,-z,y) — determinant +1, so triangle
+     winding survives — which is what lands a part built on the Top plane flat
+     on the slicer's bed, the right way up. */
+  const printPt=(x,y,z)=>[x,-z,y];
+  function buildSTL(srcGeoms){
+    let s='solid freyacad\n';
+    const V=i=>i, a=new THREE.Vector3(),b=new THREE.Vector3(),c=new THREE.Vector3(),
+      ab=new THREE.Vector3(),cb=new THREE.Vector3(),nn=new THREE.Vector3();
     for(const g0 of srcGeoms){const g=g0.index?g0.toNonIndexed():g0;const p=g.attributes.position;
       for(let i=0;i<p.count;i+=3){
-        a.set(p.getX(i),p.getY(i),p.getZ(i)).multiplyScalar(MM);
-        b.set(p.getX(i+1),p.getY(i+1),p.getZ(i+1)).multiplyScalar(MM);
-        c.set(p.getX(i+2),p.getY(i+2),p.getZ(i+2)).multiplyScalar(MM);
+        a.set(...printPt(p.getX(i),p.getY(i),p.getZ(i)));
+        b.set(...printPt(p.getX(i+1),p.getY(i+1),p.getZ(i+1)));
+        c.set(...printPt(p.getX(i+2),p.getY(i+2),p.getZ(i+2)));
         cb.subVectors(c,b);ab.subVectors(a,b);nn.crossVectors(cb,ab).normalize();
         s+=`facet normal ${nn.x} ${nn.y} ${nn.z}\nouter loop\nvertex ${a.x} ${a.y} ${a.z}\nvertex ${b.x} ${b.y} ${b.z}\nvertex ${c.x} ${c.y} ${c.z}\nendloop\nendfacet\n`;
       }
     }
-    s+='endsolid sketchcad\n';
-    const blob=new Blob([s],{type:'model/stl'}),url=URL.createObjectURL(blob),a2=document.createElement('a');
-    a2.href=url;a2.download='sketch-cad.stl';document.body.appendChild(a2);a2.click();a2.remove();URL.revokeObjectURL(url);
+    return s+'endsolid freyacad\n';
+  }
+  function exportSTL(){
+    const srcGeoms = docMode==='asm' ? asmTransformedGeoms() : resultGeoms;
+    if(!srcGeoms.length)return;
+    downloadBlob(new Blob([buildSTL(srcGeoms)],{type:'model/stl'}),'freyacad.stl');
+  }
+  function downloadBlob(blob,name){
+    const url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();
+    URL.revokeObjectURL(url);
   }
   
+  /* ---- 3MF ------------------------------------------------------------------
+     The slicers' own format — Bambu Studio, Orca and Prusa all prefer it, and
+     unlike STL it CARRIES ITS UNITS, so "it imported at the wrong size" ends
+     here. This writes core 3MF: an OPC zip (stored, no compression — the
+     slicer inflates it anyway) holding one model XML with welded vertices and
+     one object per body. Same print mapping as the STL. */
+  function crc32(u8){
+    let t=crc32.T;
+    if(!t){ t=crc32.T=new Int32Array(256);
+      for(let n=0;n<256;n++){ let c=n;
+        for(let k=0;k<8;k++)c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1);
+        t[n]=c; } }
+    let c=-1;
+    for(let i=0;i<u8.length;i++)c=t[(c^u8[i])&0xFF]^(c>>>8);
+    return (c^-1)>>>0;
+  }
+  function zipStore(files){          // files: [{name, data:Uint8Array}]
+    const enc=new TextEncoder(), parts=[], central=[];
+    let off=0;
+    for(const f of files){
+      const name=enc.encode(f.name), crc=crc32(f.data), n=f.data.length;
+      const loc=new DataView(new ArrayBuffer(30));
+      loc.setUint32(0,0x04034b50,true); loc.setUint16(4,20,true);
+      loc.setUint32(14,crc,true); loc.setUint32(18,n,true); loc.setUint32(22,n,true);
+      loc.setUint16(26,name.length,true);
+      parts.push(new Uint8Array(loc.buffer),name,f.data);
+      const cen=new DataView(new ArrayBuffer(46));
+      cen.setUint32(0,0x02014b50,true); cen.setUint16(4,20,true); cen.setUint16(6,20,true);
+      cen.setUint32(16,crc,true); cen.setUint32(20,n,true); cen.setUint32(24,n,true);
+      cen.setUint16(28,name.length,true); cen.setUint32(42,off,true);
+      central.push(new Uint8Array(cen.buffer),name);
+      off+=30+name.length+n;
+    }
+    let cLen=0; for(const c of central)cLen+=c.length;
+    const end=new DataView(new ArrayBuffer(22));
+    end.setUint32(0,0x06054b50,true);
+    end.setUint16(8,files.length,true); end.setUint16(10,files.length,true);
+    end.setUint32(12,cLen,true); end.setUint32(16,off,true);
+    const out=new Uint8Array(off+cLen+22);
+    let p=0; for(const x of parts){out.set(x,p);p+=x.length;}
+    for(const x of central){out.set(x,p);p+=x.length;}
+    out.set(new Uint8Array(end.buffer),p);
+    return out;
+  }
+  function build3MF(srcGeoms){
+    const enc=new TextEncoder();
+    let objs='', items='';
+    srcGeoms.forEach((g0,gi)=>{
+      const g=g0.index?g0.toNonIndexed():g0, p=g.attributes.position;
+      /* Weld so the slicer sees a closed shell, not triangle soup. 1e-4 mm is
+         far under any print tolerance and exactly the mesh's own weld. */
+      const key=new Map(), vs=[], tris=[];
+      const idOf=(x,y,z)=>{
+        const m=printPt(x,y,z);
+        const k=Math.round(m[0]*1e4)+':'+Math.round(m[1]*1e4)+':'+Math.round(m[2]*1e4);
+        let id=key.get(k);
+        if(id===undefined){ id=vs.length; vs.push(m); key.set(k,id); }
+        return id;
+      };
+      for(let i=0;i<p.count;i+=3){
+        const a=idOf(p.getX(i),p.getY(i),p.getZ(i)),
+              b=idOf(p.getX(i+1),p.getY(i+1),p.getZ(i+1)),
+              c=idOf(p.getX(i+2),p.getY(i+2),p.getZ(i+2));
+        if(a!==b&&b!==c&&c!==a)tris.push([a,b,c]);   // a welded sliver is no triangle
+      }
+      if(!tris.length)return;
+      const V=vs.map(v=>`<vertex x="${+v[0].toFixed(4)}" y="${+v[1].toFixed(4)}" z="${+v[2].toFixed(4)}"/>`).join('');
+      const T=tris.map(t=>`<triangle v1="${t[0]}" v2="${t[1]}" v3="${t[2]}"/>`).join('');
+      objs+=`<object id="${gi+1}" type="model"><mesh><vertices>${V}</vertices><triangles>${T}</triangles></mesh></object>`;
+      items+=`<item objectid="${gi+1}"/>`;
+    });
+    const model='<?xml version="1.0" encoding="UTF-8"?>'+
+      '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">'+
+      '<resources>'+objs+'</resources><build>'+items+'</build></model>';
+    return zipStore([
+      {name:'[Content_Types].xml',data:enc.encode('<?xml version="1.0" encoding="UTF-8"?>'+
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+        '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>')},
+      {name:'_rels/.rels',data:enc.encode('<?xml version="1.0" encoding="UTF-8"?>'+
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+        '<Relationship Target="/3D/3dmodel.model" Id="rel0" '+
+        'Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')},
+      {name:'3D/3dmodel.model',data:enc.encode(model)}
+    ]);
+  }
+  function export3MF(){
+    const srcGeoms = docMode==='asm' ? asmTransformedGeoms() : resultGeoms;
+    if(!srcGeoms.length)return;
+    downloadBlob(new Blob([build3MF(srcGeoms)],{type:'model/3mf'}),'freyacad.3mf');
+  }
+
+  /* ---- the Print / Export dialog --------------------------------------------
+     One button, three files, in the order a printer-owner wants them. The
+     Bambu link is best-effort and says so: a slicer's url-scheme can only
+     FETCH A HOSTED URL (that is how MakerWorld uses it), so a purely
+     client-side file cannot be handed over directly — the honest v1 is
+     download-then-launch. A hosted "shelf" is in PRINT-PIVOT.md. */
+  function openPrintDialog(){
+    const ov=document.createElement('div');
+    ov.style.cssText='position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center';
+    const hasBrep=docMode==='asm'?asmShapes.flat().length>0:resultShapes.length>0;
+    ov.innerHTML=`<div style="background:var(--panel);border:1px solid var(--g-blue);border-radius:12px;
+        padding:18px 20px;width:min(460px,92vw);box-shadow:0 24px 60px -12px rgba(0,0,0,.9)">
+      <h3 style="margin:0 0 4px;font-size:15px">Print / Export</h3>
+      <p style="margin:0 0 14px;font-size:11.5px;color:var(--muted)">Dimensions are millimetres in every file, and the part lands print-side down.</p>
+      <div class="pr-row" data-x="3mf"><b>3MF</b><span>for your slicer — Bambu Studio, Orca, Prusa. Carries its units.</span><button class="btn-primary">Download</button></div>
+      <div class="pr-row" data-x="stl"><b>STL</b><span>the universal mesh — anything can open it</span><button class="btn-ghost">Download</button></div>
+      <div class="pr-row" data-x="step"><b>STEP</b><span>true CAD solids from the kernel, for editing elsewhere</span><button class="btn-ghost"${hasBrep?'':' disabled'}>Download</button></div>
+      <div style="border-top:1px solid var(--line);margin-top:12px;padding-top:10px;display:flex;align-items:center;gap:10px">
+        <button id="pr-bambu" class="btn-ghost">Open Bambu Studio</button>
+        <span style="font-size:10.5px;color:var(--muted);line-height:1.35">launches the app if installed — then drop the downloaded file in</span>
+      </div></div>`;
+    ov.querySelectorAll('.pr-row').forEach(r=>{
+      r.style.cssText='display:flex;align-items:center;gap:10px;padding:7px 0';
+      r.querySelector('b').style.cssText='width:44px;flex:0 0 auto';
+      r.querySelector('span').style.cssText='flex:1;font-size:11px;color:var(--muted)';
+      const b=r.querySelector('button');
+      b.addEventListener('click',()=>{ ({'3mf':export3MF,'stl':exportSTL,'step':exportSTEP})[r.dataset.x](); });
+    });
+    ov.querySelector('#pr-bambu').addEventListener('click',()=>{
+      try{ location.href='bambustudio://open'; }catch(_){ }
+      setHint('If nothing opened, Bambu Studio is not installed — the downloaded file opens in any slicer');
+    });
+    const close=()=>{ov.remove();document.removeEventListener('keydown',esc,true);};
+    function esc(e){ if(e.key==='Escape'){e.stopPropagation();close();} }
+    document.addEventListener('keydown',esc,true);
+    ov.addEventListener('pointerdown',e=>{ if(e.target===ov)close(); });
+    document.body.appendChild(ov);
+  }
+
   function saveProject() {
       const isA = docMode==='asm';
       const data = isA ? JSON.stringify({type:'assembly',components:asm.components,mates:asm.mates})
@@ -7786,8 +7931,7 @@ const CSG = (function(){
   function refreshStatus(){ /* status bar removed */ }
   function refreshExport(){
     const has=docMode==='asm'?asm.components.length>0:null;
-    $('btn-export').disabled=docMode==='asm'?!has:resultGeoms.length===0;
-    $('btn-step').disabled=docMode==='asm'?!has:resultShapes.length===0;
+    $('btn-print').disabled=docMode==='asm'?!has:resultGeoms.length===0;
   }
   function exportSTEP(){
     try{
@@ -9377,7 +9521,7 @@ const CSG = (function(){
        clutter. */
     $('tb-draw-main').style.display='none';
     // and nothing that drives a 3D view belongs above a sheet of paper
-    ['btn-normal','btn-iso','btn-fitall','btn-proj','btn-export','btn-step']
+    ['btn-normal','btn-iso','btn-fitall','btn-proj','btn-print']
       .forEach(id=>{ const el=$(id); if(el)el.style.display=isD?'none':''; });
     /* The Demo control used to be a part-only toggle, so it hid itself in an
        assembly or a drawing. It is a menu of documents now — one of them an
@@ -10626,7 +10770,7 @@ const CSG = (function(){
       b.innerHTML=icHTML(b.id==='dock-rect'?rectKind:t)+'<span class="lbl"'+(b.id==='dock-rect'?' id="rk-lbl"':'')+'>'+
         (dockLbl[t]||t)+'</span>'+(b.id==='dock-rect'?'<span class="rk-caret" id="rk-caret">&#9662;</span>':''); });
     syncRectBtn();
-    const tb={'btn-save':'save','btn-load':'open','btn-export':'stl','btn-step':'step','btn-new':'newpart','btn-new-asm':'asm','btn-insert':'add','btn-finish':'finish','btn-cancel-sk':'cancel'};
+    const tb={'btn-save':'save','btn-load':'open','btn-print':'export','btn-new':'newpart','btn-new-asm':'asm','btn-insert':'add','btn-finish':'finish','btn-cancel-sk':'cancel'};
     for(const id in tb){ const b=$(id); b.innerHTML=icHTML(tb[id])+'<span class="lbl">'+b.textContent+'</span>'; }
     $('btn-add').innerHTML=icHTML('add')+'<span class="lbl">Add feature</span>';
   })();
@@ -10935,8 +11079,7 @@ const CSG = (function(){
     reader.readAsText(file);
     e.target.value='';
   });
-  $('btn-export').addEventListener('click',exportSTL);
-  $('btn-step').addEventListener('click',exportSTEP);
+  $('btn-print').addEventListener('click',openPrintDialog);
   $('btn-save').addEventListener('click',saveProject);
   $('btn-load').addEventListener('click',()=>$('file-load').click());
   $('file-load').addEventListener('change', e => { if(e.target.files.length) loadProject(e.target.files[0]); });
@@ -11199,6 +11342,7 @@ const CSG = (function(){
     solveMates, mateError, removeMate, endWorld, mateLabel, openCompProps,
     editSketch, finishSketch, defineState, lockedEnts, sketchHandles, updateTraceLabels,
     get editing(){ return editing; }, get tool(){ return tool; }, set tool(v){ tool=v; dockSel(); },
+    build3MF, buildSTL, openPrintDialog,
     snap(){ renderer.render(scene, camera); return renderer.domElement.toDataURL('image/jpeg', 0.85); }
   };
 
