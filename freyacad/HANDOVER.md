@@ -718,6 +718,16 @@ having a visible pane to paste into.
     `position:static` in its inline style. The fix is on `#tr-cv`; this note is so the
     NEXT dialog with a canvas doesn't rediscover it.
 
+47. **The scene fog was tuned for 15 mm parts, and real-size parts sat inside it.** The
+    depth-cueing fog (`Fog(0x0a0e12, 55, 150)`) fades to opaque background by 150 units
+    from the camera. A Gridfinity bin is 42 mm a cell, so fitting one puts the camera 90+
+    units out and the far half of the bin was fogged; a baseplate went fully dark — the
+    owner read it as broken lighting ("the bins are in the dark"), and the first debugging
+    instinct (sewn-face normals) was wrong: winding, normals and materials all measured
+    clean. The render loop now scales fog.near/far with the camera-to-target distance
+    (floors at the old 55/150, so small parts render pixel-identical). Any future "model
+    goes dark at distance" report: check the fog before the lighting.
+
 ## Biggest thing still missing
 
 **A real constraint solver *for sketches*.** Dimensions are applied one at a time, so
