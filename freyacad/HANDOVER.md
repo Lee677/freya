@@ -664,6 +664,19 @@ having a visible pane to paste into.
       `window.V` explicitly. Anything else that ever loads a global from /grid must
       remember the app's shorthand namespace sits over it.
 
+42. **`document.lastModified` lies on Cloudflare Pages.** It is only the deploy time when
+    the server sends a `Last-Modified` header; Pages sends `ETag` instead, and the spec's
+    fallback is THE CURRENT TIME — so the boot panel's version line and the corner build
+    tag showed every visitor their own tab-load moment and called it the build. Both now
+    read `build-stamp.json` ({t, commit}, gitignored), written at deploy time by
+    `tools/build-stamp.mjs` — wired into both `npm run deploy` and the GitHub workflow —
+    with lastModified kept only as the local-dev fallback (python http.server really does
+    send the file's mtime). Two wrinkles: the stamp fetch resolves in tens of ms but the
+    boot row it writes into appears at the 260 ms tick, so the value is held and painted
+    on each tick (`paintStamp`, same cure as the line-count row); and the boot overlay
+    removes itself on any window `error` event, so a headless test that aborts the kernel
+    fetch kills the overlay before the row exists — serve the kernel mirror in tests.
+
 ## Biggest thing still missing
 
 **A real constraint solver *for sketches*.** Dimensions are applied one at a time, so
