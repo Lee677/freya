@@ -33,6 +33,14 @@
  *               A*L exactly, so this is a real check and not a smoke test
  *   sweeptube   a profile with a HOLE in it, swept: the hole is swept too
  *   sweepcut    a bore swept straight through a block
+ *   gfbin       a 1x1x3 Gridfinity bin with a stacking lip — the OCCT port of
+ *               /grid's generator. The pinned volume was cross-checked against
+ *               /grid's own manifold build (13026.889): +0.032%, which is the
+ *               chord-vs-true-arc difference and nothing else.
+ *   gfbincut    the same bin with a Ø8 hole cut through its floor — removes
+ *               299.08 = π·16·(4.75+1.2), which proves the bin is a real
+ *               B-rep you can cut, i.e. the whole reason it was ported
+ *   gfplate     a 2x2 baseplate (grid reference 5349.897, Δ−0.043%)
  *
  * The three scoped cases are all prisms and cylinders, so their volumes are
  * known exactly rather than only comparable — each carries its analytic `want`
@@ -165,6 +173,15 @@ window.__VER = 'running';
     out.push(F({id:ID(),type:'sweep',name:'swc',sketchId:pr.id,pathId:p.id,
                 operation:'cut',merge:true}));
     return out; }
+  function mkGfBin(){ id=0; return [F({id:ID(),type:'gfbin',name:'bin',
+    nx:1,ny:1,uz:3,lip:true,heightMode:'add',wall:1.2,floorT:1.2,
+    divX:1,divY:1,scoop:0,solid:false,merge:true})]; }
+  function mkGfBinCut(){ id=0; const out=mkGfBin();
+    const s2=sk([circ({x:0,y:0},4)]); out.push(s2);
+    out.push(F({id:ID(),type:'cut',name:'hole',sketchId:s2.id,depth:20,through:true,flip:true}));
+    return out; }
+  function mkGfPlate(){ id=0; return [F({id:ID(),type:'gfplate',name:'plate',
+    nx:2,ny:2,floor:0,merge:true})]; }
   function mkFilletRun(){ id=0; const out=[];
     const s1=sk([rect({x:-8,y:-5},{x:8,y:5})]); out.push(s1);
     out.push(F({id:ID(),type:'extrude',name:'a',sketchId:s1.id,depth:4,merge:true}));
@@ -227,7 +244,10 @@ window.__VER = 'running';
                       ['sweep',mkSweep(),376.991],
                       ['sweepbend',mkSweepBend(),439.823],
                       ['sweeptube',mkSweepTube(),424.115],
-                      ['sweepcut',mkSweepCut(),7497.345]]){
+                      ['sweepcut',mkSweepCut(),7497.345],
+                      ['gfbin',mkGfBin(),13031.074],
+                      ['gfbincut',mkGfBinCut(),12731.995],
+                      ['gfplate',mkGfPlate(),5347.616]]){
     const r=run(l); res[n]=r;
     if(want!=null){ r.want=want;
       r.ok = r.vol!=null && Math.abs(r.vol-want)<0.01 && r.bodies===1 && !(r.errs||[]).length; }

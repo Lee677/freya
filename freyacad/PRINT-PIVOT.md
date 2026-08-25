@@ -172,12 +172,12 @@ Fusion-for-makers"). ~50k of copy and shuffling, zero risk.
 |---|---|---|---|
 | 1 | Print/Export dialog, 3MF, unit fix, Z-up | done | — |
 | 2 | Maker default toolset + first-run choice | 80k | — |
-| 3 | Gridfinity bin feature (B-rep) | 150k | ThruSections binding check |
+| 3 | Gridfinity bin + baseplate features (B-rep) | done | verified vs /grid ≤0.083% |
 | 4 | ESP32 case demo | 60k | owner's part measurements |
-| 5 | Photo-trace into sketch | 120k | — |
-| 6 | Bin + pocket demo | 40k | 3, 5 |
+| 5 | Photo-trace into sketch | done | /grid's vision.js, shared |
+| 6 | Bin + pocket demo | 40k | — |
 | 7 | iPad hands-on rounds | 100k+ | owner's device time |
-| 8 | Slicer shelf Worker (one-click Bambu) | 60k | owner ok with a worker |
+| 8 | Slicer shelf (Pages Function) | done* | *owner creates the KV namespace once |
 | 9 | Rebrand copy + landing | 50k | name decision |
 | — | LICENSE decision | 0k | owner |
 

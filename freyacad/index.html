@@ -749,12 +749,13 @@ if(!window.THREE){
     <button data-add="extrude" data-ic="extrude">Extrude boss</button>
     <button data-add="cut" data-ic="cut">Extrude cut</button>
     <button data-add="revolve" data-ic="revolve">Revolve boss</button>
+    <button data-add="rcut" data-ic="rcut">Revolve cut</button>
     <button data-add="sweep" data-ic="sweep">Swept boss</button>
     <button data-add="swcut" data-ic="swcut">Swept cut</button>
-    <button data-add="rcut" data-ic="rcut">Revolve cut</button>
+    <button data-add="gfbin" data-ic="gfbin">Gridfinity bin</button>
+    <button data-add="gfplate" data-ic="gfplate">Gridfinity baseplate</button>
     <button data-add="fillet" data-ic="fillet">Fillet</button>
     <button data-add="chamfer" data-ic="chamfer">Chamfer</button>
-    <div class="menu-sect">Transform</div>
     <button data-add="mirror" data-ic="mirror">Mirror</button>
     <button data-add="lpattern" data-ic="lpattern">Linear pattern</button>
     <button data-add="cpattern" data-ic="cpattern">Circular pattern</button>
@@ -2895,6 +2896,182 @@ const CSG = (function(){
     if(!solids.length) throw new Error('no contour selected');
     return OCK.unionOne(solids);
   };
+  OCK.commonAll = function(shape, tools){
+    if(!tools.length) return shape;
+    const oc = OC();
+    const s = runBop(new oc.BRepAlgoAPI_Common_1(), [shape], tools);
+    if(!s) throw new Error('boolean intersection failed');
+    return s;
+  };
+  /* ---- Gridfinity ----------------------------------------------------------
+     The generator maths ported from /grid's core.js — same spec numbers, same
+     profile steps, same warnings — rebuilt as OCCT B-rep instead of manifold
+     meshes, because a mesh bin cannot be filleted or cleanly cut (trap 9) and
+     CUTTING THE BIN is the whole point of having it in the tree. Corners are
+     true arcs (one cubic Bezier per 90°, max radial error ~2.7e-4·r) where
+     /grid tessellates 8 chords, so volumes agree to a fraction of a percent
+     and bounding boxes agree exactly — which is how this is verified against
+     /grid's own generator. Magnet-free by design, same as /grid.
+
+     Everything is a loft between concentric rounded rectangles, so the whole
+     engine is one wire builder plus BRepOffsetAPI_ThruSections. Bins build
+     centred on the origin, sitting on the Top plane. */
+  const GFS={PITCH:42, UNIT_H:7, BASE_H:4.75, T1:0.8, T2:1.8, T3:2.15,
+             BIN_GAP:0.5, BIN_R:3.75, SOCKET_CLEAR:0.25};
+  const GF_FRAME={o:new THREE.Vector3(0,0,0), u:new THREE.Vector3(1,0,0),
+                  v:new THREE.Vector3(0,0,-1), n:new THREE.Vector3(0,1,0)};
+  const BEZK=0.5522847498307936;
+  /* Rounded rectangle as segs for wireFromSegs, CCW, centred on (cx,cy). */
+  function gfRectSegs(w,d,r,cx,cy){
+    cx=cx||0; cy=cy||0;
+    r=Math.max(0.02, Math.min(r, Math.min(w,d)/2 - 1e-4));
+    const hx=w/2-r, hy=d/2-r, k=BEZK*r, out=[];
+    const P=(x,y)=>({x:cx+x,y:cy+y});
+    const arc=(ax,ay,a0)=>{           // 90° CCW arc about corner centre (ax,ay)
+      const c=Math.cos(a0), sn=Math.sin(a0);
+      const p0=P(ax+r*c, ay+r*sn), p3=P(ax-r*sn, ay+r*c);
+      out.push({bez:[p0, P(ax+r*c-k*sn, ay+r*sn+k*c),
+                     P(ax-r*sn+k*c, ay+r*c+k*sn), p3]});
+    };
+    out.push({line:[P(hx+r,-hy),P(hx+r,hy)]});   arc(hx,hy,0);
+    out.push({line:[P(hx,hy+r),P(-hx,hy+r)]});   arc(-hx,hy,Math.PI/2);
+    out.push({line:[P(-hx-r,hy),P(-hx-r,-hy)]}); arc(-hx,-hy,Math.PI);
+    out.push({line:[P(-hx,-hy-r),P(hx,-hy-r)]}); arc(hx,-hy,-Math.PI/2);
+    return out;
+  }
+  /* Loft of rounded rects: steps [{z,off}] exactly as /grid writes them. */
+  function gfLoft(w,d,r,steps,cx,cy){
+    const oc=OC();
+    const ts=new oc.BRepOffsetAPI_ThruSections(true,true,1e-6);
+    ts.CheckCompatibility(false);      // rings are built structurally identical
+    for(const st of steps)
+      ts.AddWire(OCK.wireFromSegs(gfRectSegs(w+2*st.off,d+2*st.off,r+st.off,cx,cy),GF_FRAME,st.z));
+    ts.Build(new oc.Message_ProgressRange_1());
+    const shp=ts.Shape();
+    if(shp.IsNull())throw new Error('gridfinity loft failed');
+    return shp;
+  }
+  function gfPrism(segs,z0,h){         // straight-sided solid from a closed profile
+    const oc=OC();
+    const w=OCK.wireFromSegs(segs,GF_FRAME,z0);
+    const f=new oc.BRepBuilderAPI_MakeFace_15(w,true).Face();
+    return new oc.BRepPrimAPI_MakePrism_1(f,new oc.gp_Vec_4(0,h,0),false,true).Shape();
+  }
+  const gfBox=(w,d,h,cx,cy,z0)=>gfPrism([
+    {line:[{x:cx-w/2,y:cy-d/2},{x:cx+w/2,y:cy-d/2}]},
+    {line:[{x:cx+w/2,y:cy-d/2},{x:cx+w/2,y:cy+d/2}]},
+    {line:[{x:cx+w/2,y:cy+d/2},{x:cx-w/2,y:cy+d/2}]},
+    {line:[{x:cx-w/2,y:cy+d/2},{x:cx-w/2,y:cy-d/2}]}],z0,h);
+  function gfFoot(cx,cy){
+    const S=GFS;
+    return gfLoft(S.PITCH-S.BIN_GAP,S.PITCH-S.BIN_GAP,S.BIN_R,[
+      {z:0,off:-(S.T1+S.T3)},{z:S.T1,off:-S.T3},
+      {z:S.T1+S.T2,off:-S.T3},{z:S.BASE_H,off:0}],cx,cy);
+  }
+  OCK.gfBin=function(o){
+    const S=GFS;
+    const nx=Math.max(1,o.nx|0), ny=Math.max(1,o.ny|0), uz=Math.max(1,o.uz|0);
+    const W=nx*S.PITCH-S.BIN_GAP, D=ny*S.PITCH-S.BIN_GAP;
+    const lip=!!o.lip, lipH=S.BASE_H;
+    const H=(o.heightMode==='total'||!lip)?uz*S.UNIT_H:uz*S.UNIT_H+lipH;
+    const wall=Math.max(0.4,o.wall==null?1.2:o.wall);
+    const floorT=Math.max(0.4,o.floorT==null?1.2:o.floorT);
+    const floorZ=S.BASE_H+floorT;
+    // body + one foot per cell, one batched fuse
+    const feet=[];
+    for(let i=0;i<nx;i++)for(let j=0;j<ny;j++)
+      feet.push(gfFoot(-nx*S.PITCH/2+S.PITCH*(i+0.5), -ny*S.PITCH/2+S.PITCH*(j+0.5)));
+    let solid=OCK.fuseAll([gfLoft(W,D,S.BIN_R,[{z:S.BASE_H,off:0},{z:H,off:0}])],feet)[0];
+    const hollow=!o.solid;
+    let lipBottomZ=H, topZ=H;
+    if(lip){
+      const c=S.SOCKET_CLEAR, dTaper=S.T3-c, dLand=dTaper+S.T2, dBot=dLand+S.T1;
+      const innerOff=-wall, lipOff=-(S.T1+S.T3)+c;
+      const flare=Math.max(0,innerOff-lipOff);
+      const steps=[{z:H+3,off:3},{z:H,off:0},{z:H-dTaper,off:-dTaper},
+                   {z:H-dLand,off:-dTaper},{z:H-dBot,off:lipOff}];
+      /* The relief under the lip only belongs on a hollow bin — on a solid one
+         it would scoop out the whole top surface (/grid trap 3). */
+      if(hollow){
+        if(flare>1e-6)steps.push({z:H-dBot-flare,off:innerOff});
+        else if(innerOff<lipOff)steps.push({z:H-dBot,off:innerOff});
+      }
+      lipBottomZ=steps[steps.length-1].z; topZ=H-dBot;
+      solid=OCK.cutAll(solid,[gfLoft(W,D,S.BIN_R,steps)]);
+    }
+    const cavTop=lip?lipBottomZ:H+2;
+    const cavW=W-2*wall, cavD=D-2*wall, cavR=Math.max(0.4,S.BIN_R-wall);
+    if(hollow){
+      const divX=Math.max(1,o.divX|0||1), divY=Math.max(1,o.divY|0||1);
+      const divT=Math.max(0.4,o.divT||wall);
+      solid=OCK.cutAll(solid,[gfLoft(cavW,cavD,cavR,[{z:floorZ,off:0},{z:cavTop+0.001,off:0}])]);
+      const divTop=lip?Math.min(cavTop,H-S.BASE_H-0.6):H;
+      const bars=[];
+      for(let i=1;i<divX;i++)bars.push(gfBox(divT,cavD+1,divTop-floorZ,-cavW/2+cavW*i/divX,0,floorZ));
+      for(let j=1;j<divY;j++)bars.push(gfBox(cavW+1,divT,divTop-floorZ,0,-cavD/2+cavD*j/divY,floorZ));
+      if(bars.length){
+        const shell=gfLoft(cavW,cavD,cavR,[{z:floorZ,off:0},{z:divTop,off:0}]);
+        const barsU=bars.length>1?OCK.fuseAll([bars[0]],bars.slice(1))[0]:bars[0];
+        solid=OCK.fuseAll([solid],[OCK.commonAll(shell,[barsU])])[0];
+      }
+      const sc=Math.max(0,o.scoop||0);
+      if(sc>0.2){
+        /* The finger scoop: the wedge left when a quarter-cylinder is taken
+           out of a square bar along the front of each compartment. Built as a
+           2D profile (two lines and one arc) extruded along X. */
+        const fills=[];
+        const len=cavW+2;
+        for(let j=0;j<divY;j++){
+          const y0=-cavD/2+cavD*j/divY+(j?divT/2:0);
+          const k=BEZK*sc;
+          const segs=[
+            {line:[{x:-len/2,y:0},{x:len/2,y:0}]},
+            {line:[{x:len/2,y:0},{x:len/2,y:sc}]},
+            {line:[{x:len/2,y:sc},{x:-len/2,y:sc}]},
+            {line:[{x:-len/2,y:sc},{x:-len/2,y:0}]}];
+          const bar=gfPrism(segs.map(sg=>({line:[{x:sg.line[0].x,y:y0+sg.line[0].y},
+                                                 {x:sg.line[1].x,y:y0+sg.line[1].y}]})),floorZ,sc);
+          /* the quarter-cylinder along X, as a profile prism on a YZ frame */
+          const cylFrame={o:new THREE.Vector3(-len/2,0,0),
+                          u:new THREE.Vector3(0,0,-1), v:new THREE.Vector3(0,1,0),
+                          n:new THREE.Vector3(1,0,0)};
+          const cy=y0+sc, cz=floorZ+sc, kk=BEZK*sc;
+          const oc2=OC();
+          const circ=[
+            {bez:[{x:cy-sc,y:cz},{x:cy-sc,y:cz-kk},{x:cy-kk,y:cz-sc},{x:cy,y:cz-sc}]},
+            {bez:[{x:cy,y:cz-sc},{x:cy+kk,y:cz-sc},{x:cy+sc,y:cz-kk},{x:cy+sc,y:cz}]},
+            {bez:[{x:cy+sc,y:cz},{x:cy+sc,y:cz+kk},{x:cy+kk,y:cz+sc},{x:cy,y:cz+sc}]},
+            {bez:[{x:cy,y:cz+sc},{x:cy-kk,y:cz+sc},{x:cy-sc,y:cz+kk},{x:cy-sc,y:cz}]}];
+          const cw=OCK.wireFromSegs(circ,cylFrame,0);
+          const cf=new oc2.BRepBuilderAPI_MakeFace_15(cw,true).Face();
+          const cyl=new oc2.BRepPrimAPI_MakePrism_1(cf,new oc2.gp_Vec_4(len,0,0),false,true).Shape();
+          fills.push(OCK.cutAll(bar,[cyl]));
+        }
+        const shell2=gfLoft(cavW,cavD,cavR,[{z:floorZ,off:0},{z:cavTop,off:0}]);
+        const fillsU=fills.length>1?OCK.fuseAll([fills[0]],fills.slice(1))[0]:fills[0];
+        solid=OCK.fuseAll([solid],[OCK.commonAll(shell2,[fillsU])])[0];
+      }
+    }
+    return solid;
+  };
+  OCK.gfPlate=function(o){
+    const S=GFS;
+    const nx=Math.max(1,o.nx|0), ny=Math.max(1,o.ny|0);
+    const floor=Math.max(0,o.floor||0);
+    const zTop=floor+S.BASE_H;
+    const W=nx*S.PITCH, D=ny*S.PITCH;
+    let plate=gfBox(W,D,zTop,0,0,0);
+    const sockets=[];
+    for(let i=0;i<nx;i++)for(let j=0;j<ny;j++){
+      const cx=-W/2+S.PITCH*(i+0.5), cy=-D/2+S.PITCH*(j+0.5);
+      const c=S.SOCKET_CLEAR, over=4, base=zTop-S.BASE_H;
+      sockets.push(gfLoft(S.PITCH-S.BIN_GAP+2*c,S.PITCH-S.BIN_GAP+2*c,S.BIN_R+c,[
+        {z:base-over,off:-(S.T1+S.T3)},{z:base,off:-(S.T1+S.T3)},
+        {z:base+S.T1,off:-S.T3},{z:base+S.T1+S.T2,off:-S.T3},
+        {z:zTop,off:0},{z:zTop+over,off:0}],cx,cy));
+    }
+    return OCK.cutAll(plate,sockets);
+  };
   OCK.transformed = function(s, setup){
     const oc = OC();
     const t = new oc.gp_Trsf_1();
@@ -3725,7 +3902,7 @@ const CSG = (function(){
   /* Only a feature that contributes a shape can be copied. The fillet is the
      interesting exclusion: it rounds edges of the body rather than adding
      anything, so there is no tool to hand a pattern. */
-  const SCOPEABLE={extrude:1,cut:1,revolve:1,sweep:1,import:1,mirror:1,lpattern:1,cpattern:1};
+  const SCOPEABLE={extrude:1,cut:1,revolve:1,sweep:1,gfbin:1,gfplate:1,import:1,mirror:1,lpattern:1,cpattern:1};
   const isScoped=f=>Array.isArray(f.scope)&&f.scope.length>0;
   function scopeCands(f){
     const i=features.findIndex(x=>x.id===f.id);
@@ -3831,6 +4008,13 @@ const CSG = (function(){
         pendOp('cut',shp,f);
       }
       else if(f.merge && resultShapes.length) pendOp('merge',shp,f);
+      else { flushPending(); resultShapes.push(shp); }
+      return;
+    }
+    if(f.type==='gfbin'||f.type==='gfplate'){
+      const shp=f.type==='gfbin'?OCK.gfBin(f):OCK.gfPlate(f);
+      noteTool(f,'merge',shp);
+      if(f.merge && resultShapes.length) pendOp('merge',shp,f);
       else { flushPending(); resultShapes.push(shp); }
       return;
     }
@@ -6925,6 +7109,11 @@ const CSG = (function(){
     /* The path defaults to the sketch BELOW the profile, because that is the
        order they get drawn in: path first, then the profile on a plane that
        crosses it. It is one control away from wrong either way. */
+    if(type==='gfbin')return {id:nextId(),type:'gfbin',name:'Bin'+cnt('gfbin'),
+      nx:1,ny:1,uz:3,lip:true,heightMode:'add',wall:1.2,floorT:1.2,
+      divX:1,divY:1,scoop:0,solid:false,merge:true,suppressed:false};
+    if(type==='gfplate')return {id:nextId(),type:'gfplate',name:'Baseplate'+cnt('gfplate'),
+      nx:2,ny:2,floor:0,merge:true,suppressed:false};
     if(type==='sweep'||type==='swcut')return {id:nextId(),type:'sweep',
       name:(type==='sweep'?'Sweep':'SweepCut')+cnt('sweep'),
       sketchId:sid, pathId:prevSketchId(sid),
@@ -6992,6 +7181,9 @@ const CSG = (function(){
     'face-sketch':_sw(`<rect x="4" y="4" width="16" height="16" stroke="${_B}" opacity=".55"/><path d="M9 15 16 8l1.8 1.8-7 7-3 1.2z" stroke="${_Y}"/>`),
     extrude:_sw(`<path d="M5 17l7 3.2 7-3.2-7-3.2z" stroke="${_B}"/><path d="M5 17v-6.5l7 3.2 7-3.2V17" stroke="${_B}" opacity=".6"/><path d="M12 13.7V7.5" stroke="${_B}" opacity=".6"/><path d="M12 8V2.5M9.5 5 12 2.5 14.5 5" stroke="${_Y}"/>`),
     cut:_sw(`<path d="M4 21v-8h16v8z" stroke="${_B}"/><path d="M9 13h6v4H9z" stroke="${_Y}"/><path d="M12 3v6M9.5 6.5 12 9l2.5-2.5" stroke="${_Y}"/>`),
+    trace:_sw(`<rect x="3" y="4.5" width="18" height="15" rx="1.5" stroke="${_B}"/><circle cx="8" cy="9" r="1.6" fill="${_B}"/><path d="M4 17l4.5-4 3 2.5L16 11l4.5 4.5" stroke="${_B}"/><path d="M9.5 20.5q4-2.5 7-1t4-2" stroke="${_Y}" stroke-dasharray="2.6 1.6"/>`),
+    gfbin:_sw(`<rect x="3" y="8" width="18" height="12" rx="2" stroke="${_B}"/><path d="M3 12h18M12 8v12" stroke="${_B}" opacity=".5"/><path d="M5.5 8V5.6q0-1.1 1.1-1.1h10.8q1.1 0 1.1 1.1V8" stroke="${_Y}"/>`),
+    gfplate:_sw(`<rect x="2.6" y="6" width="18.8" height="12" rx="1.5" stroke="${_B}"/><rect x="5" y="8.4" width="6" height="7.2" rx="1.6" stroke="${_Y}"/><rect x="13" y="8.4" width="6" height="7.2" rx="1.6" stroke="${_Y}"/>`),
     sweep:_sw(`<path d="M3.5 19c0-7 5.5-8.5 8.5-8.5s8.5-1.5 8.5-8" stroke="${_Y}" stroke-dasharray="3.4 2"/><rect x="1.6" y="15.6" width="6.4" height="6.4" rx="1" stroke="${_B}"/><rect x="16.8" y="1.6" width="6.4" height="6.4" rx="1" stroke="${_B}" opacity=".55"/>`),
     swcut:_sw(`<path d="M3.5 19c0-7 5.5-8.5 8.5-8.5s8.5-1.5 8.5-8" stroke="${_R}" stroke-dasharray="3.4 2"/><rect x="1.6" y="15.6" width="6.4" height="6.4" rx="1" stroke="${_B}"/><path d="M17.2 2.2 22.8 7.8M22.8 2.2 17.2 7.8" stroke="${_R}"/>`),
     revolve:_sw(`<path d="M5 3v18" stroke="${_B}" stroke-dasharray="4.5 2 1.2 2"/><path d="M9 6.5c6 0 10 2.2 10 5.5s-4 5.5-10 5.5z" stroke="${_B}"/><path d="M8 3.5c5 .2 8.6 1 10.2 2.4M15.5 6.5l2.7-.6-.5-2.7" stroke="${_Y}"/>`),
@@ -7392,6 +7584,34 @@ const CSG = (function(){
         .concat(features.filter(x=>x.type==='daxis').map(a=>({l:a.name,v:'ax:'+a.id})));
       add(fieldSeg('Axis',axOpts,f.axis,v=>{f.axis=v;rerun();}));
       add(fieldNumber('Angle',f.angle,5,1,360,'deg',v=>{f.angle=Math.min(360,v);rerun();}));
+    } else if(f.type==='gfbin'){
+      add(fieldNumber('Width (42 mm units)',f.nx,1,1,8,'',v=>{f.nx=Math.max(1,Math.round(v));rerun();}));
+      add(fieldNumber('Depth (42 mm units)',f.ny,1,1,8,'',v=>{f.ny=Math.max(1,Math.round(v));rerun();}));
+      add(fieldNumber('Height (7 mm units)',f.uz,1,1,12,'',v=>{f.uz=Math.max(1,Math.round(v));rerun();}));
+      add(fieldCheck('Stacking lip',f.lip,v=>{f.lip=v;rerun();openProps(propsFeat);}));
+      if(f.lip)
+        add(fieldSeg('Height counts',[{l:'Body only',v:'add'},{l:'Lip included',v:'total'}],
+          f.heightMode||'add',v=>{f.heightMode=v;rerun();}));
+      add(fieldCheck('Solid block (no cavity)',f.solid,v=>{f.solid=v;rerun();openProps(propsFeat);}));
+      if(!f.solid){
+        add(fieldNumber('Wall',f.wall==null?1.2:f.wall,0.2,0.4,5,'units',v=>{f.wall=v;rerun();}));
+        add(fieldNumber('Floor above the foot',f.floorT==null?1.2:f.floorT,0.2,0.4,10,'units',v=>{f.floorT=v;rerun();}));
+        add(fieldNumber('Compartments across',f.divX||1,1,1,8,'',v=>{f.divX=Math.max(1,Math.round(v));rerun();}));
+        add(fieldNumber('Compartments deep',f.divY||1,1,1,8,'',v=>{f.divY=Math.max(1,Math.round(v));rerun();}));
+        add(fieldNumber('Finger scoop radius (0 = none)',f.scoop||0,1,0,20,'units',v=>{f.scoop=Math.max(0,v);rerun();}));
+      }
+      add(fieldCheck('Merge with body',f.merge,v=>{f.merge=v;rerun();}));
+      const ngf=document.createElement('div'); ngf.className='note';
+      ngf.textContent='Gridfinity: 42 mm pitch, 7 mm height units, stack pitch exactly 7 × units. Magnet-free by design. Sketch on the floor or a wall to cut pockets.';
+      add(ngf);
+    } else if(f.type==='gfplate'){
+      add(fieldNumber('Cells across',f.nx,1,1,12,'',v=>{f.nx=Math.max(1,Math.round(v));rerun();}));
+      add(fieldNumber('Cells deep',f.ny,1,1,12,'',v=>{f.ny=Math.max(1,Math.round(v));rerun();}));
+      add(fieldNumber('Extra floor under the sockets',f.floor||0,0.4,0,10,'units',v=>{f.floor=Math.max(0,v);rerun();}));
+      add(fieldCheck('Merge with body',f.merge,v=>{f.merge=v;rerun();}));
+      const ngp=document.createElement('div'); ngp.className='note';
+      ngp.textContent='A plain grid-sized plate. For drawer-fitting, skirts and tiles, /grid on freya.co.nz remains the specialist.';
+      add(ngp);
     } else if(f.type==='sweep'){
       add(fieldSeg('Operation',[{l:'Boss',v:'add'},{l:'Cut',v:'cut'}],f.operation,v=>{
         f.operation=v;
@@ -7771,6 +7991,107 @@ const CSG = (function(){
     downloadBlob(new Blob([build3MF(srcGeoms)],{type:'model/3mf'}),'freyacad.3mf');
   }
 
+  /* ---- Trace a photo --------------------------------------------------------
+     /grid's scan pipeline (vision.js — shared, lazy-loaded from /grid/js/) in
+     freyacad's sketch mode: photo in, Otsu segmentation, crack-following
+     contour, RDP simplify, and the outline lands in the OPEN SKETCH as a
+     closed polyline at a scale the user pins with one number. From there the
+     normal tools take over — cut it into a Gridfinity bin floor, or into
+     anything else. The /grid tab remains the specialist (colour segmentation,
+     brush fix-up, fit-check templates); this is the everyday 80%. */
+  let visionP=null;
+  function loadVision(){
+    if(window.V)return Promise.resolve();
+    if(visionP)return visionP;
+    visionP=new Promise((ok,bad)=>{
+      const sc=document.createElement('script');
+      sc.src='/grid/js/vision.js';
+      sc.onload=()=>window.V?ok():bad(new Error('vision.js loaded empty'));
+      sc.onerror=()=>bad(new Error('could not load the tracer — it lives at /grid/js/vision.js, which needs the site, not a file:// open'));
+      document.head.appendChild(sc);
+    });
+    return visionP;
+  }
+  function openTraceDialog(){
+    if(mode!=='sketch'||!editing){ setHint('Open a sketch first — the outline lands in it'); return; }
+    const ov=document.createElement('div');
+    ov.style.cssText='position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center';
+    ov.innerHTML=`<div style="background:var(--panel);border:1px solid var(--g-blue);border-radius:12px;
+        padding:16px 18px;width:min(560px,94vw);box-shadow:0 24px 60px -12px rgba(0,0,0,.9)">
+      <h3 style="margin:0 0 4px;font-size:15px">Trace a photo</h3>
+      <p style="margin:0 0 10px;font-size:11.5px;color:var(--muted)">Lay the object on a plain, contrasting background, shoot square-on, and the outline lands in this sketch. For scale, give one real measurement.</p>
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <button id="tr-pick" class="btn-primary">Choose photo…</button>
+        <label style="font-size:12px;color:var(--muted)">Longest side
+          <input id="tr-mm" type="number" value="100" min="1" step="1"
+            style="width:70px;margin-left:6px"> mm</label>
+        <label style="font-size:12px;color:var(--muted)"><input id="tr-inv" type="checkbox" style="margin-right:4px">dark background</label>
+      </div>
+      <canvas id="tr-cv" width="524" height="320" style="width:100%;background:var(--panel-2,#161b22);border:1px solid var(--line);border-radius:8px"></canvas>
+      <div id="tr-status" style="font-size:11.5px;color:var(--muted);margin:8px 0">No photo yet.</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button id="tr-cancel" class="btn-ghost">Cancel</button>
+        <button id="tr-insert" class="btn-primary" disabled>Insert outline</button>
+      </div></div>`;
+    document.body.appendChild(ov);
+    const $q=id=>ov.querySelector('#'+id);
+    const file=document.createElement('input'); file.type='file'; file.accept='image/*';
+    file.id='tr-file'; file.style.display='none'; ov.firstElementChild.appendChild(file);
+    let img=null, poly=null;      // working image + traced px outline
+    const status=t=>{$q('tr-status').textContent=t;};
+    function retrace(){
+      if(!img)return;
+      try{
+        const seg=V.segment(img,{clean:2,invert:$q('tr-inv').checked});
+        const raw=V.contour(seg.mask,img.width,img.height);
+        if(!raw||raw.length<8)throw new Error('no outline found');
+        poly=V.rdp(raw,1.4);
+        const cv=$q('tr-cv'),g=cv.getContext('2d');
+        const k=Math.min(cv.width/img.width,cv.height/img.height);
+        g.clearRect(0,0,cv.width,cv.height);
+        g.drawImage(img.canvas,0,0,img.width*k,img.height*k);
+        g.strokeStyle='#FBBC05';g.lineWidth=2;g.beginPath();
+        poly.forEach((p,i)=>i?g.lineTo(p[0]*k,p[1]*k):g.moveTo(p[0]*k,p[1]*k));
+        g.closePath();g.stroke();
+        status(poly.length+' points traced — check the yellow line hugs the object, then Insert');
+        $q('tr-insert').disabled=false;
+      }catch(e){ poly=null; $q('tr-insert').disabled=true;
+        status('Trace failed: '+(e.message||e)+' — try the other background setting or a plainer photo'); }
+    }
+    $q('tr-pick').addEventListener('click',()=>file.click());
+    $q('tr-inv').addEventListener('change',retrace);
+    file.addEventListener('change',async e=>{
+      const f=e.target.files[0]; file.value=''; if(!f)return;
+      status('Loading…');
+      try{
+        await loadVision();
+        const bm=await V.loadImage(f);
+        const r=V.plain(bm,1,1000);
+        const d=r.canvas.getContext('2d').getImageData(0,0,r.w,r.h);
+        img={canvas:r.canvas,width:r.w,height:r.h,data:d.data};
+        retrace();
+      }catch(err){ status(err.message||String(err)); }
+    });
+    const close=()=>ov.remove();
+    $q('tr-cancel').addEventListener('click',close);
+    ov.addEventListener('pointerdown',e=>{ if(e.target===ov)close(); });
+    $q('tr-insert').addEventListener('click',()=>{
+      if(!poly||!editing)return;
+      let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+      for(const p of poly){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);
+                           y0=Math.min(y0,p[1]);y1=Math.max(y1,p[1]);}
+      const mm=Math.max(1,+$q('tr-mm').value||100);
+      const sc=mm/Math.max(1e-6,Math.max(x1-x0,y1-y0));
+      const cx=(x0+x1)/2, cy=(y0+y1)/2;
+      /* image y runs down, sketch v runs up — flip, or every trace is mirrored */
+      const pts=poly.map(p=>({x:+((p[0]-cx)*sc).toFixed(3), y:+((cy-p[1])*sc).toFixed(3)}));
+      pushUndo('trace photo');
+      editing.entities.push({type:'poly',closed:true,pts:pts});
+      rebuild(); close();
+      setHint('Outline inserted at '+mm+' mm — drag it, dimension it, or cut it into a solid');
+    });
+  }
+
   /* ---- the Print / Export dialog --------------------------------------------
      One button, three files, in the order a printer-owner wants them. The
      Bambu link is best-effort and says so: a slicer's url-scheme can only
@@ -7789,8 +8110,8 @@ const CSG = (function(){
       <div class="pr-row" data-x="stl"><b>STL</b><span>the universal mesh — anything can open it</span><button class="btn-ghost">Download</button></div>
       <div class="pr-row" data-x="step"><b>STEP</b><span>true CAD solids from the kernel, for editing elsewhere</span><button class="btn-ghost"${hasBrep?'':' disabled'}>Download</button></div>
       <div style="border-top:1px solid var(--line);margin-top:12px;padding-top:10px;display:flex;align-items:center;gap:10px">
-        <button id="pr-bambu" class="btn-ghost">Open Bambu Studio</button>
-        <span style="font-size:10.5px;color:var(--muted);line-height:1.35">launches the app if installed — then drop the downloaded file in</span>
+        <button id="pr-bambu" class="btn-primary">Open in Bambu Studio</button>
+        <span id="pr-bambu-note" style="font-size:10.5px;color:var(--muted);line-height:1.35">sends this model to freya.co.nz for 10 minutes so Bambu&nbsp;Studio can fetch it</span>
       </div></div>`;
     ov.querySelectorAll('.pr-row').forEach(r=>{
       r.style.cssText='display:flex;align-items:center;gap:10px;padding:7px 0';
@@ -7799,9 +8120,35 @@ const CSG = (function(){
       const b=r.querySelector('button');
       b.addEventListener('click',()=>{ ({'3mf':export3MF,'stl':exportSTL,'step':exportSTEP})[r.dataset.x](); });
     });
-    ov.querySelector('#pr-bambu').addEventListener('click',()=>{
-      try{ location.href='bambustudio://open'; }catch(_){ }
-      setHint('If nothing opened, Bambu Studio is not installed — the downloaded file opens in any slicer');
+    /* One click, honestly labelled: the model is POSTed to the shelf (ten
+       minutes, unguessable id — functions/api/shelf.js) and Bambu Studio is
+       pointed at the resulting URL, which is the only hand-off its url-scheme
+       supports. No shelf — not deployed, offline, file:// — and this falls
+       back to plain download-then-launch, saying so. */
+    ov.querySelector('#pr-bambu').addEventListener('click',async ()=>{
+      const btn=ov.querySelector('#pr-bambu'), note=ov.querySelector('#pr-bambu-note');
+      const srcGeoms = docMode==='asm' ? asmTransformedGeoms() : resultGeoms;
+      if(!srcGeoms.length)return;
+      btn.disabled=true; note.textContent='uploading…';
+      let handed=false;
+      try{
+        const r=await fetch('/api/shelf',{method:'POST',
+          headers:{'Content-Type':'model/3mf'}, body:build3MF(srcGeoms)});
+        if(r.ok){
+          const j=await r.json();
+          if(j&&j.url){
+            location.href='bambustudio://open/?file='+encodeURIComponent(j.url);
+            handed=true;
+            note.textContent='handed to Bambu Studio — the copy on freya.co.nz vanishes in 10 minutes';
+          }
+        }
+      }catch(_){ }
+      if(!handed){
+        export3MF();
+        try{ location.href='bambustudio://open'; }catch(_){ }
+        note.textContent='the shelf isn’t reachable — downloaded the 3MF instead; drop it into the app';
+      }
+      btn.disabled=false;
     });
     const close=()=>{ov.remove();document.removeEventListener('keydown',esc,true);};
     function esc(e){ if(e.key==='Escape'){e.stopPropagation();close();} }
@@ -8407,6 +8754,8 @@ const CSG = (function(){
     f_rcut   :{ic:'rcut',   label:'Revolve cut', fn:()=>addFeature('rcut'),   need:'sketch'},
     f_sweep  :{ic:'sweep',  label:'Swept boss',  fn:()=>addFeature('sweep'),  need:'sketch'},
     f_swcut  :{ic:'swcut',  label:'Swept cut',   fn:()=>addFeature('swcut'),  need:'sketch'},
+    f_gfbin  :{ic:'gfbin',  label:'Gridfinity bin',      fn:()=>addFeature('gfbin')},
+    f_gfplate:{ic:'gfplate',label:'Gridfinity baseplate',fn:()=>addFeature('gfplate')},
     f_fillet :{ic:'fillet', label:'Fillet',      fn:()=>addFeature('fillet'), need:'solid'},
     f_chamfer:{ic:'chamfer',label:'Chamfer',     fn:()=>addFeature('chamfer'),need:'solid'},
     t_mirror :{ic:'mirror', label:'Mirror',      fn:()=>addFeature('mirror'), need:'solid'},
@@ -8418,8 +8767,7 @@ const CSG = (function(){
   const DEFAULT_MODEL_LAYOUT=[
     {name:'View',     ids:['normal','iso','fit','proj']},
     {name:'Sketch',   ids:['sk_top','sk_front','sk_right','sk_face']},
-    {name:'Features', ids:['f_extrude','f_cut','f_revolve','f_rcut','f_sweep','f_swcut','f_fillet','f_chamfer']},
-    {name:'Transform',ids:['t_mirror','t_lpat','t_cpat']},
+    {name:'Features', ids:['f_extrude','f_cut','f_revolve','f_rcut','f_sweep','f_swcut','f_gfbin','f_gfplate','f_fillet','f_chamfer','t_mirror','t_lpat','t_cpat']},
     {name:'Reference',ids:['r_plane','r_axis']}
   ];
   function openModelMenu(x,y){
@@ -8475,6 +8823,7 @@ const CSG = (function(){
     erase    :{ic:'erase',  label:'Erase',      tool:'erase'},
     corners  :{ic:'fillet', label:'Sketch corners…',fn:()=>{cornerUI=true;ensureSketchProps();
                  setHint('Corner treatment: round or bevel every corner of the sketch profile');}},
+    trace    :{ic:'trace',  label:'Trace a photo…',fn:()=>openTraceDialog()},
     horiz    :{ic:'horiz',  label:'Horizontal', tool:'horiz'},
     vert     :{ic:'vert',   label:'Vertical',   tool:'vert'},
     paral    :{ic:'paral',  label:'Parallel',   tool:'paral'},
@@ -8488,7 +8837,7 @@ const CSG = (function(){
   };
   const DEFAULT_LAYOUT=[
     {name:'Sketch',          ids:['finish','finishext','cancel']},
-    {name:'Sketch entities', ids:['select','line','cline','rect','crect','rect3','crect3','circle','polygon','spline','mirror','dynmirror','dim','erase','corners']},
+    {name:'Sketch entities', ids:['select','line','cline','rect','crect','rect3','crect3','circle','polygon','spline','mirror','dynmirror','dim','erase','corners','trace']},
     {name:'Relations',       ids:['horiz','vert','paral','equal','coinc']},
     {name:'View',            ids:['normal','iso','fit','proj']}
   ];
@@ -8516,9 +8865,20 @@ const CSG = (function(){
       }
     }catch(_){ }
     m.layout=saved||cloneLayout(m.def);
+    /* One-off regroup (Aug 2026): Transform folded into Features. A stored
+       layout predating that still carries the old section, so fold it the
+       same way — mirror and the patterns join Features, in place — rather
+       than leaving one browser on the old grouping forever. */
+    let migrated=false;
+    const ti=m.layout.findIndex(x=>x.name==='Transform');
+    if(saved&&ti>=0){
+      const feat=m.layout.find(x=>x.name==='Features')||m.layout[0];
+      for(const id of m.layout[ti].ids)if(feat.ids.indexOf(id)<0)feat.ids.push(id);
+      m.layout.splice(ti,1); migrated=true;
+    }
     const adopted=adoptNewCommands(m,savedHidden);
     markHidden(m);
-    if(saved&&(legacy||adopted))writeMenu(m);   // upgrade in place, once
+    if(saved&&(legacy||adopted||migrated))writeMenu(m);   // upgrade in place, once
     try{ localStorage.removeItem(m.key+'-seen'); }catch(_){ }   // short-lived earlier attempt
   }
   /* Anything the app knows about that is neither laid out nor on the record of
@@ -11350,7 +11710,33 @@ const CSG = (function(){
      maxTouchPoints catches a touch laptop whose primary pointer is fine. */
   if((window.matchMedia&&matchMedia('(any-pointer: coarse)').matches)||navigator.maxTouchPoints>0)
     document.documentElement.classList.add('touch');
+  /* /grid hands a configured bin over as ?gf=WxDxH&lip=…, and a link click is
+     explicit intent — it wins over the autosave restore. The autosave the
+     restore would have used is stashed in a -prev slot first, so following a
+     link can never silently eat unsaved work for good. */
+  function bootDeepLink(){
+    let q=null;
+    try{ q=new URLSearchParams(location.search); }catch(_){ return false; }
+    const gf=q.get('gf'); if(!gf)return false;
+    const m=gf.match(/^(\d+)x(\d+)x(\d+)$/); if(!m)return false;
+    const num=(k,d)=>{ const v=parseFloat(q.get(k)); return isFinite(v)?v:d; };
+    try{ const prev=localStorage.getItem(AUTOSAVE_KEY);
+         if(prev)localStorage.setItem(AUTOSAVE_KEY+'-prev',prev); }catch(_){ }
+    features=[Object.assign(defaults('gfbin'),{
+      nx:Math.max(1,+m[1]), ny:Math.max(1,+m[2]), uz:Math.max(1,+m[3]),
+      lip:q.get('lip')!=='0',
+      heightMode:q.get('mode')==='total'?'total':'add',
+      wall:num('wall',1.2), floorT:num('floor',1.2),
+      divX:Math.max(1,num('divx',1)|0), divY:Math.max(1,num('divy',1)|0),
+      scoop:Math.max(0,num('scoop',0))})];
+    rollbackIndex=1; selId=null; demoActive=false;
+    rebuild(); fitAll();
+    setHint('Your /grid bin, as an editable solid — sketch on the floor to cut pockets, then Print / Export');
+    try{ history.replaceState(null,'',location.pathname); }catch(_){ }
+    return true;
+  }
   function boot(){
+    if(bootDeepLink()){ updateHelp(); refreshDemoTgl(); return; }
     if(restoreAutosave()){ updateHelp(); refreshDemoTgl(); return; }
     if(demoPref()){ bootDemo(); }
     else { rebuild(); setHint('Click a plane to start a sketch · right-click for all commands'); }
