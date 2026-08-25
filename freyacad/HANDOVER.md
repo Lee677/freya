@@ -690,6 +690,25 @@ having a visible pane to paste into.
     away from the origin: there isn't one — the boat's funnel stands at x=0 because `axis:
     'v'` spins about the sketch's own vertical axis and nothing can move the result.
 
+44. **STL import skipped the inverse of the export mapping.** Exports write printer
+    coordinates via `printPt=(x,-z,y)` (trap 39); the importer read file numbers straight
+    into world coordinates, so every import lay on its side and every export→import round
+    trip rotated the body 90° about X (caught by the test sweep's files lane, reproduced
+    twice: worldImp equalled file coords, `idempotent:false`). The importer now applies the
+    exact inverse — `(x,y,z)file → (x, z, -y)world` — so slicer-world STLs stand upright and
+    the round trip is the identity. Old saved projects that embedded an STL import replay
+    through the same code and will stand up differently on next rebuild; that is the fix
+    working, not a regression.
+
+45. **Dimensions on an isometric view measured the projection.** The manual promises the
+    number is "measured off the model", but view geometry kept only (u·w, v·w) — a 40 edge
+    dimensioned on the iso read 28.28 (the sweep's drawings lane caught it). Projected
+    points now carry their depth along the view normal (`d = n·w`; u,v,n orthonormal, so
+    (x,y,d) IS the model point), iso dimensions are forced to `aligned`, and `dimValue`
+    measures the true 3D corner-to-corner distance — the probe's plate now labels that edge
+    40. Flat views still measure in the view plane, as every drawing standard expects;
+    where two corners project to one dot, the snap keeps the one nearer the eye.
+
 ## Biggest thing still missing
 
 **A real constraint solver *for sketches*.** Dimensions are applied one at a time, so

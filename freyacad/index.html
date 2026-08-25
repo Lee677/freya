@@ -3374,6 +3374,14 @@ const CSG = (function(){
           }
         }
         if(!tris.length) throw new Error('no triangles in the STL file');
+        /* STL files live in printer coordinates (Z up) — our own exports write
+           them that way (printPt) and so does everything a slicer ever saved.
+           Reading the numbers straight in left the body on its side and made
+           every export→import round trip rotate it 90° about X. This is the
+           exact inverse of printPt=(x,-z,y). */
+        for(const t of tris)for(let j=0;j<3;j++){
+          const p=t[j]; t[j]=[p[0], p[2], -p[1]];
+        }
         // weld shared corners so the mesh is one connected surface, not confetti
         const idx=new Map(), nodes=[];
         const key=p=>p[0].toFixed(5)+','+p[1].toFixed(5)+','+p[2].toFixed(5);
@@ -10407,7 +10415,12 @@ const CSG = (function(){
       return !h.length;
     };
     const vis=[],hid=[];
-    const P=w=>({x:w.dot(B.u),y:w.dot(B.v)});
+    /* d is the depth along the view normal. The sheet never draws it, but a
+       dimension on an isometric view needs it: with u,v,n orthonormal,
+       (x,y,d) is the full 3D point, so corner-to-corner distances can be
+       measured off the MODEL as the manual promises, not off the
+       foreshortened projection. */
+    const P=w=>({x:w.dot(B.u),y:w.dot(B.v),d:w.dot(B.n)});
     for(const [a,b] of segs){
       const L=a.distanceTo(b);
       const n=Math.max(2,Math.min(24,Math.ceil(L/(diag*0.02))+1));
@@ -10636,10 +10649,15 @@ const CSG = (function(){
      sheet scale moves the dimension without changing what it says. */
   function dimPoints(v){
     // every projected endpoint of the view is a place a dimension can start
-    const out=[], seen=new Set();
+    const out=[], seen=new Map();
     for(const list of [v.geo.vis,v.geo.hid])for(const seg of list)for(const q of seg){
       const k=Math.round(q.x*1e3)+':'+Math.round(q.y*1e3);
-      if(seen.has(k))continue; seen.add(k); out.push(q);
+      const prev=seen.get(k);
+      /* Two model corners can project to the same dot (a near and a far corner
+         of an isometric). Keep the one nearer the eye — smaller depth — so a
+         3D-measured dimension reads to the corner the user can actually see. */
+      if(prev){ if(q.d!=null&&(prev.d==null||q.d<prev.d)){out[out.indexOf(prev)]=q;seen.set(k,q);} continue; }
+      seen.set(k,q); out.push(q);
     }
     return out;
   }
@@ -10663,7 +10681,9 @@ const CSG = (function(){
     for(const v of draw.views){ if(!v.geo)continue;
       for(const q of dimPoints(v)){
         const p=toSheet(v,q.x,q.y), d=Math.hypot(p.x-sx,p.y-sy);
-        if(d<bd){bd=d;best={view:v.id,x:q.x,y:q.y,sx:p.x,sy:p.y,d};}
+        // d is paper distance for the snap radius; dep is the model depth
+        // along the view normal, kept for true-length isometric dimensions
+        if(d<bd){bd=d;best={view:v.id,x:q.x,y:q.y,sx:p.x,sy:p.y,d,dep:q.d};}
       }
     }
     return (best&&best.d<=(lastCoarse?7:4))?best:null;   // mm of paper; fingers get more
@@ -10724,10 +10744,20 @@ const CSG = (function(){
     if(dx>1e-6&&dy>1e-6) kind=(Math.abs(oy)>Math.abs(ox))?'horiz':'vert';
     else kind=(dx>dy)?'horiz':'vert';
     const p=toView(v,sx,sy);
-    draw.dims.push({id:draw.uid++,view:v.id,kind,
-      a:{x:A.x,y:A.y}, b:{x:B.x,y:B.y}, at:{x:p.x,y:p.y}});
+    /* An isometric view foreshortens every axis, so a horizontal-on-sheet
+       number would be the projection, not the part. Iso dimensions are always
+       ALIGNED and measure the true 3D corner-to-corner distance (the depth
+       rides on the snapped points), which is what the manual promises. */
+    if(v.kind==='iso')kind='aligned';
+    // depth is stored on ISO dims only: a flat view's dimensions measure in
+    // the view plane, exactly as every drawing standard expects them to
+    const dimA=v.kind==='iso'?{x:A.x,y:A.y,d:A.dep}:{x:A.x,y:A.y};
+    const dimB=v.kind==='iso'?{x:B.x,y:B.y,d:B.dep}:{x:B.x,y:B.y};
+    draw.dims.push({id:draw.uid++,view:v.id,kind, a:dimA, b:dimB, at:{x:p.x,y:p.y}});
     dimPick2=null; renderSheet();
-    setHint('Dimension placed — click it and press Delete to remove it');
+    setHint(v.kind==='iso'
+      ?'Dimension placed — on an isometric view it reads the true corner-to-corner length'
+      :'Dimension placed — click it and press Delete to remove it');
   }
   function sheetMarkClick(sx,sy){
     if(drawTool==='cmark'){
@@ -10749,6 +10779,10 @@ const CSG = (function(){
   function dimValue(d){
     if(d.kind==='horiz')return Math.abs(d.b.x-d.a.x);
     if(d.kind==='vert') return Math.abs(d.b.y-d.a.y);
+    // aligned with depth on both ends (an isometric dimension): the true 3D
+    // distance — u,v,n are orthonormal, so (x,y,depth) is the model point
+    if(d.a.d!=null&&d.b.d!=null)
+      return Math.hypot(d.b.x-d.a.x,d.b.y-d.a.y,d.b.d-d.a.d);
     return Math.hypot(d.b.x-d.a.x,d.b.y-d.a.y);
   }
   /* Witness lines, a dimension line with arrows, and the number — all built in
