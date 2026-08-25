@@ -2,7 +2,7 @@
   "name": "freya",
   "private": true,
   "scripts": {
-    "deploy": "wrangler pages deploy . --project-name=cad"
+    "deploy": "node tools/build-stamp.mjs && wrangler pages deploy . --project-name=cad"
   },
   "devDependencies": {
     "wrangler": "^4.112.0"

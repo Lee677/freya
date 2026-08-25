@@ -734,7 +734,29 @@ if(!window.THREE){
     </div>
     <div class="hint" id="hint"></div>
     <div id="build-tag"></div>
-    <script>document.getElementById('build-tag').textContent='build '+document.lastModified;</script>
+    <script>
+    /* The deploy stamp. document.lastModified is only honest when the server
+       sends a Last-Modified header; Cloudflare Pages sends ETags instead, and
+       the browser's fallback is THE CURRENT TIME — so this used to show every
+       visitor their own tab-load moment as the "build". The deploy scripts
+       write build-stamp.json with the real deploy time and commit; lastModified
+       stays as the fallback for local dev, where python http.server really
+       does send the file's mtime. */
+    window.__BUILD=null;
+    fetch('build-stamp.json',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(b=>{
+      if(!b||!b.t)return;
+      window.__BUILD=b;
+      const d=new Date(b.t), p=n=>String(n).padStart(2,'0');
+      document.getElementById('build-tag').textContent=
+        'build '+d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())
+        +' '+p(d.getHours())+':'+p(d.getMinutes())+(b.commit?' · '+b.commit:'');
+      const line=document.querySelector('#boot .stampline');
+      if(line)line.textContent='v'+d.getFullYear()+'.'+p(d.getMonth()+1)+'.'+p(d.getDate())
+        +' '+p(d.getHours())+':'+p(d.getMinutes());
+      if(typeof window.__setBuildStamp==='function')window.__setBuildStamp(b);
+    }).catch(()=>{});
+    document.getElementById('build-tag').textContent='build '+document.lastModified;
+    </script>
     <button id="btn-demo" class="demo-btn" style="display:none" title="Three worked examples — every step stays open in the feature tree">⚙ Load a demo model ⌄</button>
     <div class="help-panel" id="help-panel"><div class="help-title" id="help-title"></div><div id="help-body"></div></div>
   </main>
@@ -11936,14 +11958,29 @@ const CSG = (function(){
     const T0=performance.now(), MIN_MS=16000;
     let kernelReady=!!window.OCCT;
     window.addEventListener('kernel-ready',()=>{kernelReady=true;},{once:true});
-    // build stamp comes from the served file's Last-Modified, so it tracks the
-    // real deploy without anyone remembering to bump a constant
-    const bd=new Date(document.lastModified), pad=n=>String(n).padStart(2,'0');
-    const stamp=isNaN(bd.getTime())?'v2026.08'
-      :'v'+bd.getFullYear()+'.'+pad(bd.getMonth()+1)+'.'+pad(bd.getDate())
-        +' '+pad(bd.getHours())+':'+pad(bd.getMinutes());
+    /* The build stamp: the deploy-written build-stamp.json when it exists
+       (fetched by the build-tag script, which may resolve before or after this
+       runs — both orders are handled), falling back to document.lastModified,
+       which is only meaningful on servers that send Last-Modified. */
+    const pad=n=>String(n).padStart(2,'0');
+    const fmt=d=>'v'+d.getFullYear()+'.'+pad(d.getMonth()+1)+'.'+pad(d.getDate())
+        +' '+pad(d.getHours())+':'+pad(d.getMinutes());
+    let stamp;
+    if(window.__BUILD&&window.__BUILD.t)stamp=fmt(new Date(window.__BUILD.t));
+    else{
+      const bd=new Date(document.lastModified);
+      stamp=isNaN(bd.getTime())?'v2026.08':fmt(bd);
+    }
+    /* The stamp fetch resolves in tens of ms; the row it writes into appears
+       at the 260 ms tick. Same race the line-count row has, same cure: hold
+       the value and paint it whenever both sides exist. */
+    let stampPend=null;
+    const paintStamp=()=>{ const el=document.querySelector('#boot .stampline');
+      if(el&&stampPend)el.textContent=stampPend; };
+    window.__setBuildStamp=b=>{ if(b&&b.t){ stampPend=fmt(new Date(b.t)); paintStamp(); } };
+    if(window.__BUILD&&window.__BUILD.t)window.__setBuildStamp(window.__BUILD);
     const LINES=[
-      ['FREYACAD SHELL',stamp],
+      ['FREYACAD SHELL','<span class="stampline">'+stamp+'</span>'],
       ['THREE.JS RENDERER','ONLINE'],
       ['GPU RASTER CONTEXT',(()=>{           // real, read off the live GL context
         try{
@@ -11980,7 +12017,7 @@ const CSG = (function(){
       if(i<LINES.length){const [nm,st]=LINES[i++];
         // the line-count row carries its own markup and must not be swept to ONLINE
         el.appendChild(row(nm,st,(st.charAt(0)==='<'||st==='ONLINE'||st==='ALIGNED'||st.charCodeAt(0)===118)?'ok':'run'));
-        paintLoc();}
+        paintLoc(); paintStamp();}
       else if(kernelReady) finish();     // let every line land before wrapping up
     },260);
     function finish(){
