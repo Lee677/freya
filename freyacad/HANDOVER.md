@@ -39,7 +39,13 @@ Read `PRINT-PIVOT.md` — it is the product plan of record (trimmed default tool
 /grid integration, printing demos, the export pipeline). The feature matrix below is
 still the engine roadmap and continues underneath, but the pivot work takes priority.
 Already done from that plan: the Print/Export dialog with 3MF export, the unit fix
-(trap 39) and print orientation.
+(trap 39) and print orientation; the one-click Bambu shelf (a Pages Function — see
+`functions/api/shelf.js` and trap 40; needs the owner to create the KV namespace in
+`wrangler.toml` once before it goes live); the Gridfinity bin and baseplate as native
+B-rep features (trap 40); photo-trace into any sketch (vision.js shared from /grid); and
+the /grid ⇄ freyacad hand-over (`?gf=WxDxH` deep link, "Edit in freyacad" on /grid). The
+menus lost their Transform heading — mirror and the patterns live under Features now,
+with a one-off localStorage layout migration in `loadMenu`.
 
 **The engine job** remains closing the gap to SolidWorks and FreeCAD, working through
 `FEATURE-MATRIX.html` **cheapest first**. The matrix carries a token estimate per gap and
@@ -600,6 +606,31 @@ having a visible pane to paste into.
     guard (a!==b&&b!==c&&c!==a after welding) is what keeps a degenerate triangle from
     poisoning it. Verified headlessly: a 20×10×5 box comes out as exactly 8 vertices and
     12 triangles at z 0..5.
+
+40. **The Gridfinity port, and what to know before touching it.** `OCK.gfBin`/`OCK.gfPlate`
+    are /grid's `core.js` generator re-plumbed onto OCCT: same spec numbers, same profile
+    steps, same lip-relief rule (the relief must not apply to a solid bin or it scoops the
+    whole top — /grid trap 3, honoured here). Corners are true arcs (one cubic Bezier per
+    90°, k=0.5522847) where /grid tessellates 8 chords, so volumes agree to ≤0.083% and
+    bounding boxes exactly — measured against /grid's own generator for five bins and a
+    plate, and pinned in `dev/verify.js` (gfbin, gfbincut, gfplate). The gfbincut case is
+    the point of the whole port: a Ø8 circle cut through the floor removes π·16·5.95 =
+    299.08 mm³ exactly, i.e. the bin is a real solid you can cut.
+
+    Two cautions. **Builds are seconds, not milliseconds** (1x1x3 ≈ 5 s): ThruSections
+    emits B-spline side faces and every boolean against them pays trap 26's fixed cost.
+    The checkpoint cache hides this after the first build. If it ever matters, the profile
+    walls are geometrically planes and cones — a hand-built shell would boolean an order
+    of magnitude faster. And **the loose-bbox artifact**: `OCK.bounds` on a no-lip bin
+    reads ~2 mm above the real top, because the cavity cut's trimmed B-spline wall keeps
+    poles up at the tool's full height. Volume and meshing are unaffected; don't chase it
+    as a geometry bug (it was chased once).
+
+    The shelf (`functions/api/shelf.js` + `wrangler.toml`): POST bytes → 10-minute KV TTL
+    → `bambustudio://open/?file=<url>`. The client fetch is `/api/shelf` — ABSOLUTE —
+    because a relative fetch from /freyacad/ resolves to /freyacad/api/shelf and misses
+    the Function (that bug shipped for about an hour). Until the owner creates the KV
+    namespace, every POST 503s and the dialog quietly falls back to download-then-launch.
 
 ## Biggest thing still missing
 

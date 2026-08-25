@@ -292,6 +292,28 @@
           <button class="act primary" id="bin-build">Generate</button>
           <button class="act" id="bin-stl" disabled>STL</button>
           <button class="act" id="bin-step" disabled>STEP</button>
+          <a class="act" id="bin-edit-cad" href="/freyacad/" title="Open this bin as an editable solid in freyacad — cut pockets, add features, print from there">Edit in freyacad</a>
+          <script>
+          /* The bin, handed over live: freyacad rebuilds it as a real editable
+             solid from these parameters (?gf=WxDxH). Inline because it reads
+             the form beside it; index.html is never cached, so no ?v= dance. */
+          (function(){
+            var a=document.getElementById('bin-edit-cad');
+            var v=function(id){var e=document.getElementById(id);return e?e.value:'';};
+            var upd=function(){
+              a.href='/freyacad/?gf='+v('bin-nx')+'x'+v('bin-ny')+'x'+v('bin-uz')
+                +'&lip='+(document.getElementById('bin-lip').checked?1:0)
+                +'&mode='+v('bin-hmode')+'&wall='+v('bin-wall')+'&floor='+v('bin-floor')
+                +'&divx='+v('bin-divx')+'&divy='+v('bin-divy')+'&scoop='+v('bin-scoop');
+            };
+            ['bin-nx','bin-ny','bin-uz','bin-lip','bin-hmode','bin-wall','bin-floor',
+             'bin-divx','bin-divy','bin-scoop'].forEach(function(id){
+              var e=document.getElementById(id);
+              if(e)e.addEventListener('change',upd);
+            });
+            upd();
+          })();
+          </script>
         </div>
       </div>
 
