@@ -20,8 +20,8 @@
  *   cpattern    circular pattern with merge
  *   lpattern    linear pattern with merge
  *   filletrun   a run of fillets and cuts, which forces flush points
- *   lantern     the spline demo, fetched from models/ so both runs measure the
- *               same file
+ *   lamp/boat   the two demo models, fetched from models/ so both runs measure
+ *               the same files the app ships
  *   scopecut    a circular pattern SCOPED to a hole — six holes in one disc,
  *               not six copies of the disc (the trap-22 case)
  *   scopeboss   a linear pattern scoped to a boss
@@ -48,12 +48,13 @@
  * and reports `ok`. Those are worth more than an A/B: they say the answer is
  * RIGHT, not merely unchanged.
  *
- * WARNING about the lantern: BRepGProp::VolumeProperties is inaccurate on a
- * single multi-span BSpline surface — it reads the hull ~1.46% light and reports
- * the same wrong figure at every Eps, so it looks converged when it is not (see
- * HANDOVER trap 27). Use it here only to compare like with like. To settle
- * whether the lantern's geometry really changed, mesh at several deflections and
- * sum signed tetrahedra, and check against dev/pappus-hull-volume.js.
+ * WARNING about spline-heavy models (the lamp's revolved body, once the
+ * lantern's hull): BRepGProp::VolumeProperties is inaccurate on a single
+ * multi-span BSpline surface — it read the old lantern hull ~1.46% light and
+ * reported the same wrong figure at every Eps, so it looks converged when it is
+ * not (see HANDOVER trap 27). Use it here only to compare like with like. To
+ * settle whether such geometry really changed, mesh at several deflections and
+ * sum signed tetrahedra, as dev/pappus-hull-volume.js did for the lantern.
  */
 window.__VER = 'running';
 (function(){
@@ -253,13 +254,19 @@ window.__VER = 'running';
     if(want!=null){ r.want=want;
       r.ok = r.vol!=null && Math.abs(r.vol-want)<0.01 && r.bodies===1 && !(r.errs||[]).length; }
   }
-  fetch('models/lantern-rocket.sketchcad').then(r=>r.json()).then(list=>{
-    res.lantern=run(list); window.__VER=res;
-  }).catch(e=>{ res.lantern={fail:'fetch: '+e.message}; window.__VER=res; });
+  const demoFiles=[['lamp','models/magic-lamp.sketchcad',4070.494],
+                   ['boat','models/print-test-boat.sketchcad',10923.956]];
+  Promise.all(demoFiles.map(([n,f,want])=>
+    fetch(f).then(r=>r.json()).then(list=>{
+      const d=run(list); d.want=want;
+      d.ok=d.vol!=null && Math.abs(d.vol-want)<0.01 && d.bodies===1 && !(d.errs||[]).length;
+      res[n]=d;
+    }).catch(e=>{ res[n]={fail:'fetch: '+e.message}; })
+  )).then(()=>{ window.__VER=res; });
 })();
 'started — read window.__VER';
 
-/* Expected as of the "rebindable keyboard shortcuts" commit:
+/* Expected as of the demo-refresh commits (magic lamp + print test boat):
  *   pillow     378.712  | 27f 144e 1b
  *   order      4840.383 | 25f 142e 1b     <- 4840, NOT ~4697: the plug survived
  *   multibody  1800     | 12f  48e 2b     <- TWO bodies
@@ -267,7 +274,8 @@ window.__VER = 'running';
  *   cpattern   572.947  | 37f 190e 1b
  *   lpattern   156      | 30f 120e 1b
  *   filletrun  655.708  | 12f  68e 1b
- *   lantern    11268.126| 32f 164e 1b     <- see the VolumeProperties warning
+ *   lamp       4070.494 | 10f  53e 1b     <- see the VolumeProperties warning
+ *   boat       10923.956| 29f 134e 1b
  *
  * And the three scoped cases, which are right or wrong rather than merely
  * changed — check `ok` on each:
