@@ -709,6 +709,15 @@ having a visible pane to paste into.
     40. Flat views still measure in the view plane, as every drawing standard expects;
     where two corners project to one dot, the snap keeps the one nearer the eye.
 
+46. **The global `canvas{position:absolute;inset:0}` rule eats dialog canvases.** It exists
+    for the viewport, but it applies to EVERY canvas: the trace dialog's preview canvas
+    stretched to the whole viewport, and its opaque background became a dark sheet hiding
+    the dialog — the owner saw "screen goes dark, says Insert outline" (the footer buttons,
+    later in the DOM, still painted above it). `#navcube` fought the same rule earlier
+    (its comment at the `#navcube` styles). Any canvas that ever goes inside a dialog needs
+    `position:static` in its inline style. The fix is on `#tr-cv`; this note is so the
+    NEXT dialog with a canvas doesn't rediscover it.
+
 ## Biggest thing still missing
 
 **A real constraint solver *for sketches*.** Dimensions are applied one at a time, so
