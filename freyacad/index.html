@@ -4509,6 +4509,7 @@ const CSG = (function(){
     updateDatumVis();
     if(typeof updateHelp==='function')updateHelp();
     if(typeof scheduleAutosave==='function')scheduleAutosave();
+    syncZoomRange();   // the model may have grown or shrunk; the zoom cap follows
   }
 
   /* ---- pickable edges ---- */
@@ -9426,6 +9427,7 @@ const CSG = (function(){
     }
     asmMeshes.push(group);asmShapes.push(shapes);
     applyCompTransform(comp);
+    syncZoomRange();
   }
   function removeComponent(comp){
     const i=asm.components.indexOf(comp); if(i<0)return;
@@ -11685,13 +11687,32 @@ const CSG = (function(){
     const box=new THREE.Box3();list.forEach(m=>box.expandByObject(m));
     return box;
   }
+  /* The distance the camera needs to see the whole model, from the same maths
+     fitAll frames with. */
+  function fitDistance(box){
+    const sz=Math.max(2,box.getSize(new THREE.Vector3()).length());
+    const fov=perspCam.fov*Math.PI/180;   // ortho derives its box from the same fov
+    return (sz/2)/Math.tan(fov/2)*1.15+0.5;
+  }
+  /* The zoom envelope follows the model: pull back far enough to see the whole
+     thing plus a little context, and no further. maxR used to be an absolute
+     300 from the 15 mm-part era — the wheel AND fitAll both clamp to it, so a
+     baseplate could never be framed at all. Runs after every rebuild and
+     component change, and before every fit. */
+  function syncZoomRange(){
+    let box=partBox();
+    if(!box&&datumGroup.visible)box=new THREE.Box3().setFromObject(datumGroup);
+    const fit=box?fitDistance(box):40;
+    controls.maxR=Math.min(5000,Math.max(80,fit*1.6));
+    if(controls.sph.radius>controls.maxR){ controls.sph.radius=controls.maxR; controls.update(); }
+  }
   function fitAll(){
+    syncZoomRange();
     let box=partBox();
     if(!box){ if(datumGroup.visible){ box=new THREE.Box3().setFromObject(datumGroup); } else return; }
-    const c=box.getCenter(new THREE.Vector3()),sz=Math.max(2,box.getSize(new THREE.Vector3()).length());
-    const fov=perspCam.fov*Math.PI/180;   // ortho derives its box from the same fov
+    const c=box.getCenter(new THREE.Vector3());
     controls.target.copy(c);
-    controls.sph.radius=Math.max(4,Math.min(controls.maxR,(sz/2)/Math.tan(fov/2)*1.15+0.5));
+    controls.sph.radius=Math.max(4,Math.min(controls.maxR,fitDistance(box)));
     controls.update();
   }
   /* orbit about the part, not wherever the target drifted to after panning —

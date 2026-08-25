@@ -728,6 +728,15 @@ having a visible pane to paste into.
     (floors at the old 55/150, so small parts render pixel-identical). Any future "model
     goes dark at distance" report: check the fog before the lighting.
 
+48. **Same era, same disease: the zoom cap was an absolute 300.** The wheel, the pinch AND
+    `fitAll` all clamp to `controls.maxR`, so a 4×4 baseplate (fit distance ~322) could
+    never be framed — Fit hit the ceiling too. `syncZoomRange()` now derives maxR from the
+    model's own fit distance (×1.6 — the owner's spec: "see a bit more than an entire
+    model but not much further"), floored at 80, run after every rebuild and component
+    change and before every fit; it also pulls the camera in when the model shrinks.
+    Anything else in the codebase still holding a bare distance constant should be
+    presumed guilty of the same 15 mm-era assumption until measured.
+
 ## Biggest thing still missing
 
 **A real constraint solver *for sketches*.** Dimensions are applied one at a time, so
