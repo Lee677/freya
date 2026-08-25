@@ -2939,17 +2939,115 @@ const CSG = (function(){
     out.push({line:[P(-hx,-hy-r),P(hx,-hy-r)]}); arc(hx,-hy,-Math.PI/2);
     return out;
   }
-  /* Loft of rounded rects: steps [{z,off}] exactly as /grid writes them. */
+  /* Loft of rounded rects: steps [{z,off}] exactly as /grid writes them.
+     HAND-SEWN from analytic faces, and that is the whole reason bins build in
+     fractions of a second. The first version fed rings to ThruSections, which
+     approximates every wall as a B-spline — and a boolean against a B-spline
+     face pays trap 26's fixed cost, so one cut on a 4x4 baseplate took 22
+     SECONDS. But these walls are not freeform: a straight band's corner is a
+     CYLINDER patch, a tapered band's corner is a CONE patch (the corner
+     centres are shared between rings, so radius changes linearly with
+     height), and every flat is a PLANE. Saying so face-by-face and sewing
+     puts every boolean on OCCT's analytic fast path — same 22-second cut:
+     0.4 s — and STEP exports carry true cones and cylinders instead of
+     spline approximations.
+
+     Geometry bookkeeping, in gridfinity's own plan coordinates (x right,
+     y up the plan, z the height): a ring at offset `off` has corner centres
+     (±hx,±hy) and corner radius rr=r+off; corner k spans plan angles
+     [k·90°,(k+1)·90°]. The world mapping is (x,y)@z → (x, z, −y), and the
+     one subtlety is that a circle about the world +Y axis with XDir=+X
+     sweeps toward Y×X = −Z, which IS the plan's +y — so plan angles are
+     circle parameters directly, no sign gymnastics. */
+  function gfRing(w,d,r,z,cx,cy){
+    r=Math.max(0.02, Math.min(r, Math.min(w,d)/2 - 1e-4));
+    const hx=w/2-r, hy=d/2-r;
+    const C=[[hx,hy],[-hx,hy],[-hx,-hy],[hx,-hy]];
+    const W=(x,y)=>new (OC().gp_Pnt_3)(cx+x, z, -(cy+y));
+    const ring={z, rr:r, cs:[], a0:[], a1:[], lineA:[], lineB:[]};
+    for(let k=0;k<4;k++){
+      const a=k*Math.PI/2, b=a+Math.PI/2, c=C[k];
+      ring.cs.push({x:cx+c[0], y:cy+c[1]});
+      ring.a0.push(W(c[0]+r*Math.cos(a), c[1]+r*Math.sin(a)));
+      ring.a1.push(W(c[0]+r*Math.cos(b), c[1]+r*Math.sin(b)));
+    }
+    for(let k=0;k<4;k++){ ring.lineA.push(ring.a1[k]); ring.lineB.push(ring.a0[(k+1)%4]); }
+    return ring;
+  }
+  function gfCapWire(ring){
+    const oc=OC(), mw=new oc.BRepBuilderAPI_MakeWire_1();
+    for(let k=0;k<4;k++){
+      const ax=new oc.gp_Ax2_2(new oc.gp_Pnt_3(ring.cs[k].x, ring.z, -ring.cs[k].y),
+                               new oc.gp_Dir_4(0,1,0), new oc.gp_Dir_4(1,0,0));
+      mw.Add_1(new oc.BRepBuilderAPI_MakeEdge_9(new oc.gp_Circ_2(ax,ring.rr),
+        k*Math.PI/2,(k+1)*Math.PI/2).Edge());
+      const A=ring.lineA[k], B=ring.lineB[k];
+      if(A.Distance(B)>1e-9)
+        mw.Add_1(new oc.BRepBuilderAPI_MakeEdge_3(A,B).Edge());
+    }
+    return mw.Wire();
+  }
   function gfLoft(w,d,r,steps,cx,cy){
+    cx=cx||0; cy=cy||0;
     const oc=OC();
-    const ts=new oc.BRepOffsetAPI_ThruSections(true,true,1e-6);
-    ts.CheckCompatibility(false);      // rings are built structurally identical
-    for(const st of steps)
-      ts.AddWire(OCK.wireFromSegs(gfRectSegs(w+2*st.off,d+2*st.off,r+st.off,cx,cy),GF_FRAME,st.z));
-    ts.Build(new oc.Message_ProgressRange_1());
-    const shp=ts.Shape();
-    if(shp.IsNull())throw new Error('gridfinity loft failed');
-    return shp;
+    /* Profiles may be written top-down — the lip cut is — and /grid's own loft
+       reversed those before building (its trap 2: winding). The sewn builder
+       needs the same guard or every band gets a negative height and OCCT
+       throws a raw C++ number from MakeFace. */
+    if(steps.length>1&&steps[steps.length-1].z<steps[0].z)steps=steps.slice().reverse();
+    const rings=steps.map(st=>gfRing(w+2*st.off,d+2*st.off,r+st.off,st.z,cx,cy));
+    const sew=new oc.BRepBuilderAPI_Sewing(1e-6,true,true,true,false);
+    gfAddBands(sew,rings);
+    sew.Add(new oc.BRepBuilderAPI_MakeFace_15(gfCapWire(rings[0]),true).Face());
+    sew.Add(new oc.BRepBuilderAPI_MakeFace_15(gfCapWire(rings[rings.length-1]),true).Face());
+    return gfSewSolid(sew);
+  }
+  function gfAddBands(sew,rings){
+    const oc=OC();
+    for(let b=0;b+1<rings.length;b++){
+      const R1=rings[b], R2=rings[b+1];
+      const h=R2.z-R1.z;
+      if(Math.abs(h)<1e-9)continue;              // two steps at one height: no band
+      for(let k=0;k<4;k++){
+        // the corner patch: cylinder when straight, cone when tapered
+        const dr=R2.rr-R1.rr;
+        const ax3=new oc.gp_Ax3_3(new oc.gp_Pnt_3(R1.cs[k].x, R1.z, -R1.cs[k].y),
+                                  new oc.gp_Dir_4(0,1,0), new oc.gp_Dir_4(1,0,0));
+        let surf, v2;
+        if(Math.abs(dr)<1e-9){
+          surf=new oc.Handle_Geom_Surface_2(new oc.Geom_CylindricalSurface_1(ax3,R1.rr));
+          v2=h;
+        }else{
+          surf=new oc.Handle_Geom_Surface_2(
+            new oc.Geom_ConicalSurface_1(ax3, Math.atan2(dr,h), R1.rr));
+          v2=Math.hypot(h,dr);
+        }
+        sew.Add(new oc.BRepBuilderAPI_MakeFace_14(surf,
+          k*Math.PI/2,(k+1)*Math.PI/2, 0, v2, 1e-9).Face());
+        // the flat between this corner and the next: one planar quad
+        const A1=R1.lineA[k], B1=R1.lineB[k], A2=R2.lineA[k], B2=R2.lineB[k];
+        if(A1.Distance(B1)>1e-9||A2.Distance(B2)>1e-9){
+          const mp=new oc.BRepBuilderAPI_MakePolygon_1();
+          mp.Add_1(A1); mp.Add_1(B1); mp.Add_1(B2); mp.Add_1(A2); mp.Close();
+          sew.Add(new oc.BRepBuilderAPI_MakeFace_15(mp.Wire(),true).Face());
+        }
+      }
+    }
+  }
+  function gfSewSolid(sew){
+    const oc=OC();
+    sew.Perform(new oc.Message_ProgressRange_1());
+    const shell=sew.SewedShape();
+    if(shell.IsNull())throw new Error('gridfinity band failed to sew');
+    const ms=new oc.BRepBuilderAPI_MakeSolid_1();
+    ms.Add(oc.TopoDS.Shell_1(shell));
+    let solid=ms.Solid();
+    /* Sewing decides shell orientation by luck of face order; a solid sewn
+       inside-out MEASURES negative and booleans wrongly. Check and flip. */
+    const g=new oc.GProp_GProps_1();
+    oc.BRepGProp.VolumeProperties_1(solid,g,1e-2,false,false);
+    if(g.Mass()<0)solid=solid.Reversed();
+    return solid;
   }
   function gfPrism(segs,z0,h){         // straight-sided solid from a closed profile
     const oc=OC();
@@ -2983,6 +3081,7 @@ const CSG = (function(){
       feet.push(gfFoot(-nx*S.PITCH/2+S.PITCH*(i+0.5), -ny*S.PITCH/2+S.PITCH*(j+0.5)));
     let solid=OCK.fuseAll([gfLoft(W,D,S.BIN_R,[{z:S.BASE_H,off:0},{z:H,off:0}])],feet)[0];
     const hollow=!o.solid;
+    const cuts=[];
     let lipBottomZ=H, topZ=H;
     if(lip){
       const c=S.SOCKET_CLEAR, dTaper=S.T3-c, dLand=dTaper+S.T2, dBot=dLand+S.T1;
@@ -2997,14 +3096,15 @@ const CSG = (function(){
         else if(innerOff<lipOff)steps.push({z:H-dBot,off:innerOff});
       }
       lipBottomZ=steps[steps.length-1].z; topZ=H-dBot;
-      solid=OCK.cutAll(solid,[gfLoft(W,D,S.BIN_R,steps)]);
+      cuts.push(gfLoft(W,D,S.BIN_R,steps));
     }
     const cavTop=lip?lipBottomZ:H+2;
     const cavW=W-2*wall, cavD=D-2*wall, cavR=Math.max(0.4,S.BIN_R-wall);
     if(hollow){
       const divX=Math.max(1,o.divX|0||1), divY=Math.max(1,o.divY|0||1);
       const divT=Math.max(0.4,o.divT||wall);
-      solid=OCK.cutAll(solid,[gfLoft(cavW,cavD,cavR,[{z:floorZ,off:0},{z:cavTop+0.001,off:0}])]);
+      cuts.push(gfLoft(cavW,cavD,cavR,[{z:floorZ,off:0},{z:cavTop+0.001,off:0}]));
+      if(cuts.length)solid=OCK.cutAll(solid,cuts);   // lip and cavity: ONE boolean
       const divTop=lip?Math.min(cavTop,H-S.BASE_H-0.6):H;
       const bars=[];
       for(let i=1;i<divX;i++)bars.push(gfBox(divT,cavD+1,divTop-floorZ,-cavW/2+cavW*i/divX,0,floorZ));
@@ -3051,26 +3151,66 @@ const CSG = (function(){
         const fillsU=fills.length>1?OCK.fuseAll([fills[0]],fills.slice(1))[0]:fills[0];
         solid=OCK.fuseAll([solid],[OCK.commonAll(shell2,[fillsU])])[0];
       }
+    } else if(cuts.length){
+      solid=OCK.cutAll(solid,cuts);                 // a solid bin still takes its lip
     }
     return solid;
   };
+  /* The baseplate never touches a boolean at all: it is ONE sewn solid — the
+     slab's six planar faces, the top and (when the sockets punch through)
+     bottom faces carrying the socket rings as holes, and each socket's cone/
+     cylinder/plane walls sewn straight in. Cutting 16 lofted sockets out of a
+     4x4 slab took 22 s as ThruSections+boolean and 6.4 s analytic; sewn, the
+     whole plate is built in well under a second. */
   OCK.gfPlate=function(o){
-    const S=GFS;
+    const oc=OC(), S=GFS;
     const nx=Math.max(1,o.nx|0), ny=Math.max(1,o.ny|0);
     const floor=Math.max(0,o.floor||0);
-    const zTop=floor+S.BASE_H;
+    const zTop=floor+S.BASE_H, base=zTop-S.BASE_H;
+    const through=floor<=1e-9;                   // sockets open the underside
     const W=nx*S.PITCH, D=ny*S.PITCH;
-    let plate=gfBox(W,D,zTop,0,0,0);
-    const sockets=[];
+    const c=S.SOCKET_CLEAR, sw=S.PITCH-S.BIN_GAP+2*c, sr=S.BIN_R+c;
+    const sew=new oc.BRepBuilderAPI_Sewing(1e-6,true,true,true,false);
+    const P=(x,z,y)=>new oc.gp_Pnt_3(x,z,-y);
+    const rect=z=>{ const mp=new oc.BRepBuilderAPI_MakePolygon_1();
+      mp.Add_1(P(-W/2,z,-D/2)); mp.Add_1(P(W/2,z,-D/2));
+      mp.Add_1(P(W/2,z,D/2));  mp.Add_1(P(-W/2,z,D/2)); mp.Close();
+      return mp.Wire(); };
+    const quad=(a,b,c2,d2)=>{ const mp=new oc.BRepBuilderAPI_MakePolygon_1();
+      mp.Add_1(a);mp.Add_1(b);mp.Add_1(c2);mp.Add_1(d2);mp.Close();
+      sew.Add(new oc.BRepBuilderAPI_MakeFace_15(mp.Wire(),true).Face()); };
+    // the four slab sides
+    quad(P(-W/2,0,-D/2),P(W/2,0,-D/2),P(W/2,zTop,-D/2),P(-W/2,zTop,-D/2));
+    quad(P(W/2,0,-D/2),P(W/2,0,D/2),P(W/2,zTop,D/2),P(W/2,zTop,-D/2));
+    quad(P(W/2,0,D/2),P(-W/2,0,D/2),P(-W/2,zTop,D/2),P(W/2,zTop,D/2));
+    quad(P(-W/2,0,D/2),P(-W/2,0,-D/2),P(-W/2,zTop,-D/2),P(-W/2,zTop,D/2));
+    // socket walls, and the rings the horizontal faces need as holes
+    const topHoles=[], botHoles=[];
+    /* Adjacent sockets are EXACTLY pitch-wide at the top (42.0 on a 42.0
+       pitch), so their openings touch with zero gap — real gridfinity, and
+       the boolean version resolved it into knife-edges. A sewn face cannot
+       hold two holes that touch, so every socket is half a micron smaller
+       per side: far below any printer's resolution, decisive for the
+       topology. */
+    const EPS=5e-4;
     for(let i=0;i<nx;i++)for(let j=0;j<ny;j++){
       const cx=-W/2+S.PITCH*(i+0.5), cy=-D/2+S.PITCH*(j+0.5);
-      const c=S.SOCKET_CLEAR, over=4, base=zTop-S.BASE_H;
-      sockets.push(gfLoft(S.PITCH-S.BIN_GAP+2*c,S.PITCH-S.BIN_GAP+2*c,S.BIN_R+c,[
-        {z:base-over,off:-(S.T1+S.T3)},{z:base,off:-(S.T1+S.T3)},
-        {z:base+S.T1,off:-S.T3},{z:base+S.T1+S.T2,off:-S.T3},
-        {z:zTop,off:0},{z:zTop+over,off:0}],cx,cy));
+      const steps=[{z:base,off:-(S.T1+S.T3)-EPS},{z:base+S.T1,off:-S.T3-EPS},
+                   {z:base+S.T1+S.T2,off:-S.T3-EPS},{z:zTop,off:-EPS}];
+      const rings=steps.map(st=>gfRing(sw+2*st.off,sw+2*st.off,sr+st.off,st.z,cx,cy));
+      gfAddBands(sew,rings);
+      topHoles.push(rings[rings.length-1]);
+      if(through)botHoles.push(rings[0]);
+      else sew.Add(new oc.BRepBuilderAPI_MakeFace_15(gfCapWire(rings[0]),true).Face());
     }
-    return OCK.cutAll(plate,sockets);
+    const holed=(z,holes)=>{
+      const mf=new oc.BRepBuilderAPI_MakeFace_15(rect(z),true);
+      for(const r of holes)mf.Add(oc.TopoDS.Wire_1(gfCapWire(r).Reversed()));
+      sew.Add(mf.Face());
+    };
+    holed(zTop,topHoles);
+    if(through)holed(0,botHoles); else sew.Add(new oc.BRepBuilderAPI_MakeFace_15(rect(0),true).Face());
+    return gfSewSolid(sew);
   };
   OCK.transformed = function(s, setup){
     const oc = OC();
@@ -7334,17 +7474,40 @@ const CSG = (function(){
     const sect2=document.createElement('div'); sect2.className='tree-sect'; sect2.textContent='Features';
     tree.appendChild(sect2);
 
+    /* A feature owns every sketch it consumes — for a sweep that is TWO, the
+       profile and the path, and both draw nested under it. */
     const nested=new Set();
-    features.forEach(f=>{ if(f.sketchId!=null)nested.add(f.sketchId); });
-    features.forEach((f,i)=>{
-      if(i===rollbackIndex)tree.appendChild(makeRollbar());
-      if(f.type==='sketch'&&nested.has(f.id))return;      // drawn under its feature
-      const kid=(f.sketchId!=null)?features.find(x=>x.id===f.sketchId):null;
-      const shut=collapsed.has(f.id);
-      tree.appendChild(makeFeatRow(f,i,false,kid?(shut?'shut':'open'):null));
-      if(kid&&!shut)tree.appendChild(makeFeatRow(kid,features.indexOf(kid),true));
+    features.forEach(f=>{
+      if(f.sketchId!=null)nested.add(f.sketchId);
+      if(f.type==='sweep'&&f.pathId!=null)nested.add(f.pathId);
     });
-    if(rollbackIndex>=features.length)tree.appendChild(makeRollbar());
+    const kidsOf=f=>{
+      const out=[];
+      if(f.sketchId!=null){ const k=features.find(x=>x.id===f.sketchId); if(k)out.push(k); }
+      if(f.type==='sweep'&&f.pathId!=null&&f.pathId!==f.sketchId){
+        const k=features.find(x=>x.id===f.pathId); if(k)out.push(k); }
+      return out;
+    };
+    /* The rollback bar thinks in ARRAY indices but the tree displays groups —
+       a feature with its consumed sketches, which sit BEFORE it in the array.
+       Each top-level row therefore carries the array index its group starts
+       at (dataset.gs), and the bar renders at the first group whose start has
+       not yet been rolled past. That mapping is also what the drag uses, so
+       render and drag can never disagree. */
+    let barPlaced=false;
+    const bar=()=>{ if(!barPlaced){ tree.appendChild(makeRollbar()); barPlaced=true; } };
+    features.forEach((f,i)=>{
+      if(f.type==='sketch'&&nested.has(f.id))return;      // drawn under its feature
+      const kids=kidsOf(f);
+      const gs=Math.min(i,...kids.map(k=>features.indexOf(k)));
+      if(rollbackIndex<=gs)bar();
+      const shut=collapsed.has(f.id);
+      const row=makeFeatRow(f,i,false,kids.length?(shut?'shut':'open'):null);
+      row.dataset.gs=gs;
+      tree.appendChild(row);
+      if(!shut)for(const k of kids)tree.appendChild(makeFeatRow(k,features.indexOf(k),true));
+    });
+    bar();
     $('tree-pill').textContent=features.length;
     const cb=$('tree-collapse');
     if(cb)cb.textContent=anyExpanded()?'⌄':'›';
@@ -7391,9 +7554,17 @@ const CSG = (function(){
   function startRollDrag(e){
     e.preventDefault();rolling=true;
     const move=ev=>{
-      const items=[...tree.querySelectorAll('.feat')];
+      /* Only rows that carry a group start count — that excludes the datum
+         planes and axes above the Features section and the nested sketch
+         rows, both of which used to poison the old row-counting mapping the
+         moment the origin was expanded (the bar clamped to the end and read
+         as dead). The bar lands before the first group below the pointer. */
+      const items=[...tree.querySelectorAll('.feat[data-gs]')];
       let idx=features.length;
-      for(let i=0;i<items.length;i++){const r=items[i].getBoundingClientRect();if(ev.clientY < r.top+r.height/2){idx=i;break;}}
+      for(const el of items){
+        const r=el.getBoundingClientRect();
+        if(ev.clientY < r.top+r.height/2){ idx=+el.dataset.gs; break; }
+      }
       idx=Math.max(0,Math.min(features.length,idx));
       if(idx!==rollbackIndex){rollbackIndex=idx;rebuild();}
     };
@@ -8006,6 +8177,11 @@ const CSG = (function(){
     visionP=new Promise((ok,bad)=>{
       const sc=document.createElement('script');
       sc.src='/grid/js/vision.js';
+      /* vision.js publishes itself as window.V — which freyacad's own lexical
+         `V` (the Vector3 shorthand) SHADOWS inside this script. Every use in
+         this dialog goes through window.V for that reason; a bare V here
+         resolves to the vector helper and dies with "V.loadImage is not a
+         function". It shipped that way for an afternoon. */
       sc.onload=()=>window.V?ok():bad(new Error('vision.js loaded empty'));
       sc.onerror=()=>bad(new Error('could not load the tracer — it lives at /grid/js/vision.js, which needs the site, not a file:// open'));
       document.head.appendChild(sc);
@@ -8042,10 +8218,11 @@ const CSG = (function(){
     function retrace(){
       if(!img)return;
       try{
-        const seg=V.segment(img,{clean:2,invert:$q('tr-inv').checked});
-        const raw=V.contour(seg.mask,img.width,img.height);
+        const VS=window.V;
+        const seg=VS.segment(img,{clean:2,invert:$q('tr-inv').checked});
+        const raw=VS.contour(seg.mask,seg.w||img.width,seg.h||img.height);
         if(!raw||raw.length<8)throw new Error('no outline found');
-        poly=V.rdp(raw,1.4);
+        poly=VS.rdp(raw,1.4);
         const cv=$q('tr-cv'),g=cv.getContext('2d');
         const k=Math.min(cv.width/img.width,cv.height/img.height);
         g.clearRect(0,0,cv.width,cv.height);
@@ -8065,8 +8242,9 @@ const CSG = (function(){
       status('Loading…');
       try{
         await loadVision();
-        const bm=await V.loadImage(f);
-        const r=V.plain(bm,1,1000);
+        const VS=window.V;
+        const bm=await VS.loadImage(f);
+        const r=VS.plain(bm,1,1000);
         const d=r.canvas.getContext('2d').getImageData(0,0,r.w,r.h);
         img={canvas:r.canvas,width:r.w,height:r.h,data:d.data};
         retrace();

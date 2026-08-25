@@ -34,8 +34,9 @@
  *   sweeptube   a profile with a HOLE in it, swept: the hole is swept too
  *   sweepcut    a bore swept straight through a block
  *   gfbin       a 1x1x3 Gridfinity bin with a stacking lip — the OCCT port of
- *               /grid's generator. The pinned volume was cross-checked against
- *               /grid's own manifold build (13026.889): +0.032%, which is the
+ *               /grid's generator, hand-sewn from true planes, cylinders and
+ *               cones. The pinned volume was cross-checked against /grid's own
+ *               manifold build (13026.889): +0.031%, which is the
  *               chord-vs-true-arc difference and nothing else.
  *   gfbincut    the same bin with a Ø8 hole cut through its floor — removes
  *               299.08 = π·16·(4.75+1.2), which proves the bin is a real
@@ -245,9 +246,9 @@ window.__VER = 'running';
                       ['sweepbend',mkSweepBend(),439.823],
                       ['sweeptube',mkSweepTube(),424.115],
                       ['sweepcut',mkSweepCut(),7497.345],
-                      ['gfbin',mkGfBin(),13031.074],
-                      ['gfbincut',mkGfBinCut(),12731.995],
-                      ['gfplate',mkGfPlate(),5347.616]]){
+                      ['gfbin',mkGfBin(),13030.899],
+                      ['gfbincut',mkGfBinCut(),12731.82],
+                      ['gfplate',mkGfPlate(),5349.139]]){
     const r=run(l); res[n]=r;
     if(want!=null){ r.want=want;
       r.ok = r.vol!=null && Math.abs(r.vol-want)<0.01 && r.bodies===1 && !(r.errs||[]).length; }

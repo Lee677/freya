@@ -617,20 +617,52 @@ having a visible pane to paste into.
     the point of the whole port: a Ø8 circle cut through the floor removes π·16·5.95 =
     299.08 mm³ exactly, i.e. the bin is a real solid you can cut.
 
-    Two cautions. **Builds are seconds, not milliseconds** (1x1x3 ≈ 5 s): ThruSections
-    emits B-spline side faces and every boolean against them pays trap 26's fixed cost.
-    The checkpoint cache hides this after the first build. If it ever matters, the profile
-    walls are geometrically planes and cones — a hand-built shell would boolean an order
-    of magnitude faster. And **the loose-bbox artifact**: `OCK.bounds` on a no-lip bin
-    reads ~2 mm above the real top, because the cavity cut's trimmed B-spline wall keeps
-    poles up at the tool's full height. Volume and meshing are unaffected; don't chase it
-    as a geometry bug (it was chased once).
+    The engine is **hand-sewn analytic faces**, and that is a second-generation fact worth
+    its history: v1 fed rings to ThruSections, which approximates every wall as a B-spline,
+    and each boolean against those paid trap 26's fixed cost — a 1x1x3 bin took 10 s and
+    ONE cut on a 4x4 baseplate took 22 s. But the walls are not freeform: straight-band
+    corners are CYLINDERS, tapered-band corners are CONES (ring corner centres are shared,
+    so radius is linear in height), and every flat is a PLANE. `gfLoft` now says so face by
+    face (`gfRing`/`gfAddBands`/`gfSewSolid`) and sews; the plate skips booleans entirely
+    and is sewn whole, sockets included. Bin 1x1x3: **1.2 s**; plate 4x4: **1.2 s, zero
+    booleans**; the loose-bbox artifact v1 had is gone with the B-splines. Volumes were
+    re-cross-checked against /grid after the rewrite (≤0.084%, bboxes exact) and re-pinned.
+
+    Three traps the sewn engine will bite someone with:
+    * **Top-down profiles.** /grid's loft reversed profiles written top-down (its trap 2);
+      the lip cut IS written top-down. Drop that guard and every band gets a negative
+      height and MakeFace throws a raw C++ number. The guard is in `gfLoft`.
+    * **A sewn shell's orientation is luck.** A solid sewn inside-out MEASURES negative
+      volume and booleans wrongly; `gfSewSolid` checks the sign and flips. (The minimal
+      repro pot: right orientation 1685.841 = 2000−100π exactly, wrong one 2314.159.)
+    * **Holes that touch.** Adjacent baseplate sockets are exactly pitch-wide at the top
+      (42.0 on 42.0), so their openings meet at zero gap — the boolean version resolved
+      that into knife-edges, but a sewn face cannot hold two touching holes and the solid
+      comes out empty and invalid. Every socket is half a micron smaller per side (EPS in
+      `gfPlate`): beneath any printer's notice, decisive for the topology.
 
     The shelf (`functions/api/shelf.js` + `wrangler.toml`): POST bytes → 10-minute KV TTL
     → `bambustudio://open/?file=<url>`. The client fetch is `/api/shelf` — ABSOLUTE —
     because a relative fetch from /freyacad/ resolves to /freyacad/api/shelf and misses
     the Function (that bug shipped for about an hour). Until the owner creates the KV
     namespace, every POST 503s and the dialog quietly falls back to download-then-launch.
+
+41. **Live-testing round one, and what it caught.** Three reports from the owner's first
+    real session, all fixed the same day:
+    * **The rollback bar was dead whenever the origin was expanded.** The drag mapped "the
+      N-th `.feat` row in the tree" to "array index N" — but datum planes and axes are
+      `.feat` rows too, nested sketches render out of array order, and so every drop
+      clamped to the end and read as a dead control. Rows now carry their group's starting
+      array index (`dataset.gs` — a feature plus the sketches it consumes, which sit
+      BEFORE it in the array) and both the bar's rendering and its drag go through that
+      one mapping, so they cannot disagree. The bar moves in whole features.
+    * **A sweep's path sketch floated at top level.** The tree only knew `sketchId`; a
+      sweep consumes TWO sketches. `pathId` now nests under the sweep beside the profile.
+    * **"Trace a photo" died with `V.loadImage is not a function`.** freyacad's own
+      lexical `V` — the Vector3 shorthand at the top of the script — shadows the vision
+      library's `window.V` everywhere inside the app. Every tracer call now goes through
+      `window.V` explicitly. Anything else that ever loads a global from /grid must
+      remember the app's shorthand namespace sits over it.
 
 ## Biggest thing still missing
 
