@@ -4,12 +4,13 @@
 #
 # The shelf needs a KV namespace, once:
 #   npx wrangler kv namespace create SHELF
-# then paste the id it prints over THE_KV_ID below. Until then the shelf
-# answers 503 and freyacad quietly falls back to download-then-launch.
+# then paste the id it prints below and UNCOMMENT the block. It ships
+# commented out so a deploy never fails on the placeholder — until then the
+# shelf answers 503 and freyacad quietly falls back to download-then-launch.
 name = "cad"
 pages_build_output_dir = "."
 compatibility_date = "2026-08-01"
 
-[[kv_namespaces]]
-binding = "SHELF"
-id = "THE_KV_ID"
+# [[kv_namespaces]]
+# binding = "SHELF"
+# id = "PASTE_THE_ID_HERE"
