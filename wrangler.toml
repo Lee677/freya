@@ -11,6 +11,6 @@ name = "cad"
 pages_build_output_dir = "."
 compatibility_date = "2026-08-01"
 
-# [[kv_namespaces]]
-# binding = "SHELF"
-# id = "PASTE_THE_ID_HERE"
+[[kv_namespaces]]
+binding = "SHELF"
+id = "b81e77f4387543518954608874007007"
