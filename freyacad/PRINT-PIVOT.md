@@ -139,8 +139,11 @@ both built with the Maker toolset only, both saved as walk-through-able trees:
    Open a bin, trace a real tool, cut the pocket, print. This is /grid's
    killer feature upgraded with editability.
 
-The lantern and jet engine move behind "More demos" — they showcase the kernel,
-just not to this audience.
+Done ahead of those two (owner call, 25 Aug): the lantern and jet engine are
+GONE rather than hidden — the lantern rebuilt as a **magic lamp** (revolve +
+two swept tubes, 8 features) and the jet engine replaced by a **print test
+boat**, a benchy-style tug in 15 features that a printer-owner recognises on
+sight. The assembly-demo machinery went with the engine.
 
 ## Workstream 5 — iPad, properly
 

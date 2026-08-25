@@ -76,9 +76,10 @@ Next up, in cost order (IGES was on this list at 40k and was explicitly dropped)
 (IGES sits at 40k and would be the cheapest row left, but it was dropped on purpose and stays
 dropped unless someone asks for it.)
 
-**Performance is done for now.** Lantern 5.5 s cold, pillow block 0.6 s, jet engine 10.5 s,
-warm edits near the top of a tree under a second. See "Where the remaining time goes" at the
-foot of this file for the one lever left, which is not a kernel change at all.
+**Performance is done for now.** Pillow block 0.6 s cold, the magic lamp and print test boat
+a few seconds each, warm edits near the top of a tree under a second. See "Where the
+remaining time goes" at the foot of this file for the one lever left, which is not a kernel
+change at all. (The old lantern 5.5 s / jet engine 10.5 s numbers went with those demos.)
 
 **Verify with `dev/verify.js`.** Read `dev/README.md` first — the A/B-against-the-previous-
 commit routine is what caught every regression in this work, and it is cheap. `dev/headless.js`
@@ -305,11 +306,12 @@ having a visible pane to paste into.
     intersected. OCCT did not error; it ground. Blades that do not touch build a 12-blade
     rotor in 59 ms. `rotor()` in the generator now asserts `2*half_arc < gap*0.55`.
 24. **A synchronous OCCT build blocks the paint, so a slow model looks like a crash.** The
-    jet engine is about a minute of kernel work. `loadDemoAsm` sets the hint and defers the
-    build by a `setTimeout` so the message reaches the screen first. Anything else that can
-    run long needs the same two-step, and note that timing it from the caller lies if the
-    work is behind a `FileReader` — that was how the engine first appeared to build in
-    376 ms.
+    old jet engine demo was about a minute of kernel work; its loader set the hint and
+    deferred the build by a `setTimeout` so the message reached the screen first. The demo
+    (and the assembly-demo path with it) is gone — replaced by the print test boat — but
+    anything that can run long still needs the same two-step, and note that timing it from
+    the caller lies if the work is behind a `FileReader` — that was how the engine first
+    appeared to build in 376 ms.
 
 25. **`rebuild()` is called from ~60 places and most change no geometry.** Selecting a
     feature, opening a sketch, moving the selection and closing a panel all called it, and
@@ -677,6 +679,17 @@ having a visible pane to paste into.
     removes itself on any window `error` event, so a headless test that aborts the kernel
     fetch kills the overlay before the row exists — serve the kernel mirror in tests.
 
+43. **Hand-authoring a sweep (learned rebuilding the demos).** Two rules. The path must
+    START AT or CROSS the profile's plane (`checkPierce` refuses otherwise) — so a spout
+    that visibly starts at x=7 still needs its path drawn from x=0, with the extra run
+    buried inside the body. And the profile is swept FROM WHERE IT IS DRAWN: the tube is
+    the path's shape carried at the profile's perpendicular offset from the path's start
+    tangent line. Draw the profile centred on that line (both demos: circle at Right-plane
+    (0, y0) with the path's first two control points flat at y0) and the offset is zero, so
+    the tube follows the drawn path exactly. The demos are also the pattern for a revolve
+    away from the origin: there isn't one — the boat's funnel stands at x=0 because `axis:
+    'v'` spins about the sketch's own vertical axis and nothing can move the result.
+
 ## Biggest thing still missing
 
 **A real constraint solver *for sketches*.** Dimensions are applied one at a time, so
@@ -691,7 +704,8 @@ already works), lines parallel to a datum plane, and property-panel edits inside
 
 ## Where the remaining time goes
 
-Cold builds: lantern 5.5 s, pillow block 0.6 s, jet engine's six parts 10.5 s. Warm edits
+Cold builds: pillow block 0.6 s, the sweep-heavy magic lamp and the print test boat a few
+seconds each (the retired lantern was 5.5 s, the retired jet engine 10.5 s). Warm edits
 near the top of a tree are under a second (trap 29). What is left is the per-boolean cost of
 a spline surface — about 600 ms, flat — and the boolean count is already minimal, so there is
 no more to win by rearranging them.
