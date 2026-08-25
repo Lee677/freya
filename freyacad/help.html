@@ -846,7 +846,10 @@ saves, reopens and replays as one self-contained recipe.</p>
       cut it, mirror it, pattern it, export it again.</li>
   <li><b>STL</b> is only ever triangles, so it arrives as a faceted body. It's exactly
       right for viewing, placing and re-exporting; fillets and smooth-surface work need
-      real surfaces that a mesh simply doesn't have.</li>
+      real surfaces that a mesh simply doesn't have. STL files live in printer
+      coordinates (Z&nbsp;up), and the import reads them that way — a benchy from the
+      internet stands on its hull, and exporting then re-importing your own STL puts it
+      back exactly where it was.</li>
 </ul>
 <p>Files over 30&nbsp;MB are refused — they'd make the saved part unwieldy. Decimate
 large scans first.</p>
@@ -1013,7 +1016,10 @@ the side and you asked for the vertical one.</p>
 <p>The corner the next click would take <b>glows</b> as the cursor passes it, so you are never
 aiming at a snap you cannot see. The number is measured off the <b>model</b>, not off the
 paper: change the sheet scale to 1:2 and the drawing halves while the dimension still reads
-40. Dimensions belong to their view, so they travel with it when you drag it and go with it
+40. That holds on an <b>isometric view</b> too, where the picture itself is foreshortened:
+an isometric dimension is always aligned and reads the true corner-to-corner length of the
+part, not the shortened distance you could measure off the sheet with a ruler.
+Dimensions belong to their view, so they travel with it when you drag it and go with it
 when you delete it. Drag a dimension to move it where you want it; click one and press
 <kbd>Delete</kbd> to remove it. <kbd>Esc</kbd> puts the tool down, and again leaves the
 drawing.</p>
