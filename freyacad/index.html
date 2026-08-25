@@ -886,6 +886,13 @@ const CSG = (function(){
 
   /* ---- scene ---- */
   const scene = new THREE.Scene();
+  /* The fog is depth-cueing for the grid and ground, not for the model — but
+     its distances are ABSOLUTE, and they were tuned when parts were 15 mm
+     across. A Gridfinity bin is 42 mm a cell and a baseplate several times
+     that, so the camera orbits from 100+ units out and real-size parts sat
+     INSIDE the fog — "the bins are in the dark". The render loop now pushes
+     the fog out with the camera (fogTick) so it only ever eats the backdrop;
+     55/150 remain the floor so small parts look exactly as before. */
   scene.fog = new THREE.Fog(0x0a0e12, 55, 150);
   /* Two cameras, one orbit. `camera` is the live binding everything else reads,
      so switching projection is a reassignment plus a pose copy. The ortho
@@ -11840,6 +11847,11 @@ const CSG = (function(){
        orbit, because the geometry moves and the numbers lag one frame behind. */
     camera.updateMatrixWorld();
     camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+    { // fogTick — see the fog comment at scene setup
+      const fd=camera.position.distanceTo(controls.target);
+      scene.fog.near=Math.max(55,fd*1.6);
+      scene.fog.far=Math.max(150,fd*4);
+    }
     updateDimLabels();candyTick(now||0);tickOrigin(now||0);
     if(traceGroup.visible)tickLabelScale();
     updateTraceLabels();
