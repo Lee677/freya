@@ -8155,9 +8155,12 @@ const CSG = (function(){
      with a cosine falloff, a Laplacian relax on release keeps it kink-free).
      The scale line is /grid's too: mark two ends of a known distance (click-
      click or drag), type the real length, and the outline is TRUE size — the
-     longest-side box stays as the fallback when no line is drawn. Still
-     /grid-only: finger holes, the straighten tool, the search-box ROI, and
-     the printable fit-check template. */
+     longest-side box stays as the fallback when no line is drawn. So are
+     finger holes (snapped onto the line, raster-unioned into the outline at
+     insert, because two overlapping loops in one sketch is trap 23), the
+     straighten tool (shorter perimeter arc between two clicks goes straight)
+     and the search box (drag on empty photo; the tracer looks only inside).
+     The one thing still /grid-only is the printable fit-check template. */
   let visionP=null;
   function loadVision(){
     if(window.V)return Promise.resolve();
@@ -8207,6 +8210,15 @@ const CSG = (function(){
         <button id="tr-undo" class="btn-ghost" style="font-size:11.5px" disabled>Undo</button>
         <button id="tr-reset" class="btn-ghost" style="font-size:11.5px" disabled>Reset line</button>
       </div>
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+        <button id="tr-fing" class="btn-ghost" style="font-size:11.5px">Add finger hole</button>
+        <label style="font-size:11.5px;color:var(--muted)">r
+          <input id="tr-fr" type="number" value="9" min="1" step="1" style="width:54px;margin-left:4px"> mm</label>
+        <button id="tr-straight" class="btn-ghost" style="font-size:11.5px">Straighten</button>
+        <span style="flex:1"></span>
+        <span style="font-size:11px;color:var(--muted-2)">drag empty photo = search area</span>
+        <button id="tr-roiclear" class="btn-ghost" style="font-size:11.5px;display:none">clear search</button>
+      </div>
       <canvas id="tr-cv" width="544" height="320" style="position:static;width:100%;background:var(--panel-2,#161b22);border:1px solid var(--line);border-radius:8px;touch-action:none"></canvas>
       <!-- position:static: the app-wide canvas{position:absolute;inset:0} rule
            (for the viewport) otherwise stretches this preview over the whole
@@ -8235,6 +8247,13 @@ const CSG = (function(){
     /* the /grid scale line: two ends of a known distance beat guessing the
        photo's extent. Click-click or drag — both gestures, as on /grid. */
     let scalePts=[], scaleDrag=null;
+    /* the rest of /grid's scan kit: finger holes (circles snapped onto the
+       line, click one again to take it away), the straighten tool (two clicks,
+       the shorter perimeter arc between them goes straight), and the search
+       box (drag on empty photo; the tracer looks only inside it). */
+    let fingers=[];               // {x,y,r} — x,y image px, r in mm
+    let straightA=null;           // first end of a straighten pair (index)
+    let roi=null, roiDrag=null;   // {x0,y0,x1,y1} image px
     const cv=$q('tr-cv'), g=cv.getContext('2d');
     const status=t=>{$q('tr-status').textContent=t;};
     const K=()=>img?Math.min(cv.width/img.width,cv.height/img.height):1;
@@ -8254,6 +8273,37 @@ const CSG = (function(){
     const distToOutline=p=>{if(!contour)return Infinity;let best=Infinity;
       for(let i=0;i<contour.length;i++){const d=distToSeg(p,contour[i],contour[(i+1)%contour.length]);
         if(d<best)best=d;}return best;};
+    const nearestOutlineIndex=p=>{let bi=0,bd=Infinity;
+      for(let i=0;i<contour.length;i++){const d=Math.hypot(p[0]-contour[i][0],p[1]-contour[i][1]);
+        if(d<bd){bd=d;bi=i;}}return bi;};
+    const nearestOutlinePoint=p=>{const n=contour.length;let best=Infinity,out=p;
+      for(let i=0;i<n;i++){const a=contour[i],b=contour[(i+1)%n];
+        const vx=b[0]-a[0],vy=b[1]-a[1],L=vx*vx+vy*vy;
+        let t=L?((p[0]-a[0])*vx+(p[1]-a[1])*vy)/L:0;t=Math.max(0,Math.min(1,t));
+        const q=[a[0]+t*vx,a[1]+t*vy],d=Math.hypot(p[0]-q[0],p[1]-q[1]);
+        if(d<best){best=d;out=q;}}return out;};
+    /* a closed polygon has two paths between any pair of points; the one that
+       is shorter along the perimeter is the one being straightened */
+    const straightenBetween=(i0,i1)=>{
+      const n=contour.length;let a=i0,b=i1;
+      const fwd=(b-a+n)%n;
+      if(fwd>n-fwd){const t=a;a=b;b=t;}
+      const A=contour[a],B=contour[b],out=[];
+      for(let k=b;k!==a;k=(k+1)%n)out.push([contour[k][0],contour[k][1]]);
+      out.push([A[0],A[1]]);
+      const step=Math.max(2.5,Math.max(img.width,img.height)/220);
+      const m=Math.max(1,Math.floor(Math.hypot(B[0]-A[0],B[1]-A[1])/step));
+      for(let k=1;k<m;k++)out.push([A[0]+(B[0]-A[0])*k/m,A[1]+(B[1]-A[1])*k/m]);
+      contour=out;};
+    /* pixels per mm however the scale is known: the measured line, or the
+       longest-side estimate against the current outline */
+    const effPPM=()=>{const ppm=pxPerMM();if(ppm)return ppm;
+      if(!contour||contour.length<3)return null;
+      let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+      for(const q of contour){x0=Math.min(x0,q[0]);x1=Math.max(x1,q[0]);
+                              y0=Math.min(y0,q[1]);y1=Math.max(y1,q[1]);}
+      return Math.max(1e-6,Math.max(x1-x0,y1-y0))/Math.max(1,+$q('tr-mm').value||100);};
+    const fingerPx=f=>f.r*(effPPM()||1);
     /* even spacing, or a long straight run has nothing to grab in the middle */
     const resample=(poly,step)=>{const out=[];let carry=0;
       for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length];
@@ -8280,6 +8330,15 @@ const CSG = (function(){
       if(!img)return;
       const k=K();
       g.drawImage(img.canvas,0,0,img.width*k,img.height*k);
+      const liveRoi=(roiDrag&&roiDrag.moved&&cursor)
+        ?{x0:Math.min(roiDrag.start[0],cursor[0]),y0:Math.min(roiDrag.start[1],cursor[1]),
+          x1:Math.max(roiDrag.start[0],cursor[0]),y1:Math.max(roiDrag.start[1],cursor[1])}
+        :roi;
+      if(liveRoi){
+        g.save();g.strokeStyle='#4285F4';g.setLineDash([6,4]);g.lineWidth=1.6;
+        g.strokeRect(liveRoi.x0*k,liveRoi.y0*k,(liveRoi.x1-liveRoi.x0)*k,(liveRoi.y1-liveRoi.y0)*k);
+        g.restore();
+      }
       if(contour&&contour.length>2){
         g.strokeStyle='#FBBC05';g.lineWidth=2;g.beginPath();
         contour.forEach((p,i)=>i?g.lineTo(p[0]*k,p[1]*k):g.moveTo(p[0]*k,p[1]*k));
@@ -8293,6 +8352,30 @@ const CSG = (function(){
           g.lineWidth=brushing?2.2:1.4;
           g.setLineDash(brushing?[]:[6,5]);g.stroke();g.setLineDash([]);
         }
+      }
+      // finger holes: circles snapped onto the line, sized in real mm
+      if(fingers.length&&contour){
+        g.save();
+        for(const f of fingers){
+          g.beginPath();g.arc(f.x*k,f.y*k,fingerPx(f)*k,0,7);
+          g.fillStyle='rgba(251,188,5,.16)';g.fill();
+          g.strokeStyle='#FBBC05';g.lineWidth=1.6;g.setLineDash([4,3]);g.stroke();
+          g.setLineDash([]);
+        }
+        g.restore();
+      }
+      // straighten: mark the first clicked end, rubber-band to the cursor
+      if(arm==='straight'&&straightA!=null&&contour&&contour[straightA]){
+        const a=contour[straightA];
+        g.save();
+        if(cursor){
+          g.strokeStyle='#4285F4';g.lineWidth=1.4;g.setLineDash([5,4]);
+          g.beginPath();g.moveTo(a[0]*k,a[1]*k);g.lineTo(cursor[0]*k,cursor[1]*k);
+          g.stroke();g.setLineDash([]);
+        }
+        g.fillStyle='#4285F4';g.strokeStyle='#fff';g.lineWidth=2;
+        g.beginPath();g.arc(a[0]*k,a[1]*k,4.5,0,7);g.fill();g.stroke();
+        g.restore();
       }
       // the scale line: two numbered ends of a known distance
       const sp=(arm==='scale'&&scaleDrag&&scaleDrag.moved)?[scaleDrag.start,cursor]:scalePts;
@@ -8319,7 +8402,8 @@ const CSG = (function(){
         const ppm=pxPerMM();
         const s=ppm?1/ppm:(Math.max(1,+$q('tr-mm').value||100)/Math.max(1e-6,Math.max(x1-x0,y1-y0)));
         $q('tr-osize').textContent=' · outline '+((x1-x0)*s).toFixed(1)+' × '+((y1-y0)*s).toFixed(1)+' mm'
-          +(ppm?' (measured)':'');
+          +(ppm?' (measured)':'')
+          +(fingers.length?' · '+fingers.length+' finger hole'+(fingers.length>1?'s':''):'');
       } else $q('tr-osize').textContent='';
     };
     function traceNow(){
@@ -8328,6 +8412,7 @@ const CSG = (function(){
         const VS=window.V;
         const useCol=colors.tool.length&&colors.bg.length;
         const seg=VS.segment(img,{clean:2,invert:$q('tr-inv').checked,
+          roi:roi||undefined,
           colors:useCol?{tool:colors.tool,bg:colors.bg}:undefined});
         const raw=VS.contour(seg.mask,seg.w||img.width,seg.h||img.height);
         if(!raw||raw.length<8)throw new Error('no outline found');
@@ -8344,17 +8429,28 @@ const CSG = (function(){
            :' — try picking the object colour, or the other background setting')); }
     }
     const armBtn=which=>{arm=(arm===which)?null:which;
+      straightA=null;
       $q('tr-ctool').classList.toggle('btn-primary',arm==='tool');
       $q('tr-cbg').classList.toggle('btn-primary',arm==='bg');
       $q('tr-cscale').classList.toggle('btn-primary',arm==='scale');
-      cv.style.cursor=arm?(arm==='scale'?'crosshair':'copy'):'crosshair';
+      $q('tr-fing').classList.toggle('btn-primary',arm==='finger');
+      $q('tr-straight').classList.toggle('btn-primary',arm==='straight');
+      cv.style.cursor=arm?((arm==='tool'||arm==='bg')?'copy':'crosshair'):'crosshair';
       if(arm==='scale'){scaleDrag=null;
         status('Click the two ends of something you know the size of — or drag from one to the other');}
+      else if(arm==='finger')status('Click the outline where you want to lift the part from — click a hole again to take it away');
+      else if(arm==='straight')status('Click one end of the wobbly stretch');
       else if(arm)status(arm==='tool'?'Click the OBJECT in the photo — several shades is normal, press the button again to stop'
-        :'Click the BACKGROUND in the photo — the trace updates by colour');};
+        :'Click the BACKGROUND in the photo — the trace updates by colour');
+      paint();};
     $q('tr-ctool').addEventListener('click',()=>armBtn('tool'));
     $q('tr-cbg').addEventListener('click',()=>armBtn('bg'));
     $q('tr-cscale').addEventListener('click',()=>armBtn('scale'));
+    $q('tr-fing').addEventListener('click',()=>armBtn('finger'));
+    $q('tr-straight').addEventListener('click',()=>armBtn('straight'));
+    $q('tr-fr').addEventListener('input',paint);
+    $q('tr-roiclear').addEventListener('click',()=>{roi=null;
+      $q('tr-roiclear').style.display='none';traceNow();});
     $q('tr-cclear').addEventListener('click',()=>{colors.tool=[];colors.bg=[];
       renderSw();syncBtns();traceNow();});
     $q('tr-lmm').addEventListener('input',paint);
@@ -8372,6 +8468,34 @@ const CSG = (function(){
         scaleDrag={start:p,moved:false};
         try{cv.setPointerCapture(e.pointerId);}catch(_){}
         return;
+      }
+      if(arm==='finger'){
+        if(!contour){status('trace an outline first');return;}
+        // clicking an existing hole removes it
+        for(let i=0;i<fingers.length;i++){
+          if(Math.hypot(p[0]-fingers[i].x,p[1]-fingers[i].y)<=fingerPx(fingers[i])){
+            fingers.splice(i,1);paint();return;
+          }
+        }
+        // the notch is a circle centred ON the line, so snap to it
+        const q=nearestOutlinePoint(p);
+        fingers.push({x:q[0],y:q[1],r:Math.max(1,+$q('tr-fr').value||9)});
+        paint();return;
+      }
+      if(arm==='straight'){
+        if(!contour){status('trace an outline first');return;}
+        const i=nearestOutlineIndex(p);
+        if(straightA==null){ straightA=i;
+          status('now click the other end — the stretch between goes straight');
+          paint();return; }
+        const i0=straightA; straightA=null;
+        if(i0===i){status('those are the same point — click two different places');paint();return;}
+        undoStack.push(contour.map(q=>[q[0],q[1]]));
+        if(undoStack.length>40)undoStack.shift();
+        edited=true;syncBtns();
+        straightenBetween(i0,i);
+        status('straightened — click two more points, or press Straighten again to stop');
+        paint();return;
       }
       if(arm){
         const VS=window.V;
@@ -8395,13 +8519,21 @@ const CSG = (function(){
         brushing={last:p,touched:new Set()};
         try{cv.setPointerCapture(e.pointerId);}catch(_){}
         paint();
+        return;
       }
+      // away from the line: drag a search area; a plain click clears one
+      roiDrag={start:p,moved:false};
+      try{cv.setPointerCapture(e.pointerId);}catch(_){}
     });
     cv.addEventListener('pointermove',e=>{
       if(!img)return;
       const p=evPos(e); cursor=p;
       if(scaleDrag){                                  // rubber-band the scale line
         if(Math.hypot(p[0]-scaleDrag.start[0],p[1]-scaleDrag.start[1])>6/K())scaleDrag.moved=true;
+        paint();return;
+      }
+      if(roiDrag){                                    // rubber-band the search box
+        if(Math.hypot(p[0]-roiDrag.start[0],p[1]-roiDrag.start[1])>6/K())roiDrag.moved=true;
         paint();return;
       }
       if(brushing){
@@ -8438,12 +8570,31 @@ const CSG = (function(){
         else { scalePts=[scaleDrag.start]; scaleDrag=null;
                status('Now the other end of the known distance'); paint(); }
       }
-      if(brushing){ smoothTouched(brushing.touched); brushing=null; paint(); }
+      if(roiDrag){
+        const p=cursor||roiDrag.start;
+        if(roiDrag.moved){
+          roi={x0:Math.min(roiDrag.start[0],p[0]),y0:Math.min(roiDrag.start[1],p[1]),
+               x1:Math.max(roiDrag.start[0],p[0]),y1:Math.max(roiDrag.start[1],p[1])};
+          roiDrag=null;$q('tr-roiclear').style.display='';
+          status('Searching inside the box only');traceNow();
+        } else {
+          roiDrag=null;
+          if(roi){ roi=null;$q('tr-roiclear').style.display='none';
+                   status('Search area cleared — the whole photo again');traceNow(); }
+        }
+      }
+      if(brushing){
+        smoothTouched(brushing.touched); brushing=null;
+        /* re-space so the next grab has points everywhere along the stretch
+           that just moved (straight from /grid's release) */
+        contour=resample(contour,Math.max(2.5,Math.max(img.width,img.height)/220));
+        paint();
+      }
       try{cv.releasePointerCapture(e.pointerId);}catch(_){}
     };
     cv.addEventListener('pointerup',endBrush);
     cv.addEventListener('pointercancel',endBrush);
-    cv.addEventListener('pointerleave',()=>{ if(!brushing&&!scaleDrag){cursor=null;paint();} });
+    cv.addEventListener('pointerleave',()=>{ if(!brushing&&!scaleDrag&&!roiDrag){cursor=null;paint();} });
     $q('tr-undo').addEventListener('click',()=>{
       if(!undoStack.length)return;
       contour=undoStack.pop(); edited=!!undoStack.length; syncBtns(); paint();});
@@ -8462,7 +8613,10 @@ const CSG = (function(){
         const r=VS.plain(bm,1,1000);
         const d=r.canvas.getContext('2d').getImageData(0,0,r.w,r.h);
         img={canvas:r.canvas,width:r.w,height:r.h,data:d.data};
-        scalePts=[];scaleDrag=null;syncScaleUI();   // a new photo, a new framing
+        // a new photo, a new framing: scale, fingers and search box all reset
+        scalePts=[];scaleDrag=null;syncScaleUI();
+        fingers=[];straightA=null;roi=null;roiDrag=null;
+        $q('tr-roiclear').style.display='none';
         traceNow();
       }catch(err){ status(err.message||String(err)); }
     });
@@ -8473,14 +8627,38 @@ const CSG = (function(){
       if(!contour||contour.length<8||!editing)return;
       /* editing keeps the line densely sampled so it bends smoothly; the
          inserted shape is thinned back down below anything a printer resolves */
-      const poly=window.V.rdp(contour,1.2);
+      /* finger holes are unioned into the outline in raster, exactly as /grid
+         cuts them (fill the polygon, fill the circles, trace the blob) — a
+         separate overlapping circle entity would trip the overlapping-loops
+         rule (trap 23) the moment the sketch built */
+      let src=contour;
+      if(fingers.length){
+        const t=document.createElement('canvas');t.width=img.width;t.height=img.height;
+        const tg=t.getContext('2d',{willReadFrequently:true});
+        tg.fillStyle='#fff';
+        tg.beginPath();
+        contour.forEach((p,i)=>i?tg.lineTo(p[0],p[1]):tg.moveTo(p[0],p[1]));
+        tg.closePath();tg.fill();
+        for(const f of fingers){tg.beginPath();tg.arc(f.x,f.y,fingerPx(f),0,7);tg.fill();}
+        const d2=tg.getImageData(0,0,img.width,img.height).data;
+        const m=new Uint8Array(img.width*img.height);
+        for(let i=0;i<m.length;i++)m[i]=d2[i*4+3]>127?1:0;
+        const u=window.V.contour(m,img.width,img.height);
+        if(u&&u.length>7)src=u;
+      }
+      const poly=window.V.rdp(src,1.2);
       let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
       for(const p of poly){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);
                            y0=Math.min(y0,p[1]);y1=Math.max(y1,p[1]);}
-      /* the measured scale line wins; the longest-side guess is the fallback */
+      /* the measured scale line wins; the longest-side guess is the fallback —
+         measured against the OUTLINE's own box, not the union's, so a finger
+         hole bulging past the edge cannot shrink the part */
+      let ox0=Infinity,oy0=Infinity,ox1=-Infinity,oy1=-Infinity;
+      for(const p of contour){ox0=Math.min(ox0,p[0]);ox1=Math.max(ox1,p[0]);
+                              oy0=Math.min(oy0,p[1]);oy1=Math.max(oy1,p[1]);}
       const ppm=pxPerMM();
       const sc=ppm?1/ppm
-        :Math.max(1,+$q('tr-mm').value||100)/Math.max(1e-6,Math.max(x1-x0,y1-y0));
+        :Math.max(1,+$q('tr-mm').value||100)/Math.max(1e-6,Math.max(ox1-ox0,oy1-oy0));
       const cx=(x0+x1)/2, cy=(y0+y1)/2;
       /* image y runs down, sketch v runs up — flip, or every trace is mirrored */
       const pts=poly.map(p=>({x:+((p[0]-cx)*sc).toFixed(3), y:+((cy-p[1])*sc).toFixed(3)}));
