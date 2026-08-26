@@ -3423,12 +3423,18 @@ const CSG = (function(){
     const oc = OC();
     const b = OCK.bounds(shape);
     const diag = Math.hypot(b.max[0]-b.min[0], b.max[1]-b.min[1], b.max[2]-b.min[2]) || 1;
-    const defl = Math.min(0.8, Math.max(0.02, diag*0.004));
+    /* The ANGULAR deflection (0.22 rad ≈ 12.6°, so ≥28 chords per full turn)
+       is the constraint that matters: it is scale-free, so a 1.5 mm swept
+       tube tessellates as roundly as a 40 mm boss. The linear deflection is
+       relative to the whole model and only bounds the big flat spans. The
+       old 0.35 rad let small curves render as obvious facets (owner report:
+       the lamp's spout). */
+    const defl = Math.min(0.5, Math.max(0.015, diag*0.003));
     // mesh-only bodies carry their triangulation already and have no surfaces
     // for the mesher to work on — skip remeshing rather than die
-    try{ new oc.BRepMesh_IncrementalMesh_2(shape, defl, false, 0.35, false); }
+    try{ new oc.BRepMesh_IncrementalMesh_2(shape, defl, false, 0.22, false); }
     catch(_){ }
-    const pos = [], idx = [];
+    const pos = [], idx = [], ranges = [];
     const fx = new oc.TopExp_Explorer_2(shape, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
     while(fx.More()){
       const face = oc.TopoDS.Face_1(fx.Current());
@@ -3437,6 +3443,7 @@ const CSG = (function(){
       if(!th.IsNull()){
         const tri = th.get(), trsf = loc.Transformation();
         const off = pos.length/3, nn = tri.NbNodes();
+        const triStart = idx.length/3;
         for(let i = 1; i <= nn; i++){ const p = tri.Node(i).Transformed(trsf); pos.push(p.X(), p.Y(), p.Z()); }
         const rev = face.Orientation_1() === oc.TopAbs_Orientation.TopAbs_REVERSED;
         const nt = tri.NbTriangles();
@@ -3445,6 +3452,7 @@ const CSG = (function(){
           const a = t.Value(1)-1+off, b2 = t.Value(2)-1+off, c = t.Value(3)-1+off;
           if(rev) idx.push(a, c, b2); else idx.push(a, b2, c);
         }
+        ranges.push({start: triStart, count: idx.length/3 - triStart});
       }
       fx.Next();
     }
@@ -3453,7 +3461,43 @@ const CSG = (function(){
     geo.setIndex(idx);
     geo.computeVertexNormals();
     geo.userData.isCSG = true;
+    /* one triangle range per B-REP FACE, in explorer order — this is what
+       lets a face click select the real face instead of a crease-flood
+       guess (see faceRegion) */
+    geo.userData.faceRanges = ranges;
     return geo;
+  };
+  /* Every real B-rep edge of the shape as a display polyline — what the
+     viewport draws and what edge clicks pick. The tessellation's creases
+     stay out of it: a curved wall carries no lines at all, exactly like a
+     desktop CAD viewport. Straight edges collapse to a single chord. */
+  OCK.edgeMesh = function(shape){
+    const oc = OC(); const out = [], seen = [];
+    const ex = new oc.TopExp_Explorer_2(shape, oc.TopAbs_ShapeEnum.TopAbs_EDGE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
+    while(ex.More()){
+      const e = oc.TopoDS.Edge_1(ex.Current());
+      try{
+        if(!oc.BRep_Tool.Degenerated(e) && !seen.some(o=>o.IsSame(e))){
+          seen.push(e);
+          const c = new oc.BRepAdaptor_Curve_2(e);
+          const t0 = c.FirstParameter(), t1 = c.LastParameter();
+          const N = 48, raw = [];
+          for(let i = 0; i <= N; i++){ const p = c.Value(t0+(t1-t0)*i/N); raw.push([p.X(),p.Y(),p.Z()]); }
+          const pts = [raw[0]];
+          for(let i = 1; i < N; i++){
+            const a = pts[pts.length-1], b = raw[i], d = raw[i+1];
+            const ab = vsub(b,a), bd = vsub(d,b), la = vlen(ab), lb = vlen(bd);
+            if(la < 1e-7) continue;
+            if(lb > 1e-7 && vdot(ab,bd)/(la*lb) > 0.99995) continue;   // colinear: drop b
+            pts.push(b);
+          }
+          pts.push(raw[N]);
+          if(pts.length >= 2) out.push(pts);
+        }
+      }catch(_){ /* an edge with no curve (mesh import) simply has no line */ }
+      ex.Next();
+    }
+    return out;
   };
   /* Read a STEP or STL file (base64 bytes) into a shape via the kernel's own
      readers. STEP arrives as true B-rep — planes, cylinders, blends — and can
@@ -4671,13 +4715,15 @@ const CSG = (function(){
       try{ resultGeoms.push(OCK.mesh(s)); }
       catch(err){ console.error('mesh failed', err); }
     }
-    for(const g of resultGeoms){
+    edgePolyCache=[];
+    resultGeoms.forEach((g,bi)=>{
       const mesh=new THREE.Mesh(g, solidMat);
       mesh.castShadow=true;mesh.receiveShadow=true;
-      const eg=new THREE.EdgesGeometry(g,25);
-      mesh.add(new THREE.LineSegments(eg,edgeMat));
+      /* the overlay draws the model's REAL edges, from the kernel — never
+         the tessellation's creases, so a curved wall carries no lines */
+      mesh.add(new THREE.LineSegments(edgeOverlayGeom(bodyEdgePolys(bi)),edgeMat));
       scene.add(mesh);resultMeshes.push(mesh);
-    }
+    });
     applyAppearance();
     drawSketchOverlays(active);
     drawRefGeometry(active);
@@ -4693,16 +4739,52 @@ const CSG = (function(){
     drawTextHandle();  // the open text panel's move handle rides every rebuild
   }
 
-  /* ---- pickable edges ---- */
+  /* ---- pickable edges ----
+     The pick set is the model's REAL edges: one polyline per B-rep edge
+     (OCK.edgeMesh), broken into chords for the raycaster, every chord
+     tagged with the edge it belongs to so a click selects — and the
+     highlight paints — the WHOLE edge, however coarse the display mesh.
+     A mesh-only import has no curves, so it falls back to the old
+     tessellation-crease edges rather than showing nothing. */
   let pickEdges=[], pickLines=null;
+  let edgePolyCache=[];   // per body: its kernel-edge polylines, once per rebuild
+  function bodyEdgePolys(bi){
+    if(edgePolyCache[bi])return edgePolyCache[bi];
+    let polys=[];
+    try{ if(resultShapes[bi])polys=OCK.edgeMesh(resultShapes[bi]); }catch(_){ }
+    if(!polys.length&&resultGeoms[bi])
+      polys=featureEdges(resultGeoms[bi]).map(e=>[e.a,e.b]);
+    edgePolyCache[bi]=polys;
+    return polys;
+  }
+  function edgeOverlayGeom(polys){
+    const pos=[];
+    for(const P of polys)for(let i=0;i+1<P.length;i++)
+      pos.push(P[i][0],P[i][1],P[i][2],P[i+1][0],P[i+1][1],P[i+1][2]);
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+    return g;
+  }
   const hoverGroup=new THREE.Group(); scene.add(hoverGroup);
   const selGroup=new THREE.Group(); scene.add(selGroup);
-  let selectedEdges=[];   
+  let selectedEdges=[];
   let hoveredEdge=null;
   function buildPickEdges(){
     if(pickLines){scene.remove(pickLines);pickLines.geometry.dispose();pickLines=null;}
     pickEdges=[]; const pos=[];
-    resultGeoms.forEach((g,bi)=>{ for(const e of featureEdges(g)){ e.body=bi; pickEdges.push(e); pos.push(e.a[0],e.a[1],e.a[2], e.b[0],e.b[1],e.b[2]); } });
+    let eid=0;
+    resultGeoms.forEach((g,bi)=>{
+      for(const P of bodyEdgePolys(bi)){
+        const edgeId=eid++;
+        for(let i=0;i+1<P.length;i++){
+          const a=P[i],b=P[i+1];
+          let dir=vsub(b,a); const L=vlen(dir); if(L<1e-6)continue;
+          dir=vscale(dir,1/L);
+          pickEdges.push({a,b,mid:vscale(vadd(a,b),0.5),dir,len:L,body:bi,edgeId});
+          pos.push(a[0],a[1],a[2],b[0],b[1],b[2]);
+        }
+      }
+    });
     if(pos.length){
       const lg=new THREE.BufferGeometry(); lg.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
       pickLines=new THREE.LineSegments(lg,new THREE.LineBasicMaterial({transparent:true,opacity:0,depthTest:false}));
@@ -10283,8 +10365,11 @@ const CSG = (function(){
         canvas.style.cursor=d?'pointer':'default';
         return;
       }
-      const e2=pickEdge(e); const ne=e2?e2.idx:null;
-      if(ne!==(hoveredEdge?hoveredEdge.idx:null)){ hoveredEdge=e2; redrawEdgeSel(); canvas.style.cursor=e2?'pointer':'default'; }
+      const e2=pickEdge(e);
+      /* compare by EDGE, not by chord — sliding along one edge of a circle
+         must not repaint the highlight per tessellation chord */
+      const keyOf=h=>h?(h.rec.edgeId!=null?'e'+h.rec.body+':'+h.rec.edgeId:'i'+h.idx):null;
+      if(keyOf(e2)!==keyOf(hoveredEdge)){ hoveredEdge=e2; redrawEdgeSel(); canvas.style.cursor=e2?'pointer':'default'; }
     }
   });
   canvas.addEventListener('pointerup',e=>{
@@ -10563,14 +10648,20 @@ const CSG = (function(){
       return grp;
     };
     
+    /* paint the WHOLE topological edge the chord belongs to — a click on one
+       chord of a circle lights the full circle, like any desktop CAD */
+    const wholeEdge=rec=>(rec&&rec.edgeId!=null)
+      ? pickEdges.filter(r=>r.edgeId===rec.edgeId&&r.body===rec.body)
+      : (rec?[rec]:[]);
+    const paint=(rec,grp,color)=>{ for(const c of wholeEdge(rec))grp.add(mkLine(c.a,c.b,color)); };
     const seedsToDraw = (draftFeat && draftFeat.type === 'fillet') ? draftFeat.seeds : selectedEdges;
     for(const s of seedsToDraw) {
         const m = matchEdge(s, pickEdges);
-        if (m) selGroup.add(mkLine(m.a, m.b, 0x4285F4));
+        if (m) paint(m, selGroup, 0x4285F4);
     }
-    
+
     if(hoveredEdge && !seedsToDraw.some(s=>ptClose(s.mid,hoveredEdge.rec.mid,1e-3)))
-      hoverGroup.add(mkLine(hoveredEdge.rec.a,hoveredEdge.rec.b,0x35d4e6));
+      paint(hoveredEdge.rec, hoverGroup, 0x35d4e6);
     if(typeof updateHelp==='function')updateHelp();
   }
 
@@ -11200,7 +11291,9 @@ const CSG = (function(){
       let g; try{ g=OCK.mesh(s); }catch(_){ continue; }
       const mesh=new THREE.Mesh(g,matFor(comp.color));
       mesh.castShadow=true;mesh.receiveShadow=true;
-      const el=new THREE.LineSegments(new THREE.EdgesGeometry(g,25),edgeMat.clone());
+      let cpolys=[]; try{ cpolys=OCK.edgeMesh(s); }catch(_){ }
+      if(!cpolys.length)cpolys=featureEdges(g).map(e2=>[e2.a,e2.b]);
+      const el=new THREE.LineSegments(edgeOverlayGeom(cpolys),edgeMat.clone());
       el.visible=!renderedView;
       mesh.add(el);
       mesh.userData.compId=comp.id;
@@ -11394,6 +11487,27 @@ const CSG = (function(){
   function faceRegion(geom,seed){
     const topo=meshTopo(geom);
     if(topo.regions.has(seed))return topo.regions.get(seed);
+    /* When the geometry came from the kernel it carries one triangle range
+       per B-REP FACE — so the "region" is simply the real face, exactly as
+       a desktop CAD selects it, however coarse the display mesh. The crease
+       flood below stays for meshes without ranges (STL imports, and the one
+       whole-shell face a mesh import is wrapped in — a single range tells
+       us nothing, so those flood too). */
+    const fr=geom.userData&&geom.userData.faceRanges;
+    if(fr&&fr.length>1){
+      let lo=0,hi=fr.length-1;
+      while(lo<=hi){
+        const m=(lo+hi)>>1, r=fr[m];
+        if(seed<r.start)hi=m-1;
+        else if(seed>=r.start+r.count)lo=m+1;
+        else{
+          const ids=[];
+          for(let t=r.start;t<r.start+r.count;t++)ids.push(t);
+          topo.regions.set(seed,ids);
+          return ids;
+        }
+      }
+    }
     /* 38° is the crease: a cylinder tessellated finer than that stays whole as
        the normal walks round it, while a chamfer or a box corner stops the
        flood. Compared neighbour-to-neighbour, never to the seed — that is what
