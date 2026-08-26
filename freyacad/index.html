@@ -8145,12 +8145,16 @@ const CSG = (function(){
 
   /* ---- Trace a photo --------------------------------------------------------
      /grid's scan pipeline (vision.js — shared, lazy-loaded from /grid/js/) in
-     freyacad's sketch mode: photo in, Otsu segmentation, crack-following
-     contour, RDP simplify, and the outline lands in the OPEN SKETCH as a
-     closed polyline at a scale the user pins with one number. From there the
-     normal tools take over — cut it into a Gridfinity bin floor, or into
-     anything else. The /grid tab remains the specialist (colour segmentation,
-     brush fix-up, fit-check templates); this is the everyday 80%. */
+     freyacad's sketch mode: photo in, segmentation, crack-following contour,
+     RDP simplify, and the outline lands in the OPEN SKETCH as a closed
+     polyline at a scale the user pins with one number. The dialog carries
+     /grid's two fix-up tools behaviour-for-behaviour — colour classification
+     (sample the object and the background; each pixel joins the nearer list,
+     which separates same-brightness different-hue photos Otsu never can) and
+     the reshape brush (grab the line anywhere; points inside the brush follow
+     with a cosine falloff, a Laplacian relax on release keeps it kink-free).
+     Still /grid-only: finger holes, the straighten tool, the search-box ROI,
+     scale by a reference line, and the printable fit-check template. */
   let visionP=null;
   function loadVision(){
     if(window.V)return Promise.resolve();
@@ -8174,17 +8178,28 @@ const CSG = (function(){
     const ov=document.createElement('div');
     ov.style.cssText='position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center';
     ov.innerHTML=`<div style="background:var(--panel);border:1px solid var(--g-blue);border-radius:12px;
-        padding:16px 18px;width:min(560px,94vw);box-shadow:0 24px 60px -12px rgba(0,0,0,.9)">
+        padding:16px 18px;width:min(580px,94vw);max-height:94vh;overflow:auto;box-shadow:0 24px 60px -12px rgba(0,0,0,.9)">
       <h3 style="margin:0 0 4px;font-size:15px">Trace a photo</h3>
-      <p style="margin:0 0 10px;font-size:11.5px;color:var(--muted)">Lay the object on a plain, contrasting background, shoot square-on, and the outline lands in this sketch. For scale, give one real measurement.</p>
-      <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      <p style="margin:0 0 8px;font-size:11.5px;color:var(--muted)">Shoot square-on. If the automatic trace misses, teach it the colours — pick the object, pick the background — and it separates by hue instead of brightness. Then grab the yellow line anywhere and drag to reshape it.</p>
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
         <button id="tr-pick" class="btn-primary">Choose photo…</button>
         <label style="font-size:12px;color:var(--muted)">Longest side
           <input id="tr-mm" type="number" value="100" min="1" step="1"
-            style="width:70px;margin-left:6px"> mm</label>
+            style="width:64px;margin-left:6px"> mm</label>
         <label style="font-size:12px;color:var(--muted)"><input id="tr-inv" type="checkbox" style="margin-right:4px">dark background</label>
       </div>
-      <canvas id="tr-cv" width="524" height="320" style="position:static;width:100%;background:var(--panel-2,#161b22);border:1px solid var(--line);border-radius:8px"></canvas>
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+        <button id="tr-ctool" class="btn-ghost" style="font-size:11.5px">Pick object colour</button>
+        <button id="tr-cbg" class="btn-ghost" style="font-size:11.5px">Pick background</button>
+        <span id="tr-sw" style="display:flex;gap:3px;align-items:center"></span>
+        <button id="tr-cclear" class="btn-ghost" style="font-size:11.5px;display:none">clear colours</button>
+        <span style="flex:1"></span>
+        <label style="font-size:11.5px;color:var(--muted)">Brush
+          <input id="tr-brush" type="range" min="12" max="70" value="30" style="width:64px;vertical-align:middle"></label>
+        <button id="tr-undo" class="btn-ghost" style="font-size:11.5px" disabled>Undo</button>
+        <button id="tr-reset" class="btn-ghost" style="font-size:11.5px" disabled>Reset line</button>
+      </div>
+      <canvas id="tr-cv" width="544" height="320" style="position:static;width:100%;background:var(--panel-2,#161b22);border:1px solid var(--line);border-radius:8px;touch-action:none"></canvas>
       <!-- position:static: the app-wide canvas{position:absolute;inset:0} rule
            (for the viewport) otherwise stretches this preview over the whole
            screen — an opaque sheet hiding the dialog. Same trap as #navcube. -->
@@ -8197,30 +8212,174 @@ const CSG = (function(){
     const $q=id=>ov.querySelector('#'+id);
     const file=document.createElement('input'); file.type='file'; file.accept='image/*';
     file.id='tr-file'; file.style.display='none'; ov.firstElementChild.appendChild(file);
-    let img=null, poly=null;      // working image + traced px outline
+    /* /grid's scan tools, in the dialog. Outline state lives in IMAGE pixels;
+       the canvas is only a viewport (K() is the display scale). The two tools
+       are /grid's, behaviour-for-behaviour: colour classification (sample the
+       object and the background, segment joins each pixel to the nearer list)
+       and the brush (grab the line anywhere; points inside the brush follow
+       with a cosine falloff, a gentle relax removes kinks on release). */
+    let img=null;                 // {canvas,width,height,data}
+    let contour=null;             // densely resampled px outline being edited
+    let rawContour=null;          // as traced, for Reset line
+    let arm=null;                 // 'tool' | 'bg' | null — colour pick mode
+    const colors={tool:[],bg:[]};
+    let undoStack=[], edited=false, cursor=null, brushing=null;
+    const cv=$q('tr-cv'), g=cv.getContext('2d');
     const status=t=>{$q('tr-status').textContent=t;};
-    function retrace(){
+    const K=()=>img?Math.min(cv.width/img.width,cv.height/img.height):1;
+    const brushR=()=>+$q('tr-brush').value;               // display px
+    const evPos=e=>{const r=cv.getBoundingClientRect(),k=K();
+      return [(e.clientX-r.left)*(cv.width/r.width)/k,(e.clientY-r.top)*(cv.height/r.height)/k];};
+    const distToSeg=(p,a,b)=>{const vx=b[0]-a[0],vy=b[1]-a[1],L=vx*vx+vy*vy;
+      let t=L?((p[0]-a[0])*vx+(p[1]-a[1])*vy)/L:0;t=Math.max(0,Math.min(1,t));
+      return Math.hypot(p[0]-(a[0]+t*vx),p[1]-(a[1]+t*vy));};
+    const distToOutline=p=>{if(!contour)return Infinity;let best=Infinity;
+      for(let i=0;i<contour.length;i++){const d=distToSeg(p,contour[i],contour[(i+1)%contour.length]);
+        if(d<best)best=d;}return best;};
+    /* even spacing, or a long straight run has nothing to grab in the middle */
+    const resample=(poly,step)=>{const out=[];let carry=0;
+      for(let i=0;i<poly.length;i++){const a=poly[i],b=poly[(i+1)%poly.length];
+        const dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy);
+        if(len<1e-9)continue;
+        for(let t=carry;t<len;t+=step)out.push([a[0]+dx*t/len,a[1]+dy*t/len]);
+        carry=Math.max(0,carry+step*Math.ceil((len-carry)/step)-len);}
+      return out.length>=8?out:poly.map(p=>[p[0],p[1]]);};
+    const smoothTouched=idxSet=>{const n=contour.length,src=contour.map(p=>[p[0],p[1]]);
+      idxSet.forEach(i=>{const a=src[(i-1+n)%n],b=src[(i+1)%n],p=src[i];
+        contour[i]=[(a[0]+2*p[0]+b[0])/4,(a[1]+2*p[1]+b[1])/4];});};
+    const syncBtns=()=>{$q('tr-undo').disabled=!undoStack.length;
+      $q('tr-reset').disabled=!(rawContour&&edited);
+      $q('tr-cclear').style.display=(colors.tool.length||colors.bg.length)?'':'none';
+      $q('tr-insert').disabled=!(contour&&contour.length>7);};
+    const renderSw=()=>{const host=$q('tr-sw');host.innerHTML='';
+      [['tool','#FBBC05'],['bg','#5f6368']].forEach(([kk,bd])=>{
+        colors[kk].forEach(c=>{const s=document.createElement('span');
+          s.style.cssText='width:14px;height:14px;border-radius:4px;display:inline-block;'+
+            'border:2px solid '+bd+';background:rgb('+c[0]+','+c[1]+','+c[2]+')';
+          host.appendChild(s);});});};
+    const paint=()=>{
+      g.clearRect(0,0,cv.width,cv.height);
+      if(!img)return;
+      const k=K();
+      g.drawImage(img.canvas,0,0,img.width*k,img.height*k);
+      if(contour&&contour.length>2){
+        g.strokeStyle='#FBBC05';g.lineWidth=2;g.beginPath();
+        contour.forEach((p,i)=>i?g.lineTo(p[0]*k,p[1]*k):g.moveTo(p[0]*k,p[1]*k));
+        g.closePath();g.stroke();
+      }
+      if(cursor&&contour&&!arm){
+        const r=brushR();
+        if(brushing||distToOutline(cursor)*k<=r){
+          g.beginPath();g.arc(cursor[0]*k,cursor[1]*k,r,0,7);
+          g.strokeStyle=brushing?'#f0721c':'rgba(240,114,28,.55)';
+          g.lineWidth=brushing?2.2:1.4;
+          g.setLineDash(brushing?[]:[6,5]);g.stroke();g.setLineDash([]);
+        }
+      }
+    };
+    function traceNow(){
       if(!img)return;
       try{
         const VS=window.V;
-        const seg=VS.segment(img,{clean:2,invert:$q('tr-inv').checked});
+        const useCol=colors.tool.length&&colors.bg.length;
+        const seg=VS.segment(img,{clean:2,invert:$q('tr-inv').checked,
+          colors:useCol?{tool:colors.tool,bg:colors.bg}:undefined});
         const raw=VS.contour(seg.mask,seg.w||img.width,seg.h||img.height);
         if(!raw||raw.length<8)throw new Error('no outline found');
-        poly=VS.rdp(raw,1.4);
-        const cv=$q('tr-cv'),g=cv.getContext('2d');
-        const k=Math.min(cv.width/img.width,cv.height/img.height);
-        g.clearRect(0,0,cv.width,cv.height);
-        g.drawImage(img.canvas,0,0,img.width*k,img.height*k);
-        g.strokeStyle='#FBBC05';g.lineWidth=2;g.beginPath();
-        poly.forEach((p,i)=>i?g.lineTo(p[0]*k,p[1]*k):g.moveTo(p[0]*k,p[1]*k));
-        g.closePath();g.stroke();
-        status(poly.length+' points traced — check the yellow line hugs the object, then Insert');
-        $q('tr-insert').disabled=false;
-      }catch(e){ poly=null; $q('tr-insert').disabled=true;
-        status('Trace failed: '+(e.message||e)+' — try the other background setting or a plainer photo'); }
+        const step=Math.max(2.5,Math.max(img.width,img.height)/220);
+        contour=resample(VS.rdp(raw,1.0),step);
+        rawContour=contour.map(p=>[p[0],p[1]]);
+        undoStack=[];edited=false;
+        status(contour.length+' points traced'+(useCol?' from your colours':'')+
+          ' — grab the yellow line and drag to reshape it, then Insert');
+        syncBtns();paint();
+      }catch(e){ contour=rawContour=null;undoStack=[];edited=false;syncBtns();paint();
+        status('Trace failed: '+(e.message||e)+
+          (colors.tool.length||colors.bg.length?' — try more colour samples'
+           :' — try picking the object colour, or the other background setting')); }
     }
+    const armBtn=which=>{arm=(arm===which)?null:which;
+      $q('tr-ctool').classList.toggle('btn-primary',arm==='tool');
+      $q('tr-cbg').classList.toggle('btn-primary',arm==='bg');
+      cv.style.cursor=arm?'copy':'crosshair';
+      if(arm)status(arm==='tool'?'Click the OBJECT in the photo — several shades is normal, press the button again to stop'
+        :'Click the BACKGROUND in the photo — the trace updates by colour');};
+    $q('tr-ctool').addEventListener('click',()=>armBtn('tool'));
+    $q('tr-cbg').addEventListener('click',()=>armBtn('bg'));
+    $q('tr-cclear').addEventListener('click',()=>{colors.tool=[];colors.bg=[];
+      renderSw();syncBtns();traceNow();});
+    cv.addEventListener('pointerdown',e=>{
+      if(!img)return; e.preventDefault();
+      const p=evPos(e); cursor=p;
+      if(arm){
+        const VS=window.V;
+        const c=VS.sampleColor(img,Math.round(p[0]),Math.round(p[1]),Math.max(2,Math.round(2/K())));
+        /* a sample matching the OTHER list is almost always a mis-click on the
+           wrong side of the edge — taken silently it makes the trace worse in a
+           way that looks like the feature not working (straight from /grid) */
+        const other=colors[arm==='tool'?'bg':'tool'];
+        if(other.some(o=>Math.hypot(c[0]-o[0],c[1]-o[1],c[2]-o[2])<30)){
+          status('that is the colour you already gave as '+(arm==='tool'?'background':'object')+
+            ' — click further inside the '+(arm==='tool'?'object':'background'));
+          return;
+        }
+        colors[arm].push(c);renderSw();syncBtns();traceNow();
+        return;
+      }
+      if(contour&&distToOutline(p)<=brushR()/K()){
+        undoStack.push(contour.map(q=>[q[0],q[1]]));
+        if(undoStack.length>40)undoStack.shift();
+        edited=true;syncBtns();
+        brushing={last:p,touched:new Set()};
+        try{cv.setPointerCapture(e.pointerId);}catch(_){}
+        paint();
+      }
+    });
+    cv.addEventListener('pointermove',e=>{
+      if(!img)return;
+      const p=evPos(e); cursor=p;
+      if(brushing){
+        /* not a fixed grab: each frame nudges whatever is inside the brush NOW,
+           so one stroke dragged along the line herds a whole edge into place;
+           fast moves are sub-stepped or points between two frames get skipped */
+        const r=brushR()/K();
+        const tx=p[0]-brushing.last[0],ty=p[1]-brushing.last[1];
+        const total=Math.hypot(tx,ty);
+        if(total>0){
+          const steps=Math.max(1,Math.ceil(total/(r*0.4))),n=contour.length;
+          for(let s=1;s<=steps;s++){
+            const cxp=brushing.last[0]+tx*s/steps,cyp=brushing.last[1]+ty*s/steps;
+            for(let i=0;i<n;i++){
+              const q=contour[i],d=Math.hypot(cxp-q[0],cyp-q[1]);
+              if(d>r)continue;
+              const w0=0.5*(1+Math.cos(Math.PI*d/r));
+              q[0]=Math.max(0,Math.min(img.width,q[0]+(tx/steps)*w0));
+              q[1]=Math.max(0,Math.min(img.height,q[1]+(ty/steps)*w0));
+              brushing.touched.add(i);
+            }
+          }
+          brushing.last=p;
+        }
+        paint();return;
+      }
+      cv.style.cursor=arm?'copy':(contour&&distToOutline(p)<=brushR()/K())?'grab':'crosshair';
+      paint();
+    });
+    const endBrush=e=>{
+      if(brushing){ smoothTouched(brushing.touched); brushing=null; paint(); }
+      try{cv.releasePointerCapture(e.pointerId);}catch(_){}
+    };
+    cv.addEventListener('pointerup',endBrush);
+    cv.addEventListener('pointercancel',endBrush);
+    cv.addEventListener('pointerleave',()=>{ if(!brushing){cursor=null;paint();} });
+    $q('tr-undo').addEventListener('click',()=>{
+      if(!undoStack.length)return;
+      contour=undoStack.pop(); edited=!!undoStack.length; syncBtns(); paint();});
+    $q('tr-reset').addEventListener('click',()=>{
+      if(!rawContour)return;
+      contour=rawContour.map(p=>[p[0],p[1]]);undoStack=[];edited=false;syncBtns();paint();});
     $q('tr-pick').addEventListener('click',()=>file.click());
-    $q('tr-inv').addEventListener('change',retrace);
+    $q('tr-inv').addEventListener('change',traceNow);
     file.addEventListener('change',async e=>{
       const f=e.target.files[0]; file.value=''; if(!f)return;
       status('Loading…');
@@ -8231,14 +8390,17 @@ const CSG = (function(){
         const r=VS.plain(bm,1,1000);
         const d=r.canvas.getContext('2d').getImageData(0,0,r.w,r.h);
         img={canvas:r.canvas,width:r.w,height:r.h,data:d.data};
-        retrace();
+        traceNow();
       }catch(err){ status(err.message||String(err)); }
     });
     const close=()=>ov.remove();
     $q('tr-cancel').addEventListener('click',close);
     ov.addEventListener('pointerdown',e=>{ if(e.target===ov)close(); });
     $q('tr-insert').addEventListener('click',()=>{
-      if(!poly||!editing)return;
+      if(!contour||contour.length<8||!editing)return;
+      /* editing keeps the line densely sampled so it bends smoothly; the
+         inserted shape is thinned back down below anything a printer resolves */
+      const poly=window.V.rdp(contour,1.2);
       let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
       for(const p of poly){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);
                            y0=Math.min(y0,p[1]);y1=Math.max(y1,p[1]);}
