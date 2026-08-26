@@ -848,10 +848,17 @@ A new feature still takes a single press to remove, panel edit and all.</p>
 <p><b>Save</b> writes a <code>.part</code> file — plain JSON holding the entire
 recipe: every sketch, dimension, feature and parameter. It's small, diffable, and opens
 back up fully editable. This is your working format; use it for anything you might revisit.
-An assembly saves as <code>.assembly</code>, and saving from a drawing writes a
-<code>.drawing</code> that carries the sheet <em>and</em> the model it was drawn from, so
-it reopens whole. Files saved with the old <code>.sketchcad</code> /
-<code>.asmcad</code> names still open.</p>
+An assembly saves as <code>.assembly</code>. Files save under the document's name — open
+<code>bracket.part</code>, save, and you get <code>bracket.part</code> back. Files saved
+with the old <code>.sketchcad</code> / <code>.asmcad</code> names still open.</p>
+<p><b>Drawings reference their model, SolidWorks-style.</b> Saving from a drawing writes a
+<code>.drawing</code> that holds the sheet — views, dimensions, marks — and the <em>name</em>
+of the part or assembly file it was drawn from, never the model itself. The model stays in
+its own file, saved separately, so keep the two files together. Opening a
+<code>.drawing</code> places the sheet straight over the referenced model if it's already
+open; otherwise freyacad asks you to pick the model file (or to use whatever model is open).
+A part picked this way is projected on the side, without disturbing the document you have
+open. Old <code>.drawing</code> files that embedded their model still open whole.</p>
 <p><b>Open</b> loads any of them back. <b>New part</b> starts fresh.</p>
 <div class="note">
   <span class="tag">Worth knowing</span>

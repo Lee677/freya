@@ -53,9 +53,17 @@ steal a face click). That work also added the persistent top-right **pick card**
 (`showPickCard`/`hidePickCard`), shared by every click-something-next arm — sketch,
 text face and axis picks — because the fading bottom hint left armed states looking
 dead. Saved files are **.part / .assembly / .drawing** now (the old .sketchcad /
-.asmcad still open); a .drawing is NEW as a saved thing — it carries the sheet and
-the recipe (or assembly) it was drawn from, and reopens whole, where before the
-sheet was simply lost on save. `manifest.webmanifest` + `icons/` make freyacad
+.asmcad still open), and they save under the document's name (`docName`, set by
+open/demo/new — `bracket.part` reopens and re-saves as `bracket.part`). A
+**.drawing references its model SolidWorks-style** (owner's explicit ask, replacing
+one window of embedded-model format): `docFile()` serializes
+`{type:'drawing',ref:{name,kind},draw}` with NO features/asm; opening one
+auto-attaches over a matching open model (base-name match), otherwise
+`resolveDrawingRef` raises a dialog — pick the file (a part loads as `drawModel`,
+the side-build that never disturbs the open document; an assembly loads for real)
+or use the open model. Legacy embedded .drawing files still open whole. Guard
+dialogs ("Save, then …") call `saveProject('model')` so they protect features,
+not sheets. `manifest.webmanifest` + `icons/` make freyacad
 installable as a PWA whose `file_handlers` give those extensions freyacad icons in
 the OS file explorer and route double-clicks into the app (`launchQueue` consumer
 at the foot of the script waits for the kernel before loading). The full /grid tracer toolset

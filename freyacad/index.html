@@ -1847,6 +1847,7 @@ const CSG = (function(){
     rollbackIndex=features.length;
     selId=null; editing=null; selectedEdges=[]; hoveredEdge=null; closeProps(); setMode('model');
     demoActive=d.key;
+    docName=d.key;
     rebuild();
     controls.target.set(d.cam.t[0],d.cam.t[1],d.cam.t[2]);
     controls.sph.set(d.cam.s[0],d.cam.s[1],d.cam.s[2]);
@@ -1914,7 +1915,7 @@ const CSG = (function(){
     if(!busy)return go();
     askDialog('Replace what you have with the demo?',
       busy+(docMode==='asm'?' component':' feature')+(busy===1?'':'s')+' will be discarded.',
-      [{label:'Save, then load',primary:true,fn:()=>{saveProject();go();}},
+      [{label:'Save, then load',primary:true,fn:()=>{saveProject('model');go();}},
        {label:'Discard & load',danger:true,fn:go},
        {label:'Cancel'}]);
   }
@@ -1925,11 +1926,16 @@ const CSG = (function(){
   }
 
   /* ============================ FEATURE MODEL ============================ */
-  let features=[];        
-  let rollbackIndex=0;    
+  let features=[];
+  let rollbackIndex=0;
   let selId=null;
   let uid=1;
   const nextId=()=>uid++;
+  /* The open MODEL document's base name — what Save writes .part/.assembly
+     files as, and what a sheet records as its reference. Set by opening a
+     file or a demo; never by opening a .drawing (the sheet is a different
+     document about this one). */
+  let docName='project';
 
   let resultGeoms=[];     
   let resultMeshes=[];    
@@ -9531,24 +9537,37 @@ const CSG = (function(){
     document.body.appendChild(ov);
   }
 
-  function saveProject() {
-      const isD = docMode==='draw', isA = !isD && docMode==='asm';
-      /* a .drawing carries the sheet AND whatever makes the model — the part
-         recipe, or the assembly when the sheet was drawn over one — so it
-         reopens whole; view geometry is derived and stays out of the file */
-      let data;
-      if(isD){
+  /* Serialize the document Save would write, without downloading it.
+     Documents save one at a time, the SolidWorks way. A .drawing is a sheet
+     ABOUT a model: it stores the sheet and the NAME of the model file it
+     references — never the model itself. The part or assembly saves
+     separately, under the document's own name. which==='model' serializes
+     the model even from inside a drawing (the guard dialogs use it: they
+     are protecting features, not sheets). */
+  function docFile(which){
+      const m=(docMode==='draw'&&which!=='model')?'draw'
+             :(docMode==='draw'?drawReturn:docMode);
+      if(m==='draw'){
         const sheet=Object.assign({},draw,{views:draw.views.map(v=>{
           const c=Object.assign({},v); delete c.geo; return c;})});
-        const p={type:'drawing',features,draw:sheet};
-        if(drawReturn==='asm')p.asm={components:asm.components,mates:asm.mates};
-        data=JSON.stringify(p);
-      } else if(isA) data=JSON.stringify({type:'assembly',components:asm.components,mates:asm.mates});
-      else data=JSON.stringify(features);
-      const blob = new Blob([data], {type: 'application/json'});
+        const base=drawModel?drawModel.name:docName;
+        const kind=(!drawModel&&drawReturn==='asm')?'assembly':'part';
+        return {fname:base+'.drawing', ref:base+'.'+kind,
+                data:JSON.stringify({type:'drawing',ref:{name:base+'.'+kind,kind},draw:sheet})};
+      }
+      if(m==='asm')
+        return {fname:docName+'.assembly',
+                data:JSON.stringify({type:'assembly',components:asm.components,mates:asm.mates})};
+      return {fname:docName+'.part', data:JSON.stringify(features)};
+  }
+  function saveProject(which) {
+      const file=docFile(which);
+      if(file.ref)setHint('Sheet saved as '+file.fname+' — it references '+file.ref
+          +', which is its own file. Keep the two together.');
+      const blob = new Blob([file.data], {type: 'application/json'});
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a'); a.href = url;
-      a.download = isD?'sheet.drawing':isA?'assembly.assembly':'project.part';
+      a.download = file.fname;
       a.click(); URL.revokeObjectURL(url);
   }
 
@@ -9560,21 +9579,25 @@ const CSG = (function(){
       reader.onload = e => {
           try {
               const data = JSON.parse(e.target.result);
-              loadDocData(data);
+              loadDocData(data, file.name.replace(/\.[a-z0-9]+$/i,''));
           } catch(err) { alert('Invalid file'); }
       };
       reader.readAsText(file);
   }
   /* One document from parsed JSON — a part list or an assembly record. Shared
-     by the Open button and the autosave restore, which must not drift apart. */
-  function loadDocData(data){
+     by the Open button and the autosave restore, which must not drift apart.
+     `name` is the file's base name when one exists; the autosave restore has
+     none and the document keeps its current name. */
+  function loadDocData(data, name){
               if (Array.isArray(data)) {                    // a part file
                   if (docMode==='asm') { clearAsm(); setDocMode('part'); }
                   features = data;      // checkpoints stay: see loadDemo
                   uid = Math.max(0,...features.map(f=>f.id)) + 1;
                   rollbackIndex = features.length;
+                  if(name)docName=name;
                   selId = null; demoActive=false; closeProps(); rebuild(); refreshDemoTgl();
               } else if (data && data.type==='assembly') {  // an assembly file
+                  if(name)docName=name;
                   dropAllCheckpoints();
                   features=[];rollbackIndex=0;selId=null;editing=null;demoActive=false;
                   clearAsm();
@@ -9601,18 +9624,84 @@ const CSG = (function(){
                   }
                   reportSolve(solveMates({}));   // the file records the relations; the positions follow
                   refreshAsmUI(); fitAll();
-              } else if (data && data.type==='drawing') {   // a sheet + its model
-                  if(data.asm&&Array.isArray(data.asm.components))
-                      loadDocData({type:'assembly',components:data.asm.components,mates:data.asm.mates});
-                  else
-                      loadDocData(Array.isArray(data.features)?data.features:[]);
-                  draw=Object.assign({sheet:'A3',orient:'landscape',scale:0,angle:3,
-                      hidden:true,title:'',views:[],dims:[],marks:[],uid:1},data.draw||{});
-                  draw.views=(draw.views||[]).map(v=>Object.assign({},v));
-                  drawSel=null;
-                  rebuildDrawViews();            // geo is derived, never in the file
-                  setDocMode('draw');
+              } else if (data && data.type==='drawing') {   // a sheet about a model
+                  const sheet=data.draw||{};
+                  const apply=()=>{
+                      draw=Object.assign({sheet:'A3',orient:'landscape',scale:0,angle:3,
+                          hidden:true,title:'',views:[],dims:[],marks:[],uid:1},sheet);
+                      draw.views=(draw.views||[]).map(v=>Object.assign({},v));
+                      drawSel=null;
+                      rebuildDrawViews();        // geo is derived, never in the file
+                      setDocMode('draw');
+                  };
+                  if(data.features||data.asm){
+                      /* legacy embedded drawing (pre-reference format): the
+                         model travelled inside the file, so unpack it */
+                      if(data.asm&&Array.isArray(data.asm.components))
+                          loadDocData({type:'assembly',components:data.asm.components,mates:data.asm.mates});
+                      else
+                          loadDocData(Array.isArray(data.features)?data.features:[]);
+                      if(name)docName=name;
+                      clearDrawModel();
+                      apply();
+                  } else {
+                      /* referenced drawing: the file names its model and
+                         carries none of it — find that model, then apply */
+                      resolveDrawingRef(data.ref||{}, apply);
+                  }
               } else throw new Error('unrecognised');
+  }
+  /* A referenced .drawing names its model; this finds it. The open document
+     wins when its name matches (SolidWorks resolves from memory first). Failing
+     that, a dialog asks for the model file: a part loads as drawModel — a side
+     build that leaves the open document alone — while an assembly must load
+     for real, since a sheet of one projects the live, solved components. */
+  function resolveDrawingRef(ref, apply){
+    const want=ref.kind==='assembly'?'asm':'part';
+    const refName=ref.name||'its model file';
+    const base=n=>(n||'').replace(/\.[a-z0-9]+$/i,'').toLowerCase();
+    const openHas= want==='asm' ? asm.components.length>0
+                                : (docMode!=='asm'&&features.length>0);
+    if(openHas && ref.name && base(ref.name)===base(docName)){
+      clearDrawModel(); apply();
+      setHint('Sheet placed over '+docName+', which is already open');
+      return;
+    }
+    const buttons=[{label:'Open '+refName+'…',primary:true,fn:()=>pickDrawingRef(ref,apply)}];
+    if(openHas)buttons.push({label:'Use the open model',fn:()=>{clearDrawModel();apply();}});
+    buttons.push({label:'Cancel'});
+    askDialog('This drawing references '+refName,
+      'A drawing is a sheet about a model, and the model lives in its own file — '
+      +'the sheet only records its name. '
+      +(openHas?'Open the referenced file, or place the sheet over the model that is open now.'
+               :'Choose that file and the sheet will be placed over it.'),
+      buttons);
+  }
+  function pickDrawingRef(ref, apply){
+    const old=document.getElementById('file-ref'); if(old)old.remove();
+    const inp=document.createElement('input'); inp.type='file'; inp.id='file-ref';
+    inp.style.display='none'; document.body.appendChild(inp);
+    inp.accept=ref.kind==='assembly'?'.assembly,.asmcad,.json':'.part,.sketchcad,.json';
+    inp.addEventListener('change',()=>{
+      const f=inp.files[0]; inp.remove(); if(!f)return;
+      const rd=new FileReader();
+      rd.onload=ev=>{
+        let d; try{ d=JSON.parse(ev.target.result); }
+        catch(_){ return setHint('That is not a '+(ref.kind==='assembly'?'n assembly':' part')+' file'); }
+        if(ref.kind==='assembly'){
+          if(!d||d.type!=='assembly')return setHint('The drawing references an assembly — that file is not one');
+          loadDocData(d, f.name.replace(/\.[a-z0-9]+$/i,''));
+          clearDrawModel(); apply();
+        }else{
+          if(!Array.isArray(d))return setHint('The drawing references a part — that file is not one');
+          if(!loadDrawModel(d, f.name))return;   // side build; the open document is untouched
+          apply();
+        }
+        setHint('Sheet placed over '+f.name);
+      };
+      rd.readAsText(f);
+    });
+    inp.click();
   }
   /* A STEP or STL from the Open button becomes an import feature in the tree —
      bytes and all — so the part saves, reopens and replays like anything else.
@@ -12853,12 +12942,12 @@ const CSG = (function(){
     if(docMode==='part'&&features.length){
       askDialog('Start a new assembly?',
         'The current part has '+features.length+' feature'+(features.length===1?'':'s')+'. Save it first?',
-        [{label:'Save, then new',primary:true,fn:()=>{saveProject();start();}},
+        [{label:'Save, then new',primary:true,fn:()=>{saveProject('model');start();}},
          {label:'Discard',danger:true,fn:start},{label:'Cancel'}]);
     } else if(docMode==='asm'&&asm.components.length){
       askDialog('Start a new assembly?',
       'The current assembly has '+asm.components.length+' component'+(asm.components.length===1?'':'s')+'. Save it first?',
-        [{label:'Save, then new',primary:true,fn:()=>{saveProject();start();}},
+        [{label:'Save, then new',primary:true,fn:()=>{saveProject('model');start();}},
          {label:'Discard',danger:true,fn:start},{label:'Cancel'}]);
     } else start();
   });
@@ -13022,7 +13111,7 @@ const CSG = (function(){
     e.target.value='';
   });
   $('btn-print').addEventListener('click',openPrintDialog);
-  $('btn-save').addEventListener('click',saveProject);
+  $('btn-save').addEventListener('click',()=>saveProject());
   $('btn-load').addEventListener('click',()=>$('file-load').click());
   $('file-load').addEventListener('change', e => { if(e.target.files.length) loadProject(e.target.files[0]); });
   $('btn-units').addEventListener('click',()=>{
@@ -13033,6 +13122,7 @@ const CSG = (function(){
   });
   function doNewPart(){
     dropAllCheckpoints();
+    docName='project';
     features=[];rollbackIndex=0;selId=null;editing=null;selectedEdges=[];hoveredEdge=null;closeEdgeMenu();closeProps();setMode('model');controls.unlock();demoActive=false;rebuild();refreshDemoTgl();
   }
   /* small choice dialog (used by New part) */
@@ -13061,7 +13151,7 @@ const CSG = (function(){
       if(asm.components.length){
         askDialog('Leave the assembly?',
           'The current assembly has '+asm.components.length+' component'+(asm.components.length===1?'':'s')+'. Save it first?',
-          [{label:'Save, then new part',primary:true,fn:()=>{saveProject();start();}},
+          [{label:'Save, then new part',primary:true,fn:()=>{saveProject('model');start();}},
            {label:'Discard',danger:true,fn:start},{label:'Cancel'}]);
       } else start();
       return;
@@ -13069,7 +13159,7 @@ const CSG = (function(){
     if(!features.length){ doNewPart(); return; }
     askDialog('Start a new part?',
       'The current part has '+features.length+' feature'+(features.length===1?'':'s')+'. Save it first?',
-      [{label:'Save, then new',primary:true,fn:()=>{saveProject();doNewPart();}},
+      [{label:'Save, then new',primary:true,fn:()=>{saveProject('model');doNewPart();}},
        {label:'Discard',danger:true,fn:doNewPart},
        {label:'Cancel'}]);
   });
@@ -13303,6 +13393,8 @@ const CSG = (function(){
     OCK, featureEdges,
     get checkpoints(){ return checkpoints.map(c=>({i:c.i, bodies:c.shapes.length, key:c.key})); },
     get rollbackIndex(){ return rollbackIndex; },
+    get docName(){ return docName; }, docFile, loadDocData,
+    get drawModel(){ return drawModel&&{name:drawModel.name,geoms:drawModel.geoms.length}; },
     dimHit, dimResolve, dimApply, polyCorners, cornerAt, applyCorner,
     get cornerSel(){ return cornerSel; }, set cornerSel(v){ cornerSel=v; },
     ensureSketchProps, setCornerTreatment, setCornerSize,
