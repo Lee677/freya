@@ -713,6 +713,14 @@ sketch, or an existing solid — stay greyed out until it exists.</p>
 </table>
 <p>Select a feature in the tree and its parameters appear in a panel — depth, radius,
 count, spacing. Edit them and the model rebuilds.</p>
+<div class="note">
+  <span class="tag">Worth knowing</span>
+  <p><b>Edges and faces select whole.</b> The viewport draws and picks the model's real
+  edges — the ones the geometry kernel knows about — not the display mesh's facets. Click
+  anywhere on a circular edge and the entire circle highlights and fillets; click a face
+  and the whole face answers, however coarsely the screen happens to tessellate it. Curved
+  surfaces carry no stray lines at all.</p>
+</div>
 <h3>Sketches with more than one shape</h3>
 <p>A sketch can hold several separate closed regions — say a hexagon with a hole and a
 triangle beside it. Extrude, cut and revolve normally use them all. When there is more than

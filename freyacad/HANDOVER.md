@@ -84,7 +84,19 @@ synchronously via `docFile` BEFORE the async put (guard dialogs mutate state rig
 and falls back to a plain download if IndexedDB is refused (private mode). `resolveDrawingRef`
 checks the library for `ref.name` before raising its dialog — references self-resolve like a
 SolidWorks search path. Real files still come in through "Open from this computer…"
-(#file-load). `manifest.webmanifest` + `icons/` make freyacad
+(#file-load). **The viewport speaks B-rep now** (owner report: the lamp's swept spout was
+"thousands of little lines" and its flat end unclickable): `OCK.edgeMesh(shape)` returns one
+polyline per real TopoDS edge (48 samples, colinear runs collapsed) — that is what the green
+overlay draws and what `buildPickEdges` picks, every chord tagged `edgeId` so hover/selection
+paint the WHOLE edge (`redrawEdgeSel` wholeEdge; the hover compare keys on edge, not chord).
+`OCK.mesh` records `geo.userData.faceRanges` (one triangle range per TopoDS FACE, explorer
+order) and `faceRegion` returns the real face when >1 range exists — the 38° crease flood
+remains only for mesh imports (their single wrapped face gives 1 range) and as fallback.
+Angular deflection is the scale-free quality knob: 0.22 rad (was 0.35), linear diag*0.003.
+`featureEdges` (crease detector) still serves the DRAWING views — crease lines double as
+silhouettes on sheets, real edges alone would lose a cylinder's side profile — and the
+manual-fillet machinery. Fillet seeds ({mid,dir} chords) still match real kernel edges via
+`OCK.matchEdges`, unchanged file format. `manifest.webmanifest` + `icons/` make freyacad
 installable as a PWA whose `file_handlers` give those extensions freyacad icons in
 the OS file explorer and route double-clicks into the app (`launchQueue` consumer
 at the foot of the script waits for the kernel before loading). The full /grid tracer toolset
