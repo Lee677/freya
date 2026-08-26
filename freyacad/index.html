@@ -10787,20 +10787,11 @@ const CSG = (function(){
     }
     const e2=pickEdge(e);
     /* A selected face states which thing the menu is about, so a right-click
-       back on it must offer ITS commands — otherwise a small cap, which is
-       nothing but rim within the edge pick tolerance, could never reach them.
+       back on it offers ITS commands even where a visible edge runs close by.
        Everywhere else the edge keeps its priority. */
     const onSelFace=!!selectedFace&&!selectedEdges.length
       &&faceKey(faceAtPointer(e))===faceKey(selectedFace);
-    /* And a face small enough to need rescuing is nothing but rim: the ray that
-       reaches its centre passes within the pick tolerance of an edge as well,
-       so on that face the edge menu would be the ONLY menu. A cold right-click
-       within RESCUE px of a flat face's confirmed centre is about that face.
-       An edge already SELECTED still keeps the edge menu — that is how you ask
-       for the other one. */
-    const rescued=(!onSelFace&&!selectedFace&&!selectedEdges.length)
-      ?rescuePlanarFace(e):null;
-    if(!onSelFace&&!rescued&&(e2||selectedEdges.length)){ if(e2&&!selectedEdges.some(s=>s.idx===e2.rec.idx))toggleEdge(e2.rec); openEdgeMenu(e.clientX,e.clientY); }
+    if(!onSelFace&&(e2||selectedEdges.length)){ if(e2&&!selectedEdges.some(s=>s.idx===e2.rec.idx))toggleEdge(e2.rec); openEdgeMenu(e.clientX,e.clientY); }
     else openModelMenu(e.clientX,e.clientY);
   });
 
@@ -10808,14 +10799,35 @@ const CSG = (function(){
     const r=canvas.getBoundingClientRect();ndc.x=((e.clientX-r.left)/r.width)*2-1;ndc.y=-((e.clientY-r.top)/r.height)*2+1;
     raycaster.setFromCamera(ndc,camera);return raycaster.intersectObjects(resultMeshes,false)[0]||null;
   }
+  /* An edge you cannot see is not the edge you clicked. The pick lines are
+     drawn with depth testing off and a raycast is pure geometry, so the ray
+     that reaches a face carries straight on through the solid and passes
+     within the pick threshold of edges BEHIND it — which is why a click in the
+     middle of the spout's flat cap kept landing on a seam deeper inside the
+     tube instead of taking the face. So find the nearest SURFACE first and
+     take the first line hit that is not behind it: an edge lying on the
+     visible face measures the same distance within tessellation noise, a
+     silhouette edge measures shorter, and only the hidden ones measure deeper.
+     With no surface under the cursor at all — a silhouette clicked from the
+     sky beside the body — the nearest line wins, exactly as it always did. */
   function pickEdge(e){
     if(!pickLines)return null;
     const r=canvas.getBoundingClientRect();ndc.x=((e.clientX-r.left)/r.width)*2-1;ndc.y=-((e.clientY-r.top)/r.height)*2+1;
     raycaster.setFromCamera(ndc,camera);
-    raycaster.params.Line.threshold=0.18*Math.max(1,controls.sph.radius/24);
+    const thr=0.18*Math.max(1,controls.sph.radius/24);
+    raycaster.params.Line.threshold=thr;
     const hits=raycaster.intersectObject(pickLines,false);
     if(!hits.length)return null;
-    const idx=Math.floor(hits[0].index/2);
+    let h=hits[0];
+    const surf=raycaster.intersectObjects(resultMeshes,false)[0];
+    if(surf){
+      // the tolerance is the pick threshold itself: a chord of a curved face
+      // sags behind the true edge by less than the distance it may be picked at
+      const lim=surf.distance+thr*1.5+0.05;
+      h=hits.find(x=>x.distance<=lim);
+      if(!h)return null;
+    }
+    const idx=Math.floor(h.index/2);
     const rec=pickEdges[idx]; if(!rec)return null; rec.idx=idx; return {rec,idx};
   }
   function edgeDesc(rec){return {mid:rec.mid.slice(),dir:rec.dir.slice(),a:rec.a.slice(),b:rec.b.slice(),idx:rec.idx};}
