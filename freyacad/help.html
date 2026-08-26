@@ -728,6 +728,10 @@ count, spacing. Edit them and the model rebuilds.</p>
   one offers <b>Surface colour</b> and <b>Add axis</b> down its centre. A face and an edge
   are never selected at once — picking either lets the other go, and a click on empty space
   clears both.</p>
+  <p><b>You can only pick what you can see.</b> An edge hidden behind the surface in front of
+  it is never picked, however close the cursor passes to where it would be — so clicking the
+  middle of a small face selects that face rather than something buried inside the solid. An
+  edge on the silhouette still picks from either side of it.</p>
   <p><b>Small flat faces forgive a near miss.</b> The end of a swept tube can be a couple of
   millimetres across — a few pixels on screen, with the curved wall right beside it. When a
   click that needs a flat face lands just off one, freyacad takes the flat face whose centre
@@ -849,9 +853,9 @@ put the fillet earlier in the tree before the geometry gets tight.</p>
 <p>Build order, top to bottom. Click any item to select and highlight it.</p>
 <p><b>Hover a row and the model answers.</b> Point at any item in the tree — no click — and
 the thing it made lights up in the viewport: an origin plane or axis appears for as long as
-you hover it, a sketch glows in yellow even when it has been consumed and hidden, a plane or
-axis you added glows, and a solid feature shows the shape it contributed as a translucent
-ghost. Where a feature has no separable shape of its own — a fillet rounds what is already
+you hover it, a sketch glows in yellow even when it has been consumed and hidden — including
+an open <b>path</b> sketch, so you can see where a swept tube runs — a plane or axis you
+added glows, and a solid feature shows the shape it contributed as a translucent ghost. Where a feature has no separable shape of its own — a fillet rounds what is already
 there — the whole body tints instead, which still answers "that row is about this solid".</p>
 <table>
   <tr><th>Action</th><th>How</th></tr>

@@ -8209,12 +8209,17 @@ const CSG = (function(){
     if(!f||docMode!=='part'||f.suppressed)return;
     treeFeatHover=id;
     if(f.type==='sketch'){
-      /* the sketch's own loops, glowing — this is the whole point for a
-         CONSUMED sketch, which the viewport otherwise never draws */
+      /* EVERY entity, through the same path builder the open sketch draws with
+         — not entityLoops, which yields closed profiles only. A sweep's path
+         sketch is one open spline and has no loops at all, and that is exactly
+         the sketch worth glowing: consumed, hidden, and the only way to see
+         where the tube runs. Construction geometry counts too. */
       const sd=sketchData[f.id]; if(!sd)return;
-      for(const loop of entityLoops(f)){
-        if(loop.length<2)continue;
-        const pts=loop.map(p=>worldFromSketch(sd.frame,p.x,p.y)); pts.push(pts[0]);
+      for(const ent of (f.entities||[])){
+        const path=entityDisplayPath(f,ent);
+        if(!path||!path.pts||path.pts.length<2)continue;
+        const pts=path.pts.map(p=>worldFromSketch(sd.frame,p.x,p.y));
+        if(path.closed)pts.push(pts[0]);
         const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),treeGlowMat);
         ln.renderOrder=10; treeHoverGroup.add(ln);
       }

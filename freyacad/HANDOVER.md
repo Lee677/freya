@@ -141,14 +141,24 @@ armed Text pick, and a cold right-click — take the planar face whose projected
 nearest the click when a confirming raycast at that centroid really lands inside it (that ray
 is what stops a hidden plane being rescued). `planarFaceFor(e,hit)` is the "what a
 flat-requiring click meant" wrapper. Hover never rescues and neither does a plain selection
-click — a highlight has to be the truth. The right-click routing takes one extra rule: a
-rescued plane, or a right-click back on the SELECTED face, beats the edge menu, because a
-face that small is nothing but rim within the edge pick tolerance and the edge menu would
-otherwise be the only menu it could ever show; an edge already selected still keeps the edge
-menu. **Feature-tree hover cross-highlights** (owner ask): `setFeatHover` on every
+click — a highlight has to be the truth. **`pickEdge` is occlusion-aware**, which is what
+lets a plain click on that cap take the FACE: the pick lines are drawn `depthTest:false` and
+a raycast is pure geometry, so the ray carried on through the solid and passed within the
+threshold of edges BEHIND it (on the lamp's cap it was finding a seam 16 units deeper). It
+now takes the nearest `resultMeshes` hit first and accepts the first line hit within
+`surf.distance + thr*1.5 + 0.05` — an edge on the visible face measures the same within
+tessellation sag, a silhouette edge measures shorter, hidden ones are skipped; with NO
+surface under the cursor (a silhouette clicked from the sky) the nearest line wins as
+before. Note this also means a test that clicks a chord must click a VISIBLE one (brepsel's
+target picker was taking the middle chord of the lamp's base rim, which is under the body).
+The only routing rule left on the right-click is that a right-click back on the SELECTED
+face offers its commands rather than a nearby edge's; an edge already selected still keeps
+the edge menu. **Feature-tree hover cross-highlights** (owner ask): `setFeatHover` on every
 `makeFeatRow` row lights the thing the row made in one `treeHoverGroup` — sketch rows glow
-their `entityLoops` through `sketchData[id].frame` (the point: a CONSUMED sketch is otherwise
-never drawn), dplane/daxis rows redraw their reference geometry, and a solid feature ghosts
+EVERY entity through `entityDisplayPath` + `sketchData[id].frame`, never `entityLoops`,
+which yields closed profiles only: a sweep's path sketch is one open spline with no loops at
+all, and a consumed, hidden path sketch is exactly the one worth glowing (construction
+geometry draws too). dplane/daxis rows redraw their reference geometry, and a solid feature ghosts
 the tool shapes `featTools` kept for it, meshed lazily and cached in `treeGhostCache` (dropped
 in `resetFeatTools` — the shapes' own lifetime; a tool freed with a checkpoint throws and
 falls through). The fallback for a feature with no separable tool (a fillet, a
