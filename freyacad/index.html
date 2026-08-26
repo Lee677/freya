@@ -9727,15 +9727,112 @@ const CSG = (function(){
               data:appearanceEmpty()?JSON.stringify(features)
                   :JSON.stringify({type:'part',appearance,features})};
   }
-  function saveProject(which) {
-      const file=docFile(which);
-      if(file.ref)setHint('Sheet saved as '+file.fname+' — it references '+file.ref
-          +', which is its own file. Keep the two together.');
+  /* ---- the document library: files saved IN the browser -----------------
+     Save keeps documents in IndexedDB — on the user's machine, inside the
+     browser's own storage — so the file list and its icons live in the app
+     with nothing installed. A real file on disk stays one click away (the
+     download button on every row), and clearing the browser's site data
+     clears the library, which is why that button matters. */
+  function libOpen(){ return new Promise((res,rej)=>{
+    let q; try{ q=indexedDB.open('fcad-library',1); }catch(e){ return rej(e); }
+    q.onupgradeneeded=()=>{ q.result.createObjectStore('docs',{keyPath:'name'}); };
+    q.onsuccess=()=>res(q.result);
+    q.onerror=()=>rej(q.error||new Error('library unavailable'));
+  });}
+  function libTx(mode,run){ return libOpen().then(db=>new Promise((res,rej)=>{
+    const t=db.transaction('docs',mode), out=run(t.objectStore('docs'));
+    t.oncomplete=()=>{ db.close(); res(out&&('result' in out)?out.result:undefined); };
+    t.onerror=()=>{ db.close(); rej(t.error); };
+    t.onabort=()=>{ db.close(); rej(t.error); };
+  }));}
+  const libPut=rec=>libTx('readwrite',s=>s.put(rec));
+  const libGet=name=>libTx('readonly',s=>s.get(name));
+  const libDelete=name=>libTx('readwrite',s=>s.delete(name));
+  const libList=()=>libTx('readonly',s=>s.getAll());
+  function docKindOf(fname){
+    return /\.drawing$/i.test(fname)?'drawing'
+          :/\.(assembly|asmcad)$/i.test(fname)?'assembly':'part';
+  }
+  const LIB_ICON={part:'icons/part-256.png',assembly:'icons/assembly-256.png',drawing:'icons/drawing-256.png'};
+  function downloadDoc(file){
       const blob = new Blob([file.data], {type: 'application/json'});
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a'); a.href = url;
       a.download = file.fname;
       a.click(); URL.revokeObjectURL(url);
+  }
+  function saveProject(which) {
+      const file=docFile(which);            // serialized NOW, before anything changes
+      libPut({name:file.fname,kind:docKindOf(file.fname),data:file.data,t:Date.now()})
+        .then(()=>{
+          setHint('Saved '+file.fname+' in this browser — Open lists your documents'
+            +(file.ref?'. The sheet references '+file.ref+', saved separately.':''));
+          if(document.getElementById('libdlg'))openLibrary();   // keep an open list live
+        })
+        .catch(()=>{ downloadDoc(file); }); // storage refused: a real file instead
+  }
+  function openLibrary(){
+    const old=document.getElementById('libdlg'); if(old)old.remove();
+    const ov=document.createElement('div'); ov.id='libdlg';
+    ov.style.cssText='position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center';
+    const box=document.createElement('div');
+    box.style.cssText='width:min(560px,92vw);max-height:76vh;display:flex;flex-direction:column;background:#0d1117;border:1px solid var(--g-blue);border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.6);overflow:hidden';
+    box.innerHTML='<div style="padding:14px 16px 10px"><div style="font-size:13.5px;font-weight:600">Your documents</div>'
+      +'<div style="font-size:11.5px;color:var(--muted);margin-top:3px">Saved in this browser, on this computer — nothing installed. '
+      +'The ⭳ on a row writes it out as a real file; clearing the browser’s site data clears this list.</div></div>';
+    const list=document.createElement('div');
+    list.style.cssText='flex:1;overflow-y:auto;padding:4px 8px 8px;display:flex;flex-direction:column;gap:2px';
+    box.appendChild(list);
+    const foot=document.createElement('div');
+    foot.style.cssText='display:flex;gap:8px;justify-content:flex-end;padding:10px 14px;border-top:1px solid var(--line)';
+    const fromPc=document.createElement('button'); fromPc.className='btn-ghost';
+    fromPc.id='lib-from-pc'; fromPc.textContent='Open from this computer…';
+    fromPc.addEventListener('click',()=>{ ov.remove(); $('file-load').click(); });
+    const close=document.createElement('button'); close.className='btn-primary'; close.textContent='Close';
+    close.addEventListener('click',()=>ov.remove());
+    foot.appendChild(fromPc); foot.appendChild(close); box.appendChild(foot);
+    ov.appendChild(box); document.body.appendChild(ov);
+    ov.addEventListener('click',e=>{ if(e.target===ov)ov.remove(); });
+    const empty=msg=>{
+      const em=document.createElement('div');
+      em.style.cssText='padding:26px 16px;text-align:center;color:var(--muted);font-size:12.5px';
+      em.textContent=msg; list.appendChild(em);
+    };
+    libList().then(recs=>{
+      recs.sort((a,b)=>(b.t||0)-(a.t||0));
+      if(!recs.length)return empty('Nothing saved yet — Save puts the open document here.');
+      for(const r of recs)list.appendChild(libRow(r,ov));
+    }).catch(()=>empty('This browser is not letting freyacad keep documents — use Open from this computer.'));
+  }
+  function libRow(r,ov){
+    const row=document.createElement('div');
+    row.className='lib-row';
+    row.style.cssText='display:flex;align-items:center;gap:12px;padding:7px 10px;border-radius:8px;cursor:pointer';
+    const d=new Date(r.t||0);
+    const when=r.t?(d.toLocaleDateString()+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})):'';
+    row.innerHTML='<img src="'+(LIB_ICON[r.kind]||LIB_ICON.part)+'" width="34" height="34" style="flex:none" alt="">'
+      +'<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(r.name)+'</div>'
+      +'<div style="font-size:10.5px;color:var(--muted)">'+r.kind+(when?' · '+when:'')+'</div></div>';
+    const dl=document.createElement('button'); dl.className='btn-ghost';
+    dl.title='Download as a real file'; dl.textContent='⭳';
+    dl.addEventListener('click',e=>{ e.stopPropagation(); downloadDoc({fname:r.name,data:r.data}); });
+    const del=document.createElement('button'); del.className='btn-ghost btn-danger';
+    del.title='Delete from this browser'; del.textContent='×';
+    del.addEventListener('click',e=>{ e.stopPropagation();
+      askDialog('Delete '+esc(r.name)+'?',
+        'It is stored only in this browser — deleting cannot be undone. Download it first if you want to keep a copy.',
+        [{label:'Delete',danger:true,fn:()=>libDelete(r.name).then(()=>openLibrary())},
+         {label:'Cancel'}]);
+    });
+    row.appendChild(dl); row.appendChild(del);
+    row.addEventListener('mouseenter',()=>row.style.background='rgba(66,133,244,.08)');
+    row.addEventListener('mouseleave',()=>row.style.background='');
+    row.addEventListener('click',()=>{
+      ov.remove();
+      try{ loadDocData(JSON.parse(r.data), r.name.replace(/\.[a-z0-9]+$/i,'')); }
+      catch(_){ setHint('That document would not open — its data did not parse'); }
+    });
+    return row;
   }
 
   /* a .part is a bare feature array, or {type:'part',appearance,features}
@@ -9849,15 +9946,34 @@ const CSG = (function(){
       setHint('Sheet placed over '+docName+', which is already open');
       return;
     }
-    const buttons=[{label:'Open '+refName+'…',primary:true,fn:()=>pickDrawingRef(ref,apply)}];
-    if(openHas)buttons.push({label:'Use the open model',fn:()=>{clearDrawModel();apply();}});
-    buttons.push({label:'Cancel'});
-    askDialog('This drawing references '+refName,
-      'A drawing is a sheet about a model, and the model lives in its own file — '
-      +'the sheet only records its name. '
-      +(openHas?'Open the referenced file, or place the sheet over the model that is open now.'
-               :'Choose that file and the sheet will be placed over it.'),
-      buttons);
+    const ask=()=>{
+      const buttons=[{label:'Open '+refName+'…',primary:true,fn:()=>pickDrawingRef(ref,apply)}];
+      if(openHas)buttons.push({label:'Use the open model',fn:()=>{clearDrawModel();apply();}});
+      buttons.push({label:'Cancel'});
+      askDialog('This drawing references '+refName,
+        'A drawing is a sheet about a model, and the model lives in its own file — '
+        +'the sheet only records its name. '
+        +(openHas?'Open the referenced file, or place the sheet over the model that is open now.'
+                 :'Choose that file and the sheet will be placed over it.'),
+        buttons);
+    };
+    if(!ref.name)return ask();
+    /* the browser library resolves references by itself — the SolidWorks
+       search path, except the path is this browser */
+    libGet(ref.name).then(rec=>{
+      if(!rec)return ask();
+      let d; try{ d=JSON.parse(rec.data); }catch(_){ return ask(); }
+      if(want==='asm'){
+        if(!d||d.type!=='assembly')return ask();
+        loadDocData(d, ref.name.replace(/\.[a-z0-9]+$/i,''));
+        clearDrawModel(); apply();
+      }else{
+        const pf=partFileData(d);
+        if(!pf||!loadDrawModel(pf.features, ref.name, pf.appearance))return ask();
+        apply();
+      }
+      setHint('Sheet placed over '+ref.name+' from your browser documents');
+    }).catch(ask);
   }
   function pickDrawingRef(ref, apply){
     const old=document.getElementById('file-ref'); if(old)old.remove();
@@ -13465,7 +13581,7 @@ const CSG = (function(){
   });
   $('btn-print').addEventListener('click',openPrintDialog);
   $('btn-save').addEventListener('click',()=>saveProject());
-  $('btn-load').addEventListener('click',()=>$('file-load').click());
+  $('btn-load').addEventListener('click',openLibrary);
   $('file-load').addEventListener('change', e => { if(e.target.files.length) loadProject(e.target.files[0]); });
   $('btn-units').addEventListener('click',()=>{
     unitMode = unitMode==='mm' ? 'in' : 'mm';
@@ -13753,6 +13869,7 @@ const CSG = (function(){
     bumpAppearance, applyAppearance, setRenderedView, faceSig, sigMatch,
     get renderedView(){ return renderedView; },
     entSpin, coupledEnt, entSeg, segAlign,
+    libPut, libGet, libList, libDelete, openLibrary, saveProject,
     dimHit, dimResolve, dimApply, polyCorners, cornerAt, applyCorner,
     get cornerSel(){ return cornerSel; }, set cornerSel(v){ cornerSel=v; },
     ensureSketchProps, setCornerTreatment, setCornerSize,

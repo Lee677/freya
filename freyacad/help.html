@@ -868,12 +868,22 @@ sketch as it was.</p>
 A new feature still takes a single press to remove, panel edit and all.</p>
 
 <h2 id="save">Saving &amp; opening</h2>
-<p><b>Save</b> writes a <code>.part</code> file — plain JSON holding the entire
-recipe: every sketch, dimension, feature and parameter. It's small, diffable, and opens
-back up fully editable. This is your working format; use it for anything you might revisit.
-An assembly saves as <code>.assembly</code>. Files save under the document's name — open
-<code>bracket.part</code>, save, and you get <code>bracket.part</code> back. Files saved
-with the old <code>.sketchcad</code> / <code>.asmcad</code> names still open.</p>
+<p><b>Save keeps your documents in the browser</b> — on your computer, inside the
+browser's own storage, with nothing installed. <b>Open</b> lists them: each document with
+its own icon (part, assembly, drawing), newest first. Click one to open it; the <b>⭳</b>
+on a row writes it out as a real file for sharing or backup, and <b>Open from this
+computer…</b> brings a real file in. A <code>.part</code> is plain JSON holding the entire
+recipe — every sketch, dimension, feature and parameter — and opens back up fully editable.
+An assembly saves as <code>.assembly</code>. Documents save under their names — open
+<code>bracket.part</code>, save, and it's <code>bracket.part</code> in the list. Files
+saved with the old <code>.sketchcad</code> / <code>.asmcad</code> names still open.</p>
+<div class="note">
+  <span class="tag">Worth knowing</span>
+  <p>The document list lives in <em>this browser on this machine</em>: it doesn't follow
+  you to another computer, and clearing the browser's site data clears it. Anything you'd
+  mind losing deserves a <b>⭳ download</b> now and then — a real file is yours to back up
+  and send.</p>
+</div>
 <p><b>Drawings reference their model, SolidWorks-style.</b> Saving from a drawing writes a
 <code>.drawing</code> that holds the sheet — views, dimensions, marks — and the <em>name</em>
 of the part or assembly file it was drawn from, never the model itself. The model stays in
