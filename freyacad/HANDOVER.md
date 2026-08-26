@@ -53,9 +53,17 @@ steal a face click). That work also added the persistent top-right **pick card**
 (`showPickCard`/`hidePickCard`), shared by every click-something-next arm — sketch,
 text face and axis picks — because the fading bottom hint left armed states looking
 dead. Saved files are **.part / .assembly / .drawing** now (the old .sketchcad /
-.asmcad still open); a .drawing is NEW as a saved thing — it carries the sheet and
-the recipe (or assembly) it was drawn from, and reopens whole, where before the
-sheet was simply lost on save. `manifest.webmanifest` + `icons/` make freyacad
+.asmcad still open), and they save under the document's name (`docName`, set by
+open/demo/new — `bracket.part` reopens and re-saves as `bracket.part`). A
+**.drawing references its model SolidWorks-style** (owner's explicit ask, replacing
+one window of embedded-model format): `docFile()` serializes
+`{type:'drawing',ref:{name,kind},draw}` with NO features/asm; opening one
+auto-attaches over a matching open model (base-name match), otherwise
+`resolveDrawingRef` raises a dialog — pick the file (a part loads as `drawModel`,
+the side-build that never disturbs the open document; an assembly loads for real)
+or use the open model. Legacy embedded .drawing files still open whole. Guard
+dialogs ("Save, then …") call `saveProject('model')` so they protect features,
+not sheets. `manifest.webmanifest` + `icons/` make freyacad
 installable as a PWA whose `file_handlers` give those extensions freyacad icons in
 the OS file explorer and route double-clicks into the app (`launchQueue` consumer
 at the foot of the script waits for the kernel before loading). The full /grid tracer toolset
@@ -70,15 +78,16 @@ of this trio).
 
 **The engine job** remains closing the gap to SolidWorks and FreeCAD, working through
 `FEATURE-MATRIX.html` **cheapest first**. The matrix carries a token estimate per gap and
-`dev/matrix_done.py` ticks a row and recomputes the tallies. As of this writing: **42 ✅ ·
-3 ◐ · 31 ✗**, 34 gaps, ~7.27M tokens (the 42nd row is tablet support, added done).
+`dev/matrix_done.py` ticks a row and recomputes the tallies. As of this writing: **41 ✅ ·
+3 ◐ · 32 ✗**, 34 gaps, ~7.27M tokens (the tablet row is a deliberate ❌ — see below).
 
-**freyacad also runs on an iPad now.** Phones still get the gate; anything with a ≥600 px
-short side gets the app, with one finger orbiting, two fingers panning and pinch-zooming, a
-long press for the right-click menus, a Delete button on coarse-pointer devices, and an
-Apple Pencil as a precision pointer. The document autosaves to localStorage against
-iPadOS tab eviction (trap 37). Tested with emulated touch in Chromium; a real iPad has not
-touched it yet, so the first hands-on session is worth watching. The working agreement has been: one item at a time,
+**Tablets and phones are blocked, by the owner's decision** (2026-08). Tablet support was
+built and shipped, then the owner asked for it to be removed: the gate in `<head>` now
+stops anything mobile — including iPads, which call themselves Macs (the maxTouchPoints
+test catches them) — with no screen-size exemption. The touch machinery inside the app
+(touch orbit/pan/pinch, long-press menus, the coarse-pointer Delete button, autosave) is
+still there and still serves touch-screen laptops; only the gate and the manual changed.
+Don't resurrect tablet support without asking. The working agreement has been: one item at a time,
 each committed, deployed and reported before starting the next.
 
 The three scope rows — Mirror, linear pattern, circular pattern — were taken together as one

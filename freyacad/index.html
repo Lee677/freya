@@ -35,25 +35,19 @@
 </script>
 
 <script>
-/* Mobile gate. freyacad steers with a mouse, a keyboard and a big screen, so a
- * phone or tablet gets a friendly front door instead of an app it cannot
- * drive — and is spared the ~13 MB kernel download. The flag is honoured by
- * the kernel loader and by a bail-out at the top of the app script; the
- * html class shows #gate and hides #app (see the gate styles). iPadOS calls
- * itself a Mac, hence the maxTouchPoints test. */
+/* Mobile gate. freyacad steers with a mouse, a keyboard and a big screen, so
+ * phones and tablets get a friendly front door instead of an app they cannot
+ * drive properly — and are spared the ~13 MB kernel download. The flag is
+ * honoured by the kernel loader and by a bail-out at the top of the app
+ * script; the html class shows #gate and hides #app (see the gate styles).
+ * iPadOS calls itself a Mac, hence the maxTouchPoints test — a touch-screen
+ * Mac does not exist, so touch on a "Mac" is an iPad. */
 (function(){
   var ua = navigator.userAgent || '';
   var mobile = !!(navigator.userAgentData && navigator.userAgentData.mobile)
     || /Android|iPhone|iPod|Windows Phone|BlackBerry|Mobi/i.test(ua)
     || /iPad/.test(ua)
     || (/Macintosh|Mac OS/.test(ua) && navigator.maxTouchPoints > 1);
-  /* A tablet is not a phone. An iPad (or any touch device with a real screen)
-     drives the app fine now that the canvas speaks touch — one finger orbits,
-     two fingers pan and zoom, a long press right-clicks, and an Apple Pencil
-     is a precision pointer. The gate keeps only the genuinely thumb-sized out:
-     the shortest screen side under ~600 CSS px is a phone, and iPad Mini's is
-     744. */
-  if(mobile && Math.min(screen.width||0, screen.height||0) >= 600) mobile = false;
   if(mobile){
     window.__MOBILE_GATE = true;
     document.documentElement.className += ' mobile-gate';
@@ -605,11 +599,11 @@ if(!window.THREE){
     <path d="M50 12 83 30 83 66 50 84 17 66 17 30 Z M17 30 50 46 83 30 M50 46 50 84"/>
   </svg>
   <div class="g-eyebrow">freyacad &middot; wrong-sized workshop</div>
-  <h1>This bench doesn&rsquo;t fold down to phone size.</h1>
+  <h1>This bench doesn&rsquo;t fold down to touch size.</h1>
   <p>freyacad is a full parametric CAD bench &mdash; a real solid-modelling kernel, sketches,
-    fillets, booleans &mdash; and it needs a screen with elbow room. On a phone it would be
-    all thumbs. <b>Literally.</b></p>
-  <p>Open it on a <b>PC, a Mac or an iPad</b> and the whole workshop will be set up and
+    fillets, booleans &mdash; and it drives with a mouse, a keyboard and a hover cursor.
+    On a phone or a tablet it would be all thumbs. <b>Literally.</b></p>
+  <p>Open it on a <b>PC or a Mac</b> and the whole workshop will be set up and
     waiting for you.</p>
   <a class="g-home" href="/">&larr; The rest of freya.co.nz works fine on your phone</a>
   <div class="g-small">also: you were just spared an 11&nbsp;MB CAD-kernel download. you&rsquo;re welcome.</div>
@@ -1853,6 +1847,7 @@ const CSG = (function(){
     rollbackIndex=features.length;
     selId=null; editing=null; selectedEdges=[]; hoveredEdge=null; closeProps(); setMode('model');
     demoActive=d.key;
+    docName=d.key;
     rebuild();
     controls.target.set(d.cam.t[0],d.cam.t[1],d.cam.t[2]);
     controls.sph.set(d.cam.s[0],d.cam.s[1],d.cam.s[2]);
@@ -1920,7 +1915,7 @@ const CSG = (function(){
     if(!busy)return go();
     askDialog('Replace what you have with the demo?',
       busy+(docMode==='asm'?' component':' feature')+(busy===1?'':'s')+' will be discarded.',
-      [{label:'Save, then load',primary:true,fn:()=>{saveProject();go();}},
+      [{label:'Save, then load',primary:true,fn:()=>{saveProject('model');go();}},
        {label:'Discard & load',danger:true,fn:go},
        {label:'Cancel'}]);
   }
@@ -1931,11 +1926,16 @@ const CSG = (function(){
   }
 
   /* ============================ FEATURE MODEL ============================ */
-  let features=[];        
-  let rollbackIndex=0;    
+  let features=[];
+  let rollbackIndex=0;
   let selId=null;
   let uid=1;
   const nextId=()=>uid++;
+  /* The open MODEL document's base name — what Save writes .part/.assembly
+     files as, and what a sheet records as its reference. Set by opening a
+     file or a demo; never by opening a .drawing (the sheet is a different
+     document about this one). */
+  let docName='project';
 
   let resultGeoms=[];     
   let resultMeshes=[];    
@@ -7875,6 +7875,7 @@ const CSG = (function(){
     el.className='feat'+(child?' child':'')+(f.id===selId?' sel':'')+(i>=rollbackIndex?' rolled':'')
       +(f.error?' errored':'')+(f.suppressed?' suppressed':'');
     el.dataset.fid=f.id;
+    el.dataset.fi=i;
     const fname=(propsFeat&&propsFeat.id===f.id&&draftFeat)?draftFeat.name:f.name;
     el.title=fname;
     el.innerHTML=(twist?`<span class="twist" title="Collapse or expand">${twist==='open'?'−':'+'}</span>`:'')+
@@ -8033,6 +8034,23 @@ const CSG = (function(){
   let rolling=false;
   function startRollDrag(e){
     e.preventDefault();rolling=true;
+    /* The bar must stay glued to the pointer even when a rebuild would take
+       whole seconds, so the drag works in two layers. Every pointermove
+       repositions the bar ELEMENT and re-greys the rows — pure DOM, always
+       instant. Geometry follows live only while rebuilds are proving cheap
+       (rolling back lands on checkpoints, so it usually is); the moment one
+       measures slow, further rebuilds wait for release, where the final
+       index is applied once. */
+    let pend=rollbackIndex, raf=0, lastMs=0;
+    const place=idx=>{
+      const b=tree.querySelector('.rollbar');         // rebuilds replace the element
+      if(!b)return;
+      let before=null;
+      for(const el of tree.querySelectorAll('.feat[data-gs]'))
+        if(+el.dataset.gs>=idx){before=el;break;}
+      tree.insertBefore(b,before);
+      tree.querySelectorAll('.feat').forEach(el=>el.classList.toggle('rolled',+el.dataset.fi>=idx));
+    };
     const move=ev=>{
       /* Only rows that carry a group start count — that excludes the datum
          planes and axes above the Features section and the nested sketch
@@ -8046,9 +8064,23 @@ const CSG = (function(){
         if(ev.clientY < r.top+r.height/2){ idx=+el.dataset.gs; break; }
       }
       idx=Math.max(0,Math.min(features.length,idx));
-      if(idx!==rollbackIndex){rollbackIndex=idx;rebuild();}
+      if(idx===pend)return;
+      pend=idx;
+      place(idx);
+      if(lastMs<90&&!raf)raf=requestAnimationFrame(()=>{
+        raf=0;
+        if(pend===rollbackIndex)return;
+        const t0=performance.now();
+        rollbackIndex=pend;rebuild();
+        lastMs=performance.now()-t0;
+      });
     };
-    const up=()=>{rolling=false;document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);};
+    const up=()=>{
+      rolling=false;
+      if(raf)cancelAnimationFrame(raf);
+      document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);
+      if(pend!==rollbackIndex){rollbackIndex=pend;rebuild();}
+    };
     document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);
   }
 
@@ -9505,24 +9537,37 @@ const CSG = (function(){
     document.body.appendChild(ov);
   }
 
-  function saveProject() {
-      const isD = docMode==='draw', isA = !isD && docMode==='asm';
-      /* a .drawing carries the sheet AND whatever makes the model — the part
-         recipe, or the assembly when the sheet was drawn over one — so it
-         reopens whole; view geometry is derived and stays out of the file */
-      let data;
-      if(isD){
+  /* Serialize the document Save would write, without downloading it.
+     Documents save one at a time, the SolidWorks way. A .drawing is a sheet
+     ABOUT a model: it stores the sheet and the NAME of the model file it
+     references — never the model itself. The part or assembly saves
+     separately, under the document's own name. which==='model' serializes
+     the model even from inside a drawing (the guard dialogs use it: they
+     are protecting features, not sheets). */
+  function docFile(which){
+      const m=(docMode==='draw'&&which!=='model')?'draw'
+             :(docMode==='draw'?drawReturn:docMode);
+      if(m==='draw'){
         const sheet=Object.assign({},draw,{views:draw.views.map(v=>{
           const c=Object.assign({},v); delete c.geo; return c;})});
-        const p={type:'drawing',features,draw:sheet};
-        if(drawReturn==='asm')p.asm={components:asm.components,mates:asm.mates};
-        data=JSON.stringify(p);
-      } else if(isA) data=JSON.stringify({type:'assembly',components:asm.components,mates:asm.mates});
-      else data=JSON.stringify(features);
-      const blob = new Blob([data], {type: 'application/json'});
+        const base=drawModel?drawModel.name:docName;
+        const kind=(!drawModel&&drawReturn==='asm')?'assembly':'part';
+        return {fname:base+'.drawing', ref:base+'.'+kind,
+                data:JSON.stringify({type:'drawing',ref:{name:base+'.'+kind,kind},draw:sheet})};
+      }
+      if(m==='asm')
+        return {fname:docName+'.assembly',
+                data:JSON.stringify({type:'assembly',components:asm.components,mates:asm.mates})};
+      return {fname:docName+'.part', data:JSON.stringify(features)};
+  }
+  function saveProject(which) {
+      const file=docFile(which);
+      if(file.ref)setHint('Sheet saved as '+file.fname+' — it references '+file.ref
+          +', which is its own file. Keep the two together.');
+      const blob = new Blob([file.data], {type: 'application/json'});
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a'); a.href = url;
-      a.download = isD?'sheet.drawing':isA?'assembly.assembly':'project.part';
+      a.download = file.fname;
       a.click(); URL.revokeObjectURL(url);
   }
 
@@ -9534,21 +9579,25 @@ const CSG = (function(){
       reader.onload = e => {
           try {
               const data = JSON.parse(e.target.result);
-              loadDocData(data);
+              loadDocData(data, file.name.replace(/\.[a-z0-9]+$/i,''));
           } catch(err) { alert('Invalid file'); }
       };
       reader.readAsText(file);
   }
   /* One document from parsed JSON — a part list or an assembly record. Shared
-     by the Open button and the autosave restore, which must not drift apart. */
-  function loadDocData(data){
+     by the Open button and the autosave restore, which must not drift apart.
+     `name` is the file's base name when one exists; the autosave restore has
+     none and the document keeps its current name. */
+  function loadDocData(data, name){
               if (Array.isArray(data)) {                    // a part file
                   if (docMode==='asm') { clearAsm(); setDocMode('part'); }
                   features = data;      // checkpoints stay: see loadDemo
                   uid = Math.max(0,...features.map(f=>f.id)) + 1;
                   rollbackIndex = features.length;
+                  if(name)docName=name;
                   selId = null; demoActive=false; closeProps(); rebuild(); refreshDemoTgl();
               } else if (data && data.type==='assembly') {  // an assembly file
+                  if(name)docName=name;
                   dropAllCheckpoints();
                   features=[];rollbackIndex=0;selId=null;editing=null;demoActive=false;
                   clearAsm();
@@ -9575,18 +9624,84 @@ const CSG = (function(){
                   }
                   reportSolve(solveMates({}));   // the file records the relations; the positions follow
                   refreshAsmUI(); fitAll();
-              } else if (data && data.type==='drawing') {   // a sheet + its model
-                  if(data.asm&&Array.isArray(data.asm.components))
-                      loadDocData({type:'assembly',components:data.asm.components,mates:data.asm.mates});
-                  else
-                      loadDocData(Array.isArray(data.features)?data.features:[]);
-                  draw=Object.assign({sheet:'A3',orient:'landscape',scale:0,angle:3,
-                      hidden:true,title:'',views:[],dims:[],marks:[],uid:1},data.draw||{});
-                  draw.views=(draw.views||[]).map(v=>Object.assign({},v));
-                  drawSel=null;
-                  rebuildDrawViews();            // geo is derived, never in the file
-                  setDocMode('draw');
+              } else if (data && data.type==='drawing') {   // a sheet about a model
+                  const sheet=data.draw||{};
+                  const apply=()=>{
+                      draw=Object.assign({sheet:'A3',orient:'landscape',scale:0,angle:3,
+                          hidden:true,title:'',views:[],dims:[],marks:[],uid:1},sheet);
+                      draw.views=(draw.views||[]).map(v=>Object.assign({},v));
+                      drawSel=null;
+                      rebuildDrawViews();        // geo is derived, never in the file
+                      setDocMode('draw');
+                  };
+                  if(data.features||data.asm){
+                      /* legacy embedded drawing (pre-reference format): the
+                         model travelled inside the file, so unpack it */
+                      if(data.asm&&Array.isArray(data.asm.components))
+                          loadDocData({type:'assembly',components:data.asm.components,mates:data.asm.mates});
+                      else
+                          loadDocData(Array.isArray(data.features)?data.features:[]);
+                      if(name)docName=name;
+                      clearDrawModel();
+                      apply();
+                  } else {
+                      /* referenced drawing: the file names its model and
+                         carries none of it — find that model, then apply */
+                      resolveDrawingRef(data.ref||{}, apply);
+                  }
               } else throw new Error('unrecognised');
+  }
+  /* A referenced .drawing names its model; this finds it. The open document
+     wins when its name matches (SolidWorks resolves from memory first). Failing
+     that, a dialog asks for the model file: a part loads as drawModel — a side
+     build that leaves the open document alone — while an assembly must load
+     for real, since a sheet of one projects the live, solved components. */
+  function resolveDrawingRef(ref, apply){
+    const want=ref.kind==='assembly'?'asm':'part';
+    const refName=ref.name||'its model file';
+    const base=n=>(n||'').replace(/\.[a-z0-9]+$/i,'').toLowerCase();
+    const openHas= want==='asm' ? asm.components.length>0
+                                : (docMode!=='asm'&&features.length>0);
+    if(openHas && ref.name && base(ref.name)===base(docName)){
+      clearDrawModel(); apply();
+      setHint('Sheet placed over '+docName+', which is already open');
+      return;
+    }
+    const buttons=[{label:'Open '+refName+'…',primary:true,fn:()=>pickDrawingRef(ref,apply)}];
+    if(openHas)buttons.push({label:'Use the open model',fn:()=>{clearDrawModel();apply();}});
+    buttons.push({label:'Cancel'});
+    askDialog('This drawing references '+refName,
+      'A drawing is a sheet about a model, and the model lives in its own file — '
+      +'the sheet only records its name. '
+      +(openHas?'Open the referenced file, or place the sheet over the model that is open now.'
+               :'Choose that file and the sheet will be placed over it.'),
+      buttons);
+  }
+  function pickDrawingRef(ref, apply){
+    const old=document.getElementById('file-ref'); if(old)old.remove();
+    const inp=document.createElement('input'); inp.type='file'; inp.id='file-ref';
+    inp.style.display='none'; document.body.appendChild(inp);
+    inp.accept=ref.kind==='assembly'?'.assembly,.asmcad,.json':'.part,.sketchcad,.json';
+    inp.addEventListener('change',()=>{
+      const f=inp.files[0]; inp.remove(); if(!f)return;
+      const rd=new FileReader();
+      rd.onload=ev=>{
+        let d; try{ d=JSON.parse(ev.target.result); }
+        catch(_){ return setHint('That is not a '+(ref.kind==='assembly'?'n assembly':' part')+' file'); }
+        if(ref.kind==='assembly'){
+          if(!d||d.type!=='assembly')return setHint('The drawing references an assembly — that file is not one');
+          loadDocData(d, f.name.replace(/\.[a-z0-9]+$/i,''));
+          clearDrawModel(); apply();
+        }else{
+          if(!Array.isArray(d))return setHint('The drawing references a part — that file is not one');
+          if(!loadDrawModel(d, f.name))return;   // side build; the open document is untouched
+          apply();
+        }
+        setHint('Sheet placed over '+f.name);
+      };
+      rd.readAsText(f);
+    });
+    inp.click();
   }
   /* A STEP or STL from the Open button becomes an import feature in the tree —
      bytes and all — so the part saves, reopens and replays like anything else.
@@ -12827,12 +12942,12 @@ const CSG = (function(){
     if(docMode==='part'&&features.length){
       askDialog('Start a new assembly?',
         'The current part has '+features.length+' feature'+(features.length===1?'':'s')+'. Save it first?',
-        [{label:'Save, then new',primary:true,fn:()=>{saveProject();start();}},
+        [{label:'Save, then new',primary:true,fn:()=>{saveProject('model');start();}},
          {label:'Discard',danger:true,fn:start},{label:'Cancel'}]);
     } else if(docMode==='asm'&&asm.components.length){
       askDialog('Start a new assembly?',
       'The current assembly has '+asm.components.length+' component'+(asm.components.length===1?'':'s')+'. Save it first?',
-        [{label:'Save, then new',primary:true,fn:()=>{saveProject();start();}},
+        [{label:'Save, then new',primary:true,fn:()=>{saveProject('model');start();}},
          {label:'Discard',danger:true,fn:start},{label:'Cancel'}]);
     } else start();
   });
@@ -12996,7 +13111,7 @@ const CSG = (function(){
     e.target.value='';
   });
   $('btn-print').addEventListener('click',openPrintDialog);
-  $('btn-save').addEventListener('click',saveProject);
+  $('btn-save').addEventListener('click',()=>saveProject());
   $('btn-load').addEventListener('click',()=>$('file-load').click());
   $('file-load').addEventListener('change', e => { if(e.target.files.length) loadProject(e.target.files[0]); });
   $('btn-units').addEventListener('click',()=>{
@@ -13007,6 +13122,7 @@ const CSG = (function(){
   });
   function doNewPart(){
     dropAllCheckpoints();
+    docName='project';
     features=[];rollbackIndex=0;selId=null;editing=null;selectedEdges=[];hoveredEdge=null;closeEdgeMenu();closeProps();setMode('model');controls.unlock();demoActive=false;rebuild();refreshDemoTgl();
   }
   /* small choice dialog (used by New part) */
@@ -13035,7 +13151,7 @@ const CSG = (function(){
       if(asm.components.length){
         askDialog('Leave the assembly?',
           'The current assembly has '+asm.components.length+' component'+(asm.components.length===1?'':'s')+'. Save it first?',
-          [{label:'Save, then new part',primary:true,fn:()=>{saveProject();start();}},
+          [{label:'Save, then new part',primary:true,fn:()=>{saveProject('model');start();}},
            {label:'Discard',danger:true,fn:start},{label:'Cancel'}]);
       } else start();
       return;
@@ -13043,7 +13159,7 @@ const CSG = (function(){
     if(!features.length){ doNewPart(); return; }
     askDialog('Start a new part?',
       'The current part has '+features.length+' feature'+(features.length===1?'':'s')+'. Save it first?',
-      [{label:'Save, then new',primary:true,fn:()=>{saveProject();doNewPart();}},
+      [{label:'Save, then new',primary:true,fn:()=>{saveProject('model');doNewPart();}},
        {label:'Discard',danger:true,fn:doNewPart},
        {label:'Cancel'}]);
   });
@@ -13276,6 +13392,9 @@ const CSG = (function(){
     get camera(){return camera}, setProjection, get orthoOn(){return orthoOn}, controls, fitAll,
     OCK, featureEdges,
     get checkpoints(){ return checkpoints.map(c=>({i:c.i, bodies:c.shapes.length, key:c.key})); },
+    get rollbackIndex(){ return rollbackIndex; },
+    get docName(){ return docName; }, docFile, loadDocData,
+    get drawModel(){ return drawModel&&{name:drawModel.name,geoms:drawModel.geoms.length}; },
     dimHit, dimResolve, dimApply, polyCorners, cornerAt, applyCorner,
     get cornerSel(){ return cornerSel; }, set cornerSel(v){ cornerSel=v; },
     ensureSketchProps, setCornerTreatment, setCornerSize,
