@@ -92,6 +92,33 @@ paint the WHOLE edge (`redrawEdgeSel` wholeEdge; the hover compare keys on edge,
 `OCK.mesh` records `geo.userData.faceRanges` (one triangle range per TopoDS FACE, explorer
 order) and `faceRegion` returns the real face when >1 range exists — the 38° crease flood
 remains only for mesh imports (their single wrapped face gives 1 range) and as fallback.
+**Faces hover and select too** (owner report: the spout's end edge was pickable, its end
+FACE was not): `hoveredFace`/`selectedFace` are `{body,ids,seed,fit}` or null —
+display-session state, never saved, never in the rebuild signature — `body` indexes
+resultMeshes, `ids` is the region's triangle list and `seed` is the region's LOWEST triangle
+id, so one face keeps one identity however the ray struck it (and the region/fit caches land
+one key per face, not per facet). `faceAtPointer` resolves a pointer event to that shape
+(`docMode==='part'` + `mode==='model'` only, nothing while `armedPick()` is true or a fillet
+draft is collecting edges — a highlight must promise what the click would take);
+`drawFaceHl` scrap-and-syncs at most two tint meshes (hover `0x35d4e6` 0.25, selected
+`0x4285F4` 0.4, two session materials, `faceTriGeom` positions, polygonOffset below the
+colour overlays' -1.5) added as CHILDREN of the body mesh and tagged `userData.faceHl` —
+NEVER `faceCol`, which is what `applyAppearance` sweeps; `setRenderedView` only touches
+`isLineSegments` children, so both sweeps leave highlights alone, and `pickBody`'s
+non-recursive raycast cannot pick them. An edge inside its pick tolerance beats the face for
+both hover and click; selection is mutually exclusive (a face click empties `selectedEdges`,
+`toggleEdge` nulls `selectedFace`). Face state clears wherever `hoveredEdge` is nulled
+(loadDemo, startSketch, applyState, commitEdgeFeature, new part) and in `buildPickEdges` —
+the one place every FULL rebuild passes, since new meshes make triangle ids meaningless;
+`rebuildOverlaysOnly` keeps its meshes and deliberately keeps the selection. The right-click
+**Face** section (`openModelMenu`, absorbing the old flat-only "This face" pair) acts
+through the existing flows only: `makeFaceSketch`/`startTextOnFace` get a synthesized hit
+from `faceHit` (object + faceIndex + `face.normal` from the seed triangle + `point` from the
+fit centre — part bodies carry no transform, so body space IS world space), `openFaceColor`
+is the `pendingFaceColor` consumption body extracted so both routes store one signature per
+face, `axisFromFace` writes the daxis fields `consumeAxisPick` writes (method `circ`), and
+`viewNormalToFace` aims `flyOrbit` at the face normal from whichever side the camera is
+already on.
 Angular deflection is the scale-free quality knob: 0.22 rad (was 0.35), linear diag*0.003.
 `featureEdges` (crease detector) still serves the DRAWING views — crease lines double as
 silhouettes on sheets, real edges alone would lose a cylinder's side profile — and the

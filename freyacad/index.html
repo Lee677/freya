@@ -1938,7 +1938,9 @@ const CSG = (function(){
     features=JSON.parse(JSON.stringify(d.data));
     uid=Math.max(...features.map(f=>f.id))+1;
     rollbackIndex=features.length;
-    selId=null; editing=null; selectedEdges=[]; hoveredEdge=null; closeProps(); setMode('model');
+    selId=null; editing=null; selectedEdges=[]; hoveredEdge=null;
+    hoveredFace=null; selectedFace=null; drawFaceHl();
+    closeProps(); setMode('model');
     demoActive=d.key;
     docName=d.key;
     resetAppearance(); appearanceRev++;
@@ -4769,6 +4771,10 @@ const CSG = (function(){
   const selGroup=new THREE.Group(); scene.add(selGroup);
   let selectedEdges=[];
   let hoveredEdge=null;
+  /* The face pick is the edge pick's mirror, one face at a time:
+     {body,ids,seed,fit} or null. Display-session state — never saved, never
+     part of the rebuild signature. See faceAtPointer for what each field is. */
+  let hoveredFace=null, selectedFace=null;
   function buildPickEdges(){
     if(pickLines){scene.remove(pickLines);pickLines.geometry.dispose();pickLines=null;}
     pickEdges=[]; const pos=[];
@@ -4790,6 +4796,11 @@ const CSG = (function(){
       pickLines=new THREE.LineSegments(lg,new THREE.LineBasicMaterial({transparent:true,opacity:0,depthTest:false}));
       pickLines.renderOrder=1; scene.add(pickLines);
     }
+    /* A full rebuild makes new meshes, so a face remembered by triangle id
+       refers to triangles that no longer exist — it goes with them. This is
+       the single place every full rebuild passes through; rebuildOverlaysOnly
+       keeps its meshes and deliberately keeps the selection too. */
+    hoveredFace=null; selectedFace=null; drawFaceHl();
     redrawEdgeSel();
   }
 
@@ -5693,7 +5704,9 @@ const CSG = (function(){
   }
   function startSketch(feature){
     editing=feature; selId=feature.id; tool='line'; chain=null; draftPts=[]; draftStage=0; draftA=null;
-    selectedEdges=[]; hoveredEdge=null; closeEdgeMenu();
+    selectedEdges=[]; hoveredEdge=null;
+    hoveredFace=null; selectedFace=null; drawFaceHl();
+    closeEdgeMenu();
     setMode('sketch');
     dockSel();     // the dock is being shown: apply the saved layout to it now
     // rebuild BEFORE the camera move: OCCT is synchronous and with a real part
@@ -7468,6 +7481,7 @@ const CSG = (function(){
     rollbackIndex=Math.min(s.rollbackIndex,features.length);
     selId=s.selId;
     selectedEdges=[]; hoveredEdge=null;
+    hoveredFace=null; selectedFace=null; drawFaceHl();
     rebuild(); refreshTree(); redrawEdgeSel();
     if(wasEditing!=null){
       const f=features.find(x=>x.id===wasEditing&&x.type==='sketch');
@@ -7567,9 +7581,13 @@ const CSG = (function(){
     setHint('Pick where the sketch goes — Esc cancels');
   }
   function endSketchPick(){ pendingSketchPick=false; hidePickCard(); updateDatumVis(); }
+  /* Any armed pick owns the next click, so selection must stand aside for it */
+  function armedPick(){
+    return !!(pendingSketchPick||pendingTextFace||pendingAxisPick||pendingFaceSketch
+             ||pendingBodyColor||pendingFaceColor);
+  }
   function cancelPicks(msg){
-    const had=pendingSketchPick||pendingTextFace||pendingAxisPick||pendingFaceSketch
-             ||pendingBodyColor||pendingFaceColor;
+    const had=armedPick();
     pendingSketchPick=false; pendingTextFace=false; pendingAxisPick=null; pendingFaceSketch=false;
     pendingBodyColor=false; pendingFaceColor=false;
     hidePickCard(); updateDatumVis();
@@ -7594,6 +7612,21 @@ const CSG = (function(){
     if(!resultMeshes.length)return setHint('Nothing to colour yet — build a solid first');
     pendingFaceColor=true;
     showPickCard('Click the face to colour');
+  }
+  /* One face, one colour: the signature is taken once and both the lookup and
+     the store go through it, so re-colouring a face replaces its entry rather
+     than stacking a second one behind it. Reached from the armed pick and
+     from a selected face's menu — the same face ends up the same colour. */
+  function openFaceColor(geom,seed){
+    const sig=faceSig(geom,seed);
+    if(!sig){ setHint('Could not read that face'); return; }
+    const ex=appearance.faces.findIndex(fc=>sigMatch(fc.sig,sig));
+    openColorPopover('Surface colour',ex>=0?appearance.faces[ex].color:null,hex=>{
+      const at=appearance.faces.findIndex(fc=>sigMatch(fc.sig,sig));
+      if(at>=0)appearance.faces.splice(at,1);
+      if(hex)appearance.faces.push({sig,color:hex});
+      bumpAppearance();
+    });
   }
   function pickPartColor(){
     openColorPopover('Part colour',appearance.part,hex=>{
@@ -10370,6 +10403,15 @@ const CSG = (function(){
          must not repaint the highlight per tessellation chord */
       const keyOf=h=>h?(h.rec.edgeId!=null?'e'+h.rec.body+':'+h.rec.edgeId:'i'+h.idx):null;
       if(keyOf(e2)!==keyOf(hoveredEdge)){ hoveredEdge=e2; redrawEdgeSel(); canvas.style.cursor=e2?'pointer':'default'; }
+      /* An edge within its pick tolerance wins, exactly as the click does, so
+         the face answers only for its interior. A highlight has to promise
+         what the click would take: while a pick is armed or a fillet is
+         collecting edges, a face click does something else or nothing. */
+      const hf=(e2||armedPick()||(draftFeat&&draftFeat.type==='fillet'))?null:faceAtPointer(e);
+      if(faceKey(hf)!==faceKey(hoveredFace)){
+        hoveredFace=hf; drawFaceHl();
+        if(!e2)canvas.style.cursor=hf?'pointer':'default';
+      }
     }
   });
   canvas.addEventListener('pointerup',e=>{
@@ -10498,15 +10540,7 @@ const CSG = (function(){
       const hit=pickBody(e);
       if(hit&&hit.faceIndex!=null){
         pendingFaceColor=false; hidePickCard();
-        const sig=faceSig(hit.object.geometry,hit.faceIndex);
-        if(!sig){ setHint('Could not read that face'); return; }
-        const ex=appearance.faces.findIndex(fc=>sigMatch(fc.sig,sig));
-        openColorPopover('Surface colour',ex>=0?appearance.faces[ex].color:null,hex=>{
-          const at=appearance.faces.findIndex(fc=>sigMatch(fc.sig,sig));
-          if(at>=0)appearance.faces.splice(at,1);
-          if(hex)appearance.faces.push({sig,color:hex});
-          bumpAppearance();
-        });
+        openFaceColor(hit.object.geometry,hit.faceIndex);
       } else setHint('No face there — click the solid');
       return;
     }
@@ -10551,8 +10585,15 @@ const CSG = (function(){
               toggleEdge(e2.rec); 
           }
       }
-      else if(!edgeMenuOpen() && (!draftFeat || draftFeat.type !== 'fillet')){ 
-          selectedEdges=[]; redrawEdgeSel(); 
+      else if(!edgeMenuOpen() && (!draftFeat || draftFeat.type !== 'fillet')){
+          /* No edge under the cursor: the face beneath it takes the selection,
+             and a click on neither clears both. One selection at a time — a
+             face and an edge selected together would leave the right-click
+             menu with two things to act on. */
+          const f=faceAtPointer(e);
+          selectedEdges=[]; redrawEdgeSel();
+          if(faceKey(f)!==faceKey(selectedFace)){ selectedFace=f; drawFaceHl(); }
+          if(f)setHint(faceSelHint(f));
       }
     }
   });
@@ -10616,6 +10657,7 @@ const CSG = (function(){
   }
   function edgeDesc(rec){return {mid:rec.mid.slice(),dir:rec.dir.slice(),a:rec.a.slice(),b:rec.b.slice(),idx:rec.idx};}
   function toggleEdge(rec){
+    if(selectedFace){ selectedFace=null; drawFaceHl(); }   // edges and faces, never both
     const i=selectedEdges.findIndex(s=>ptClose(s.mid,rec.mid,1e-3));
     if(i>=0)selectedEdges.splice(i,1); else selectedEdges.push(edgeDesc(rec));
     redrawEdgeSel();
@@ -10694,7 +10736,9 @@ const CSG = (function(){
     if(!selectedEdges.length){closeEdgeMenu();return;}
     const f=defaults(kind); f._isNew=true;
     f.r=lastEdgeR; f.propagate=lastProp; f.seeds=selectedEdges.map(s=>({mid:s.mid.slice(),dir:s.dir.slice()}));
-    selectedEdges=[]; hoveredEdge=null; closeEdgeMenu(); redrawEdgeSel();
+    selectedEdges=[]; hoveredEdge=null;
+    hoveredFace=null; selectedFace=null; drawFaceHl();
+    closeEdgeMenu(); redrawEdgeSel();
     insertFeature(f); selectFeature(f.id); openProps(f);
   }
   
@@ -10770,19 +10814,23 @@ const CSG = (function(){
       items.push({sect:sf.name});
       items.push({ic:'edit',label:'Edit sketch',fn:()=>editSketch(sf)});
     }
-    /* right-clicked on a flat face: the face is as good as selected — text
-       and a face sketch can start there with no extra pick */
-    const hitF=(()=>{ if(!hasSolid)return null;
-      try{ const h=pickBody({clientX:x,clientY:y});
-        if(h&&h.faceIndex!=null){
-          const fit=fitFace(h.object.geometry,h.faceIndex);
-          if(fit&&fit.kind==='plane')return h;
-        } }catch(_){ }
-      return null; })();
-    if(hitF){
-      items.push({sect:'This face'});
-      items.push({ic:'text',label:'Text on this face',fn:()=>startTextOnFace(hitF)});
-      items.push({ic:'face-sketch',label:'Sketch on this face',fn:()=>makeFaceSketch(hitF)});
+    /* The face in hand: the selected one, else whatever was right-clicked —
+       either way it is as good as picked, so its commands need no second
+       click. What it can do follows from its fitted shape: only a flat face
+       carries a sketch or text, only a cylinder has an axis to drop. */
+    const mf=(()=>{ if(!hasSolid)return null;
+      try{ return selectedFace||faceAtPointer({clientX:x,clientY:y}); }catch(_){ return null; } })();
+    if(mf){
+      const kind=mf.fit&&mf.fit.kind;
+      items.push({sect:'Face'});
+      if(kind==='plane'){
+        items.push({ic:'face-sketch',label:'Sketch on this face',fn:()=>makeFaceSketch(faceHit(mf))});
+        items.push({ic:'text',label:'Text on this face',fn:()=>startTextOnFace(faceHit(mf))});
+        items.push({ic:'normal',label:'Normal to',fn:()=>viewNormalToFace(mf)});
+      }
+      items.push({ic:'paint',label:'Surface colour…',
+        fn:()=>openFaceColor(resultMeshes[mf.body].geometry,mf.seed)});
+      if(kind==='cyl')items.push({ic:'daxis',label:'Add axis',fn:()=>axisFromFace(mf)});
     }
     for(const sec of MENUS.model.layout){
       const live=sec.ids.filter(id=>MCMD[id]);
@@ -11620,7 +11668,9 @@ const CSG = (function(){
     }
     return out;
   }
-  function faceOverlay(g,ids,hex){
+  /* the triangles of one face, un-indexed and in the body's own space — the
+     shape both the surface colours and the selection highlight are drawn from */
+  function faceTriGeom(g,ids){
     const pos=g.attributes.position, idx=g.index;
     const arr=new Float32Array(ids.length*9);
     let o=0;
@@ -11631,9 +11681,93 @@ const CSG = (function(){
     const bg=new THREE.BufferGeometry();
     bg.setAttribute('position',new THREE.BufferAttribute(arr,3));
     bg.computeVertexNormals();
-    const mm=new THREE.Mesh(bg,faceMatFor(hex));
+    return bg;
+  }
+  function faceOverlay(g,ids,hex){
+    const mm=new THREE.Mesh(faceTriGeom(g,ids),faceMatFor(hex));
     mm.userData.faceCol=true; mm.castShadow=false;
     return mm;
+  }
+  /* ---- face hover and selection ------------------------------------------
+     What the pointer is over, resolved to a REAL face: the body it belongs to,
+     the triangles faceRegion gives for it, a canonical seed and the fit. The
+     seed is the LOWEST triangle id of the region, not the one the ray struck,
+     so sliding across one face never reads as a different face — and the fit
+     and the region cache land on one key per face rather than one per facet. */
+  function faceAtPointer(e){
+    if(docMode!=='part'||mode!=='model')return null;
+    const hit=pickBody(e); if(!hit||hit.faceIndex==null)return null;
+    const body=resultMeshes.indexOf(hit.object); if(body<0)return null;
+    const g=hit.object.geometry;
+    const ids=faceRegion(g,hit.faceIndex); if(!ids||!ids.length)return null;
+    let seed=ids[0]; for(const t of ids)if(t<seed)seed=t;
+    return {body,ids,seed,fit:fitFace(g,seed)};
+  }
+  const faceKey=f=>f?f.body+':'+f.seed:null;
+  /* makeFaceSketch and startTextOnFace were written for a raycast hit, so a
+     stored face hands them one: its canonical triangle stands in for the
+     struck facet (same winding, same plane) and the fitted centre for the hit
+     point, which puts a face sketch's origin at the middle of the face. Part
+     bodies carry no transform, so the body's own space IS world space. */
+  function faceHit(f){
+    const m=f&&resultMeshes[f.body]; if(!m)return null;
+    const tri=meshTopo(m.geometry).tri[f.seed]; if(!tri)return null;
+    return {object:m,faceIndex:f.seed,face:{normal:tri.n.clone()},point:f.fit.p.clone()};
+  }
+  /* Two materials for the whole session, not a clone per repaint. The offset
+     sits deeper than the surface colours' -1.5 so a highlight still reads on a
+     painted face, and depthWrite stays off so the tint never occludes the
+     edges drawn over it. */
+  const faceHlMat=(hex,op,off)=>new THREE.MeshBasicMaterial({color:hex,transparent:true,
+    opacity:op,depthWrite:false,side:THREE.DoubleSide,
+    polygonOffset:true,polygonOffsetFactor:off,polygonOffsetUnits:-3});
+  const faceHovMat=faceHlMat(0x35d4e6,0.25,-2), faceSelMat=faceHlMat(0x4285F4,0.4,-2.5);
+  /* The tint rides ON the body mesh so it inherits the body's transform and
+     visibility, and it is tagged faceHl — never faceCol — so neither
+     applyAppearance's colour sweep nor the rendered-view edge sweep can take
+     it away. Scrap and rebuild, like redrawEdgeSel: at most two small meshes,
+     and only when the face under the pointer actually changes. */
+  function drawFaceHl(){
+    for(const m of resultMeshes)
+      for(const c of [...m.children])
+        if(c.userData&&c.userData.faceHl){ m.remove(c); c.geometry.dispose(); }
+    const paint=(f,mat)=>{
+      const m=f&&resultMeshes[f.body]; if(!m)return;
+      const o=new THREE.Mesh(faceTriGeom(m.geometry,f.ids),mat);
+      o.userData.faceHl=true; o.castShadow=false; o.receiveShadow=false;
+      m.add(o);
+    };
+    if(selectedFace)paint(selectedFace,faceSelMat);
+    if(hoveredFace&&faceKey(hoveredFace)!==faceKey(selectedFace))paint(hoveredFace,faceHovMat);
+    if(typeof updateHelp==='function')updateHelp();
+  }
+  function faceSelHint(f){
+    const k=f&&f.fit&&f.fit.kind;
+    return k==='plane' ? 'Face selected — right-click for sketch, text or colour'
+         : k==='cyl'   ? 'Face selected — right-click for colour or an axis'
+                       : 'Face selected — right-click for its colour';
+  }
+  /* Normal to the face in hand rather than to a plane in the tree, so it
+     reuses flyOrbit — the same flight the named views take. Aimed from the
+     side the camera is already on: a view that swings through the solid to
+     land on the back of the face reads as the wrong face. */
+  function viewNormalToFace(f){
+    if(!f||!f.fit)return;
+    const d=f.fit.d.clone().normalize();
+    if(d.dot(camera.position.clone().sub(f.fit.p))<0)d.negate();
+    flyOrbit(Math.atan2(d.x,d.z),Math.acos(Math.max(-1,Math.min(1,d.y))));
+    setHint('Normal to the face');
+  }
+  /* The axis tool's own result, without the pick: a centre-of-a-circle axis
+     carries exactly the position and direction consumeAxisPick writes, and the
+     panel opens on it so Pick again / Done behave as they always do. */
+  function axisFromFace(f){
+    if(!f||!f.fit||f.fit.kind!=='cyl')return;
+    const a=defaults('daxis'); a._isNew=true; a.method='circ';
+    a.px=+f.fit.p.x.toFixed(4); a.py=+f.fit.p.y.toFixed(4); a.pz=+f.fit.p.z.toFixed(4);
+    a.dx=+f.fit.d.x.toFixed(6); a.dy=+f.fit.d.y.toFixed(6); a.dz=+f.fit.d.z.toFixed(6);
+    insertFeature(a); selectFeature(a.id); openProps(a);
+    setHint('Axis placed through the cylinder axis — Done keeps it');
   }
   let appearanceRev=1;
   function applyAppearance(){
@@ -13455,6 +13589,14 @@ const CSG = (function(){
     if(propsFeat) return {title:'Feature properties', body:'Adjust the values — the model rebuilds live. <b>Done</b> keeps the change, <b>Cancel</b> rolls it back.'};
     if(!features.length) return {title:'Getting started', body:'<b>Left-click a plane</b> to start a sketch on it, or right-click anywhere for every command. The <b>Demo</b> menu loads a finished example — a bearing mount, a magic lamp or a print test boat.'};
     if(selectedEdges.length) return {title:selectedEdges.length+' edge'+(selectedEdges.length>1?'s':'')+' selected', body:'<b>Right-click</b> to fillet or chamfer the selection. Click an edge again to deselect it.'};
+    if(selectedFace){
+      const k=selectedFace.fit&&selectedFace.fit.kind;
+      return {title:'Face selected', body:'<b>Right-click</b> for what this face can do — '+
+        (k==='plane'?'<b>Sketch on this face</b>, <b>Text on this face</b>, <b>Normal to</b> and <b>Surface colour</b>'
+        :k==='cyl' ?'<b>Surface colour</b>, and <b>Add axis</b> down its centre'
+                    :'<b>Surface colour</b>')+
+        '. Click an edge, another face or empty space to let it go.'};
+    }
     return {title:'Model', body:'<b>Right-click</b> the viewport for commands, or a <b>tree item</b> for its options. <b>Double-click</b> a feature to edit it. Hover edges and click to select them for fillets. Drag the yellow <b>ROLLBACK</b> bar to step back through history.'};
   }
   function updateHelp(){
@@ -13707,7 +13849,9 @@ const CSG = (function(){
     dropAllCheckpoints();
     docName='project';
     resetAppearance(); appearanceRev++;
-    features=[];rollbackIndex=0;selId=null;editing=null;selectedEdges=[];hoveredEdge=null;closeEdgeMenu();closeProps();setMode('model');controls.unlock();demoActive=false;rebuild();refreshDemoTgl();
+    features=[];rollbackIndex=0;selId=null;editing=null;selectedEdges=[];hoveredEdge=null;
+    hoveredFace=null;selectedFace=null;drawFaceHl();
+    closeEdgeMenu();closeProps();setMode('model');controls.unlock();demoActive=false;rebuild();refreshDemoTgl();
   }
   /* small choice dialog (used by New part) */
   function askDialog(title,msg,buttons){
@@ -13967,8 +14111,12 @@ const CSG = (function(){
     get resultGeoms(){ return resultGeoms; },
     get resultShapes(){ return resultShapes; },
     get pickEdges(){ return pickEdges; },
+    get resultMeshes(){ return resultMeshes; },
     get selectedEdges(){ return selectedEdges; },
     set selectedEdges(v){ selectedEdges = v; },
+    get selectedFace(){ return selectedFace; },
+    get hoveredFace(){ return hoveredFace; },
+    faceAtPointer, drawFaceHl,
     get propsFeat(){ return propsFeat; },
     get draftFeat(){ return draftFeat; },
     insertFeature, deleteFeature, defaults, addFeature, rebuild, openProps, closeProps,
