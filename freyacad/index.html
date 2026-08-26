@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Freya Cad</title>
 <link rel="icon" type="image/svg+xml" href="/freyacad/favicon.svg">
+<link rel="manifest" href="manifest.webmanifest">
 
 <script>
 (function(){
@@ -682,9 +683,9 @@ if(!window.THREE){
         <button id="btn-new-draw" class="btn-ghost">New drawing</button>
       </span>
       <button id="btn-load" class="btn-ghost">Open</button>
-      <input type="file" id="file-load" style="display:none" accept=".json,.sketchcad,.asmcad,.step,.stp,.stl">
-      <input type="file" id="file-insert" style="display:none" accept=".json,.sketchcad">
-      <input type="file" id="file-draw" style="display:none" accept=".json,.sketchcad">
+      <input type="file" id="file-load" style="display:none" accept=".part,.assembly,.drawing,.json,.sketchcad,.asmcad,.step,.stp,.stl">
+      <input type="file" id="file-insert" style="display:none" accept=".part,.json,.sketchcad">
+      <input type="file" id="file-draw" style="display:none" accept=".part,.json,.sketchcad">
     </div>
     <div class="tb-spacer"></div>
     <div class="tb-group">
@@ -9411,12 +9412,23 @@ const CSG = (function(){
   }
 
   function saveProject() {
-      const isA = docMode==='asm';
-      const data = isA ? JSON.stringify({type:'assembly',components:asm.components,mates:asm.mates})
-                       : JSON.stringify(features);
+      const isD = docMode==='draw', isA = !isD && docMode==='asm';
+      /* a .drawing carries the sheet AND whatever makes the model — the part
+         recipe, or the assembly when the sheet was drawn over one — so it
+         reopens whole; view geometry is derived and stays out of the file */
+      let data;
+      if(isD){
+        const sheet=Object.assign({},draw,{views:draw.views.map(v=>{
+          const c=Object.assign({},v); delete c.geo; return c;})});
+        const p={type:'drawing',features,draw:sheet};
+        if(drawReturn==='asm')p.asm={components:asm.components,mates:asm.mates};
+        data=JSON.stringify(p);
+      } else if(isA) data=JSON.stringify({type:'assembly',components:asm.components,mates:asm.mates});
+      else data=JSON.stringify(features);
       const blob = new Blob([data], {type: 'application/json'});
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = isA?'assembly.asmcad':'project.sketchcad';
+      const a = document.createElement('a'); a.href = url;
+      a.download = isD?'sheet.drawing':isA?'assembly.assembly':'project.part';
       a.click(); URL.revokeObjectURL(url);
   }
 
@@ -9469,6 +9481,17 @@ const CSG = (function(){
                   }
                   reportSolve(solveMates({}));   // the file records the relations; the positions follow
                   refreshAsmUI(); fitAll();
+              } else if (data && data.type==='drawing') {   // a sheet + its model
+                  if(data.asm&&Array.isArray(data.asm.components))
+                      loadDocData({type:'assembly',components:data.asm.components,mates:data.asm.mates});
+                  else
+                      loadDocData(Array.isArray(data.features)?data.features:[]);
+                  draw=Object.assign({sheet:'A3',orient:'landscape',scale:0,angle:3,
+                      hidden:true,title:'',views:[],dims:[],marks:[],uid:1},data.draw||{});
+                  draw.views=(draw.views||[]).map(v=>Object.assign({},v));
+                  drawSel=null;
+                  rebuildDrawViews();            // geo is derived, never in the file
+                  setDocMode('draw');
               } else throw new Error('unrecognised');
   }
   /* A STEP or STL from the Open button becomes an import feature in the tree —
@@ -10568,7 +10591,7 @@ const CSG = (function(){
 
   /* ============================ ASSEMBLY ============================
      Tier-1 assemblies in the same document: insert saved part files (or the
-     demo part), drag them around, set exact transforms, save/load .asmcad,
+     demo part), drag them around, set exact transforms, save/load .assembly,
      export the lot as STL or true B-rep STEP. No mates yet. */
   let docMode='part';                 // 'part' | 'asm'
   let asm={components:[],mates:[]};   // component: {id,name,features,t:{x,y,z,rx,ry,rz},fixed}
@@ -11317,7 +11340,7 @@ const CSG = (function(){
       setHint('Drawing — Add view places a projection; drag views to arrange them, then Print or Export SVG');
     } else if(isA){
       refreshAsmUI();updateDatumVis();
-      setHint('Assembly — Insert part adds a saved .sketchcad file; right-click for options');
+      setHint('Assembly — Insert part adds a saved .part file; right-click for options');
     } else { if(wasDraw)refreshTree(); rebuild(); }
     updateHelp();
   }
@@ -12618,8 +12641,8 @@ const CSG = (function(){
   try{ helpOn = localStorage.getItem('fcad-help')!=='0'; }catch(_){}
   function helpContext(){
     if(docMode==='asm'){
-      if(!asm.components.length) return {title:'Assembly', body:'<b>Insert part</b> adds a saved .sketchcad file. The first part comes in fixed in place.'};
-      return {title:'Assembly · '+asm.components.length+' component'+(asm.components.length>1?'s':''), body:'<b>Drag</b> a part to move it (<b>Shift</b> = vertical). <b>Double-click</b> one for exact position and rotation. Right-click a part to fix or remove it. Save writes an .asmcad file; STL and STEP export every part in place.'};
+      if(!asm.components.length) return {title:'Assembly', body:'<b>Insert part</b> adds a saved .part file. The first part comes in fixed in place.'};
+      return {title:'Assembly · '+asm.components.length+' component'+(asm.components.length>1?'s':''), body:'<b>Drag</b> a part to move it (<b>Shift</b> = vertical). <b>Double-click</b> one for exact position and rotation. Right-click a part to fix or remove it. Save writes an .assembly file; STL and STEP export every part in place.'};
     }
     if(mode==='sketch'){
       const t={
@@ -12797,7 +12820,7 @@ const CSG = (function(){
     const rd=new FileReader();
     rd.onload=ev=>{
       let data; try{ data=JSON.parse(ev.target.result); }catch(_){ return setHint('That is not a part file'); }
-      if(!Array.isArray(data))return setHint('Drawings are made from parts — open a .sketchcad file');
+      if(!Array.isArray(data))return setHint('Drawings are made from parts — open a .part file');
       if(!loadDrawModel(data,f.name))return;
       draw.title=drawModel.name.toUpperCase();
       rebuildDrawViews(); refreshDrawTree();
@@ -12872,8 +12895,8 @@ const CSG = (function(){
       try{
         const d=JSON.parse(ev.target.result);
         if(!Array.isArray(d))throw new Error('not a part');
-        addComponent(d, file.name.replace(/\.(sketchcad|json)$/i,''));
-      }catch(_){ alert('Not a part file — insert a .sketchcad saved from part mode'); }
+        addComponent(d, file.name.replace(/\.(part|sketchcad|json)$/i,''));
+      }catch(_){ alert('Not a part file — insert a .part saved from part mode'); }
     };
     reader.readAsText(file);
     e.target.value='';
@@ -13227,6 +13250,21 @@ const CSG = (function(){
   else {
     setHint('Loading the Open CASCADE kernel — ~13 MB, first visit only…');
     window.addEventListener('kernel-ready', boot, { once:true });
+  }
+  /* Installed as an app (the browser's Install button), the OS hands
+     double-clicked .part / .assembly / .drawing files here — that install is
+     also what puts freyacad's icons on those files in the file explorer. The
+     kernel boots async, so a launched file waits for it rather than racing. */
+  if('launchQueue' in window){
+    try{
+      window.launchQueue.setConsumer(p=>{
+        if(!p||!p.files||!p.files.length)return;
+        p.files[0].getFile().then(f=>{
+          const go=()=>{ if(window.OCCT)loadProject(f); else setTimeout(go,300); };
+          go();
+        }).catch(()=>{});
+      });
+    }catch(_){ }
   }
 
   /* boot theatre: the kernel download as a terminal cascade */
