@@ -8153,8 +8153,11 @@ const CSG = (function(){
      which separates same-brightness different-hue photos Otsu never can) and
      the reshape brush (grab the line anywhere; points inside the brush follow
      with a cosine falloff, a Laplacian relax on release keeps it kink-free).
-     Still /grid-only: finger holes, the straighten tool, the search-box ROI,
-     scale by a reference line, and the printable fit-check template. */
+     The scale line is /grid's too: mark two ends of a known distance (click-
+     click or drag), type the real length, and the outline is TRUE size — the
+     longest-side box stays as the fallback when no line is drawn. Still
+     /grid-only: finger holes, the straighten tool, the search-box ROI, and
+     the printable fit-check template. */
   let visionP=null;
   function loadVision(){
     if(window.V)return Promise.resolve();
@@ -8180,12 +8183,17 @@ const CSG = (function(){
     ov.innerHTML=`<div style="background:var(--panel);border:1px solid var(--g-blue);border-radius:12px;
         padding:16px 18px;width:min(580px,94vw);max-height:94vh;overflow:auto;box-shadow:0 24px 60px -12px rgba(0,0,0,.9)">
       <h3 style="margin:0 0 4px;font-size:15px">Trace a photo</h3>
-      <p style="margin:0 0 8px;font-size:11.5px;color:var(--muted)">Shoot square-on. If the automatic trace misses, teach it the colours — pick the object, pick the background — and it separates by hue instead of brightness. Then grab the yellow line anywhere and drag to reshape it.</p>
+      <p style="margin:0 0 8px;font-size:11.5px;color:var(--muted)">Shoot square-on. For true scale, <b>Measure a line</b>: mark two ends of something you know the size of — a ruler in shot is perfect. If the automatic trace misses, teach it the colours; then grab the yellow line anywhere and drag to reshape it.</p>
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
         <button id="tr-pick" class="btn-primary">Choose photo…</button>
-        <label style="font-size:12px;color:var(--muted)">Longest side
+        <button id="tr-cscale" class="btn-ghost" style="font-size:11.5px">Measure a line</button>
+        <label id="tr-side-l" style="font-size:12px;color:var(--muted)">Longest side
           <input id="tr-mm" type="number" value="100" min="1" step="1"
             style="width:64px;margin-left:6px"> mm</label>
+        <label id="tr-line-l" style="font-size:12px;color:var(--muted);display:none">that line is
+          <input id="tr-lmm" type="number" value="25" min="0.1" step="0.5"
+            style="width:56px;margin-left:6px"> mm
+          <button id="tr-lclear" class="btn-ghost" style="font-size:11px;padding:1px 7px;margin-left:2px">✕</button></label>
         <label style="font-size:12px;color:var(--muted)"><input id="tr-inv" type="checkbox" style="margin-right:4px">dark background</label>
       </div>
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
@@ -8203,7 +8211,7 @@ const CSG = (function(){
       <!-- position:static: the app-wide canvas{position:absolute;inset:0} rule
            (for the viewport) otherwise stretches this preview over the whole
            screen — an opaque sheet hiding the dialog. Same trap as #navcube. -->
-      <div id="tr-status" style="font-size:11.5px;color:var(--muted);margin:8px 0">No photo yet.</div>
+      <div style="font-size:11.5px;color:var(--muted);margin:8px 0"><span id="tr-status">No photo yet.</span><span id="tr-osize" style="color:var(--text)"></span></div>
       <div style="display:flex;gap:8px;justify-content:flex-end">
         <button id="tr-cancel" class="btn-ghost">Cancel</button>
         <button id="tr-insert" class="btn-primary" disabled>Insert outline</button>
@@ -8221,13 +8229,23 @@ const CSG = (function(){
     let img=null;                 // {canvas,width,height,data}
     let contour=null;             // densely resampled px outline being edited
     let rawContour=null;          // as traced, for Reset line
-    let arm=null;                 // 'tool' | 'bg' | null — colour pick mode
+    let arm=null;                 // 'tool' | 'bg' | 'scale' | null
     const colors={tool:[],bg:[]};
     let undoStack=[], edited=false, cursor=null, brushing=null;
+    /* the /grid scale line: two ends of a known distance beat guessing the
+       photo's extent. Click-click or drag — both gestures, as on /grid. */
+    let scalePts=[], scaleDrag=null;
     const cv=$q('tr-cv'), g=cv.getContext('2d');
     const status=t=>{$q('tr-status').textContent=t;};
     const K=()=>img?Math.min(cv.width/img.width,cv.height/img.height):1;
     const brushR=()=>+$q('tr-brush').value;               // display px
+    const pxPerMM=()=>{ if(scalePts.length!==2)return null;
+      const L=Math.hypot(scalePts[1][0]-scalePts[0][0],scalePts[1][1]-scalePts[0][1]);
+      const mm=+$q('tr-lmm').value;
+      return (L>2&&mm>0)?L/mm:null; };
+    const syncScaleUI=()=>{ const has=scalePts.length===2;
+      $q('tr-side-l').style.display=has?'none':'';
+      $q('tr-line-l').style.display=has?'':'none'; };
     const evPos=e=>{const r=cv.getBoundingClientRect(),k=K();
       return [(e.clientX-r.left)*(cv.width/r.width)/k,(e.clientY-r.top)*(cv.height/r.height)/k];};
     const distToSeg=(p,a,b)=>{const vx=b[0]-a[0],vy=b[1]-a[1],L=vx*vx+vy*vy;
@@ -8276,6 +8294,33 @@ const CSG = (function(){
           g.setLineDash(brushing?[]:[6,5]);g.stroke();g.setLineDash([]);
         }
       }
+      // the scale line: two numbered ends of a known distance
+      const sp=(arm==='scale'&&scaleDrag&&scaleDrag.moved)?[scaleDrag.start,cursor]:scalePts;
+      if(sp.length){
+        g.save();
+        if(sp.length===2){
+          g.strokeStyle='#4285F4';g.lineWidth=1.6;g.setLineDash([5,4]);
+          g.beginPath();g.moveTo(sp[0][0]*k,sp[0][1]*k);g.lineTo(sp[1][0]*k,sp[1][1]*k);
+          g.stroke();g.setLineDash([]);
+        }
+        sp.forEach((q,i)=>{ if(!q)return;
+          g.fillStyle='#4285F4';g.strokeStyle='#fff';g.lineWidth=2;
+          g.beginPath();g.arc(q[0]*k,q[1]*k,6,0,7);g.fill();g.stroke();
+          g.fillStyle='#fff';g.font='bold 9px sans-serif';g.textAlign='center';
+          g.fillText(String(i+1),q[0]*k,q[1]*k+3);
+        });
+        g.restore();
+      }
+      // the live size: with a scale line it is the truth, else the fitted guess
+      if(contour&&contour.length>2){
+        let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+        for(const q of contour){x0=Math.min(x0,q[0]);x1=Math.max(x1,q[0]);
+                                y0=Math.min(y0,q[1]);y1=Math.max(y1,q[1]);}
+        const ppm=pxPerMM();
+        const s=ppm?1/ppm:(Math.max(1,+$q('tr-mm').value||100)/Math.max(1e-6,Math.max(x1-x0,y1-y0)));
+        $q('tr-osize').textContent=' · outline '+((x1-x0)*s).toFixed(1)+' × '+((y1-y0)*s).toFixed(1)+' mm'
+          +(ppm?' (measured)':'');
+      } else $q('tr-osize').textContent='';
     };
     function traceNow(){
       if(!img)return;
@@ -8301,16 +8346,33 @@ const CSG = (function(){
     const armBtn=which=>{arm=(arm===which)?null:which;
       $q('tr-ctool').classList.toggle('btn-primary',arm==='tool');
       $q('tr-cbg').classList.toggle('btn-primary',arm==='bg');
-      cv.style.cursor=arm?'copy':'crosshair';
-      if(arm)status(arm==='tool'?'Click the OBJECT in the photo — several shades is normal, press the button again to stop'
+      $q('tr-cscale').classList.toggle('btn-primary',arm==='scale');
+      cv.style.cursor=arm?(arm==='scale'?'crosshair':'copy'):'crosshair';
+      if(arm==='scale'){scaleDrag=null;
+        status('Click the two ends of something you know the size of — or drag from one to the other');}
+      else if(arm)status(arm==='tool'?'Click the OBJECT in the photo — several shades is normal, press the button again to stop'
         :'Click the BACKGROUND in the photo — the trace updates by colour');};
     $q('tr-ctool').addEventListener('click',()=>armBtn('tool'));
     $q('tr-cbg').addEventListener('click',()=>armBtn('bg'));
+    $q('tr-cscale').addEventListener('click',()=>armBtn('scale'));
     $q('tr-cclear').addEventListener('click',()=>{colors.tool=[];colors.bg=[];
       renderSw();syncBtns();traceNow();});
+    $q('tr-lmm').addEventListener('input',paint);
+    $q('tr-lclear').addEventListener('click',()=>{scalePts=[];scaleDrag=null;
+      syncScaleUI();paint();});
+    const scaleDone=()=>{ if(arm==='scale')armBtn('scale');   // disarm
+      syncScaleUI();paint();
+      status('Scale set — type the real length of that line, and the outline size follows');
+      $q('tr-lmm').focus();$q('tr-lmm').select(); };
     cv.addEventListener('pointerdown',e=>{
       if(!img)return; e.preventDefault();
       const p=evPos(e); cursor=p;
+      if(arm==='scale'){
+        if(scalePts.length===1){ scalePts=[scalePts[0],p]; scaleDone(); return; }
+        scaleDrag={start:p,moved:false};
+        try{cv.setPointerCapture(e.pointerId);}catch(_){}
+        return;
+      }
       if(arm){
         const VS=window.V;
         const c=VS.sampleColor(img,Math.round(p[0]),Math.round(p[1]),Math.max(2,Math.round(2/K())));
@@ -8338,6 +8400,10 @@ const CSG = (function(){
     cv.addEventListener('pointermove',e=>{
       if(!img)return;
       const p=evPos(e); cursor=p;
+      if(scaleDrag){                                  // rubber-band the scale line
+        if(Math.hypot(p[0]-scaleDrag.start[0],p[1]-scaleDrag.start[1])>6/K())scaleDrag.moved=true;
+        paint();return;
+      }
       if(brushing){
         /* not a fixed grab: each frame nudges whatever is inside the brush NOW,
            so one stroke dragged along the line herds a whole edge into place;
@@ -8366,12 +8432,18 @@ const CSG = (function(){
       paint();
     });
     const endBrush=e=>{
+      if(scaleDrag){
+        const p=cursor||scaleDrag.start;
+        if(scaleDrag.moved){ scalePts=[scaleDrag.start,p]; scaleDrag=null; scaleDone(); }
+        else { scalePts=[scaleDrag.start]; scaleDrag=null;
+               status('Now the other end of the known distance'); paint(); }
+      }
       if(brushing){ smoothTouched(brushing.touched); brushing=null; paint(); }
       try{cv.releasePointerCapture(e.pointerId);}catch(_){}
     };
     cv.addEventListener('pointerup',endBrush);
     cv.addEventListener('pointercancel',endBrush);
-    cv.addEventListener('pointerleave',()=>{ if(!brushing){cursor=null;paint();} });
+    cv.addEventListener('pointerleave',()=>{ if(!brushing&&!scaleDrag){cursor=null;paint();} });
     $q('tr-undo').addEventListener('click',()=>{
       if(!undoStack.length)return;
       contour=undoStack.pop(); edited=!!undoStack.length; syncBtns(); paint();});
@@ -8390,6 +8462,7 @@ const CSG = (function(){
         const r=VS.plain(bm,1,1000);
         const d=r.canvas.getContext('2d').getImageData(0,0,r.w,r.h);
         img={canvas:r.canvas,width:r.w,height:r.h,data:d.data};
+        scalePts=[];scaleDrag=null;syncScaleUI();   // a new photo, a new framing
         traceNow();
       }catch(err){ status(err.message||String(err)); }
     });
@@ -8404,15 +8477,18 @@ const CSG = (function(){
       let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
       for(const p of poly){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);
                            y0=Math.min(y0,p[1]);y1=Math.max(y1,p[1]);}
-      const mm=Math.max(1,+$q('tr-mm').value||100);
-      const sc=mm/Math.max(1e-6,Math.max(x1-x0,y1-y0));
+      /* the measured scale line wins; the longest-side guess is the fallback */
+      const ppm=pxPerMM();
+      const sc=ppm?1/ppm
+        :Math.max(1,+$q('tr-mm').value||100)/Math.max(1e-6,Math.max(x1-x0,y1-y0));
       const cx=(x0+x1)/2, cy=(y0+y1)/2;
       /* image y runs down, sketch v runs up — flip, or every trace is mirrored */
       const pts=poly.map(p=>({x:+((p[0]-cx)*sc).toFixed(3), y:+((cy-p[1])*sc).toFixed(3)}));
       pushUndo('trace photo');
       editing.entities.push({type:'poly',closed:true,pts:pts});
       rebuild(); close();
-      setHint('Outline inserted at '+mm+' mm — drag it, dimension it, or cut it into a solid');
+      setHint('Outline inserted at '+((x1-x0)*sc).toFixed(1)+' × '+((y1-y0)*sc).toFixed(1)+' mm'
+        +(ppm?' (from your measured line)':'')+' — drag it, dimension it, or cut it into a solid');
     });
   }
 
