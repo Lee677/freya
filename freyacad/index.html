@@ -698,7 +698,7 @@ if(!window.THREE){
     <div class="tb-gap"></div>
     <div class="tb-group">
       <button id="btn-save" class="btn-ghost">Save</button>
-      <button id="btn-print" disabled title="Print or export — 3MF and STL for your slicer, true STEP for other CAD">Print / Export</button>
+      <button id="btn-print" disabled title="Print or export — 3MF and STL for your slicer, true STEP for other CAD">Print/Export</button>
     </div>
   </header>
 
@@ -4429,6 +4429,9 @@ const CSG = (function(){
     rebuildDimLabels();
     updateDatumVis();
     if(typeof updateHelp==='function')updateHelp();
+    /* a drag that lands where it started takes THIS path — the mid-drag
+       letter outline must still clear, or it lingers as a ghost twin */
+    drawTextHandle();
   }
   function rebuild(){
     const sig=geomSignature();
@@ -7316,6 +7319,20 @@ const CSG = (function(){
     return t.o.clone().addScaledVector(t.u,f.du||0).addScaledVector(t.v,f.dv||0)
             .addScaledVector(t.n,0.15);
   }
+  /* the rotation grip: just past the furthest letter corner, along the text's
+     rotated baseline — drag it and the text orbits its anchor */
+  function textGripWorld(f){
+    const t=textFrameVecs(f); if(!t)return null;
+    let rad=Math.max(4,(+f.size||8)*0.9);
+    try{ const ents=textLoops(f); let m=0;
+      for(const e2 of ents)for(const q of e2.pts){
+        const d=Math.hypot(q.x-(f.du||0),q.y-(f.dv||0)); if(d>m)m=d; }
+      if(m>0)rad=m+2.5;
+    }catch(_){}
+    const th=(f.angle||0)*Math.PI/180;
+    const dir=t.u.clone().multiplyScalar(Math.cos(th)).addScaledVector(t.v,Math.sin(th));
+    return textAnchorWorld(f).addScaledVector(dir,rad);
+  }
   function drawTextHandle(){
     while(textHandleGroup.children.length){const c=textHandleGroup.children.pop();
       if(c.geometry)c.geometry.dispose(); if(c.material)c.material.dispose();}
@@ -7332,6 +7349,16 @@ const CSG = (function(){
     ring.position.copy(p);
     ring.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),t.n);
     ring.renderOrder=8; textHandleGroup.add(ring);
+    // the rotation grip and its lever, out past the letters on the baseline
+    const gp=textGripWorld(f);
+    if(gp){
+      const lever=new THREE.Line(new THREE.BufferGeometry().setFromPoints([p.clone(),gp.clone()]),
+        new THREE.LineBasicMaterial({color:0xFBBC05,depthTest:false,transparent:true,opacity:0.45}));
+      lever.renderOrder=8; textHandleGroup.add(lever);
+      const grip=new THREE.Mesh(new THREE.SphereGeometry(R*0.72,14,10),
+        new THREE.MeshBasicMaterial({color:0xFBBC05,depthTest:false,transparent:true,opacity:0.95}));
+      grip.position.copy(gp); grip.renderOrder=8; textHandleGroup.add(grip);
+    }
     if(textDrag){
       let ents=null; try{ ents=textLoops(f); }catch(_){ ents=null; }
       if(ents){
@@ -7355,14 +7382,22 @@ const CSG = (function(){
     const hit=new THREE.Vector3();
     return raycaster.ray.intersectPlane(pl,hit)?hit:null;
   }
+  function textScreenNear(e,world,tol){
+    if(!world)return false;
+    const r=canvas.getBoundingClientRect();
+    const v=world.clone().project(camera);
+    const sx=r.left+(v.x+1)/2*r.width, sy=r.top+(1-(v.y+1)/2)*r.height;
+    return Math.hypot(e.clientX-sx,e.clientY-sy)<tol;
+  }
   function textHandleHit(e){
     const f=(draftFeat&&draftFeat.type==='text')?draftFeat:null;
     if(!f||mode!=='model'||docMode!=='part')return false;
-    const p=textAnchorWorld(f); if(!p)return false;
-    const r=canvas.getBoundingClientRect();
-    const v=p.clone().project(camera);
-    const sx=r.left+(v.x+1)/2*r.width, sy=r.top+(1-(v.y+1)/2)*r.height;
-    return Math.hypot(e.clientX-sx,e.clientY-sy)<(lastCoarse?26:16);
+    return textScreenNear(e,textAnchorWorld(f),lastCoarse?26:16);
+  }
+  function textRotHit(e){
+    const f=(draftFeat&&draftFeat.type==='text')?draftFeat:null;
+    if(!f||mode!=='model'||docMode!=='part')return false;
+    return textScreenNear(e,textGripWorld(f),lastCoarse?24:14);
   }
   /* ---- circles from edges ---------------------------------------------------
      A tessellated circular edge is a run of tiny segments. Chain them by
@@ -7658,6 +7693,7 @@ const CSG = (function(){
     stl:_sw(`<path d="M12 4l8 16H4z" stroke="${_B}"/><path d="M12 4 9.5 20M12 4l3 16M7.2 13.6h9.6" stroke="${_B}" opacity=".55"/>`),
     step:_sw(`<ellipse cx="12" cy="6.5" rx="7" ry="2.7" stroke="${_B}"/><path d="M5 6.5v11M19 6.5v11" stroke="${_B}"/><path d="M5 17.5c0 1.5 3.1 2.7 7 2.7s7-1.2 7-2.7" stroke="${_B}"/>`),
     save:_sw(`<path d="M12 3v10M8.5 9.5 12 13l3.5-3.5" stroke="${_Y}"/><path d="M4 14.5V20h16v-5.5" stroke="${_B}"/>`),
+    export:_sw(`<path d="M12 13V3M8.5 6.5 12 3l3.5 3.5" stroke="${_Y}"/><path d="M4 14.5V20h16v-5.5" stroke="${_B}"/>`),
     open:_sw(`<path d="M3 19V5.5h6.2l2 2H21V19z" stroke="${_B}"/>`),
     newpart:_sw(`<path d="M10 3.5l5.5 3.2v6.4L10 16.3l-5.5-3.2V6.7z" stroke="${_B}"/><path d="M10 9.9l5.5-3.2M10 9.9 4.5 6.7M10 9.9v6.4" stroke="${_B}" opacity=".65"/><path d="M18.5 14.5v6M15.5 17.5h6" stroke="${_G}" stroke-width="2.1"/>`),
     asm:_sw(`<path d="M8 3l4.5 2.6v5.2L8 13.4 3.5 10.8V5.6z" stroke="${_B}"/><path d="M8 8.2l4.5-2.6M8 8.2 3.5 5.6M8 8.2v5.2" stroke="${_B}" opacity=".55"/><path d="M14 10l4.5 2.6v5.2L14 20.4l-4.5-2.6v-5.2z" stroke="${_B}"/><path d="M14 15.2l4.5-2.6M14 15.2l-4.5-2.6M14 15.2v5.2" stroke="${_B}" opacity=".55"/><path d="M19.5 2.5v5M17 5h5" stroke="${_G}" stroke-width="2.1"/>`),
@@ -8647,7 +8683,7 @@ const CSG = (function(){
     const style=(f.italic?'italic ':'')+(f.bold?'bold ':'');
     mg.font=style+'100px '+fam;
     const wEm=Math.max(1,mg.measureText(label).width)/100;   // width in em
-    const RES=Math.max(2,Math.min(6,900/(wEm*size)));        // px per mm
+    const RES=Math.max(2,Math.min(9,1400/(wEm*size)));       // px per mm
     const px=size*RES;                                       // font px
     const padX=Math.ceil(px*0.25), padY=Math.ceil(px*0.45);
     mc.width=Math.ceil(wEm*px)+padX*2;
@@ -8672,9 +8708,25 @@ const CSG = (function(){
     for(const L of loops)for(const p of L.pts){
       if(p[0]<x0)x0=p[0];if(p[0]>x1)x1=p[0];if(p[1]<y0)y0=p[1];if(p[1]>y1)y1=p[1];}
     const cx3=(x0+x1)/2, cy3=(y0+y1)/2;
+    /* The Moore trace follows PIXEL edges, so a raw loop is all stair-steps
+       and RDP then cuts visible facets across every curve. Two passes of a
+       windowed average along the closed chain melt the steps into the curve
+       the glyph actually has; only then is the chain thinned, and with a
+       finer tolerance than the raw steps allowed. Sharp corners round by
+       about the window (~0.4 mm) — under any printer's nozzle radius. */
+    const smoothChain=(pts,win)=>{
+      const n=pts.length, out=new Array(n);
+      for(let i=0;i<n;i++){ let sx=0,sy=0;
+        for(let k=-win;k<=win;k++){ const q=pts[((i+k)%n+n)%n]; sx+=q[0]; sy+=q[1]; }
+        out[i]=[sx/(2*win+1), sy/(2*win+1)]; }
+      return out;
+    };
     const raw=[];
     for(const L of loops){
-      const thin=textRDP(L.pts,Math.max(0.8,RES*0.12));
+      let pts=L.pts;
+      const win=Math.min(Math.max(2,Math.round(RES*0.4)),Math.max(1,(pts.length/6)|0));
+      if(pts.length>=8&&win>=1){ pts=smoothChain(pts,win); pts=smoothChain(pts,win); }
+      const thin=textRDP(pts,Math.max(0.4,RES*0.07));
       if(thin.length<3)continue;
       raw.push(thin.map(p=>({x:(p[0]-cx3)/RES, y:(cy3-p[1])/RES})));   // mm, y up, centred
     }
@@ -9484,9 +9536,16 @@ const CSG = (function(){
   canvas.addEventListener('pointerdown',e=>{
       downX=e.clientX; downY=e.clientY; downBtn=e.button;
       if(docMode==='asm'){ asmPointerDown(e); return; }
-      if(mode==='model'&&e.button===0&&textHandleHit(e)){
+      if(mode==='model'&&e.button===0&&(textRotHit(e)||textHandleHit(e))){
         const p0=textPlanePoint(e);
-        if(p0){ textDrag={p0,du0:draftFeat.du||0,dv0:draftFeat.dv||0};
+        if(p0){
+          if(textRotHit(e)){
+            const f=draftFeat, t=textFrameVecs(f);
+            const ap=t.o.clone().addScaledVector(t.u,f.du||0).addScaledVector(t.v,f.dv||0);
+            const rel=p0.clone().sub(ap);
+            textDrag={kind:'rot',A0:f.angle||0,
+              a0:Math.atan2(rel.dot(t.v),rel.dot(t.u))};
+          } else textDrag={kind:'move',p0,du0:draftFeat.du||0,dv0:draftFeat.dv||0};
           controls._s=0; controls.enableRotate=false;
           try{canvas.setPointerCapture(e.pointerId);}catch(_){}
           return; }
@@ -9611,10 +9670,18 @@ const CSG = (function(){
       const f=draftFeat;
       if(!f||f.type!=='text'){ textDrag=null; controls.enableRotate=true; return; }
       const p=textPlanePoint(e); if(!p)return;
-      const t=textFrameVecs(f), d=p.clone().sub(textDrag.p0);
-      f.du=+(textDrag.du0+d.dot(t.u)).toFixed(2);
-      f.dv=+(textDrag.dv0+d.dot(t.v)).toFixed(2);
-      drawTextHandle();           // handle + letter outlines track the pointer
+      const t=textFrameVecs(f);
+      if(textDrag.kind==='rot'){
+        const ap=t.o.clone().addScaledVector(t.u,f.du||0).addScaledVector(t.v,f.dv||0);
+        const rel=p.clone().sub(ap);
+        const a=Math.atan2(rel.dot(t.v),rel.dot(t.u));
+        f.angle=Math.round((((textDrag.A0+(a-textDrag.a0)*180/Math.PI)%360)+360)%360);
+      } else {
+        const d=p.clone().sub(textDrag.p0);
+        f.du=+(textDrag.du0+d.dot(t.u)).toFixed(2);
+        f.dv=+(textDrag.dv0+d.dot(t.v)).toFixed(2);
+      }
+      drawTextHandle();           // handles + letter outlines track the pointer
       return;
     }
     if(mode==='sketch'&&editing){
@@ -9637,6 +9704,7 @@ const CSG = (function(){
       drawSnapMark();
       redrawDraft(p);
     } else if(mode==='model'&&!pendingFaceSketch){
+      if(textRotHit(e)){ canvas.style.cursor='grab'; return; }
       if(textHandleHit(e)){ canvas.style.cursor='move'; return; }
       if(datumGroup.visible){
         const d=pickDatum(e); setDatumHover(d);
@@ -13029,6 +13097,7 @@ const CSG = (function(){
     startMate, cancelMate, fitFace, faceRegion, applyMate, applyCompTransform,
     faceAt, datumAt, edgeCircAt, mateEndAt, chainSegRun, fitEdgeCircle, fitEdgeCircleAround,
     pickEdge, get pendingAxisPick(){ return pendingAxisPick; }, sketchBox,
+    textAnchorWorld, textGripWorld,
     get mateSel(){ return mateSel; }, perimeterHit, datumAt, mateEndAt, updateDatumVis,
     isSpline, splinePath, splinePts, splineTangent, splineHandles, splineInsertPoint,
     splineDeletePoint, splineResetHandles, splineUnder, openSketchMenu,
