@@ -63,7 +63,20 @@ auto-attaches over a matching open model (base-name match), otherwise
 the side-build that never disturbs the open document; an assembly loads for real)
 or use the open model. Legacy embedded .drawing files still open whole. Guard
 dialogs ("Save, then …") call `saveProject('model')` so they protect features,
-not sheets. `manifest.webmanifest` + `icons/` make freyacad
+not sheets. **Appearance** (2026-08): `appearance={part,bodies:{idx:hex},faces:[{sig,color}]}`
+is display-only doc state (never in geomSignature) applied by `applyAppearance()` in the
+rebuild tail and the overlays-only path (guarded by `appearanceRev` vs `mesh.userData.appRev`).
+Face colours are signature-matched (`faceSig`/`sigMatch`: kind+centroid+direction+radius+area
+in world coords) because faces have no stable ids — edit elsewhere and the colour re-finds its
+face; change the painted face itself and the colour goes dormant (by design, tell the user to
+re-apply, don't "fix" it into guessing). A part with any colour saves as
+`{type:'part',appearance,features}`; a bare array still means an uncoloured part, and every
+part-file reader goes through `partFileData()`. Body colours key by resultShapes INDEX (bodies
+mostly append; a deleted body-creating feature can shift them — known, accepted).
+`comp.color` tints assembly components (`matFor` shared material cache), drawing shaded
+views tint per body via `drawSourceGeoms()` `{geoms,cols}` and `tri.c`, and `drawViewsStale`
+re-projects the sheet on entry after colour edits. `setRenderedView` (btn-render, persisted
+`fcad-render`) is a material/edge-visibility swap only. `manifest.webmanifest` + `icons/` make freyacad
 installable as a PWA whose `file_handlers` give those extensions freyacad icons in
 the OS file explorer and route double-clicks into the app (`launchQueue` consumer
 at the foot of the script waits for the kernel before loading). The full /grid tracer toolset

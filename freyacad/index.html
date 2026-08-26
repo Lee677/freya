@@ -690,6 +690,7 @@ if(!window.THREE){
       <button id="btn-iso" class="btn-ghost" title="Isometric view (Ctrl+7)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 1.7 14 5v6l-6 3.3L2 11V5z"/><path d="M2 5l6 3.2L14 5M8 8.2V14.3"/></svg><span class="lbl">Iso</span></button>
       <button id="btn-fitall" class="btn-ghost" title="Fit everything in view (F)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg><span class="lbl">Fit</span></button>
       <button id="btn-proj" class="btn-ghost" title="Perspective — converging, depth-cued (Ctrl+5)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.2 3.2h11.6L11.6 12.8H4.4z"/><path d="M4.4 12.8 2.2 3.2M11.6 12.8 13.8 3.2"/></svg><span class="lbl">Persp</span></button>
+      <button id="btn-render" class="btn-ghost" title="Rendered view — part, body and surface colours with a satin finish and no edge lines"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M4.6 5.6a4.4 4.4 0 0 1 3-1.8" stroke-linecap="round"/><path d="M11.9 10.6a10 10 0 0 1-7.8 0" opacity=".55"/></svg><span class="lbl">Render</span></button>
       <button id="btn-del" class="btn-ghost" title="Delete the selection">✕</button>
       <button id="btn-undo" class="btn-ghost" title="Undo (Ctrl+Z)" disabled>↶</button>
       <button id="btn-redo" class="btn-ghost" title="Redo (Ctrl+Y)" disabled>↷</button>
@@ -1115,6 +1116,59 @@ const CSG = (function(){
   // Matte grey default
   const solidMat = new THREE.MeshStandardMaterial({color:0xe8f0f8, roughness:0.9, metalness:0.0, side:THREE.DoubleSide});
   const edgeMat = new THREE.LineBasicMaterial({color:0x34A853, transparent:true, opacity:0.9});
+
+  /* ---- appearance: part, body and surface colours ----
+     Display-only state: it never touches geometry or the rebuild signature.
+     part      one colour for every body without its own,
+     bodies    {bodyIndex: '#hex'} in resultShapes order,
+     faces     [{sig, color}] where sig is the face's geometric signature
+               (kind, centroid, direction, radius, area) — faces have no
+               stable ids across rebuilds, so they are re-found by shape.
+     Saved inside the .part file when any of it is set; an empty appearance
+     keeps the bare-array format old files use. */
+  let appearance={part:null,bodies:{},faces:[]};
+  function normApp(a){ return {part:(a&&a.part)||null,
+    bodies:Object.assign({},(a&&a.bodies)||{}),
+    faces:Array.isArray(a&&a.faces)?a.faces.slice():[]}; }
+  function resetAppearance(){ appearance=normApp(null); }
+  function appearanceEmpty(){ return !appearance.part
+    && !Object.keys(appearance.bodies).length && !appearance.faces.length; }
+  function bodyColorOf(i){ return appearance.bodies[i]||appearance.part||null; }
+  /* Rendered view: same scene, product-photo materials — colours with a
+     satin finish and no edge lines. The workshop look is the matte default. */
+  let renderedView=false;
+  function applyRenderLook(m){
+    m.roughness=renderedView?0.42:0.9;
+    m.metalness=renderedView?0.06:0.0;
+    m.needsUpdate=true;
+  }
+  const matCache=new Map();
+  function matFor(hex){
+    if(!hex)return solidMat;
+    let m=matCache.get(hex);
+    if(!m){ m=solidMat.clone(); m.color.set(hex); applyRenderLook(m); matCache.set(hex,m); }
+    return m;
+  }
+  const faceMatCache=new Map();
+  function faceMatFor(hex){
+    let m=faceMatCache.get(hex);
+    if(!m){ m=solidMat.clone(); m.color.set(hex);
+      m.polygonOffset=true; m.polygonOffsetFactor=-1.5; m.polygonOffsetUnits=-2;
+      applyRenderLook(m); faceMatCache.set(hex,m); }
+    return m;
+  }
+  function setRenderedView(on,quiet){
+    renderedView=!!on;
+    applyRenderLook(solidMat);
+    matCache.forEach(applyRenderLook); faceMatCache.forEach(applyRenderLook);
+    const edgeVis=c=>{ if(c.isLineSegments&&!(c.userData&&c.userData.faceCol))c.visible=!renderedView; };
+    resultMeshes.forEach(m=>{ applyRenderLook(m.material); m.children.forEach(edgeVis); });
+    asmMeshes.flat().forEach(m=>{ applyRenderLook(m.material); m.children.forEach(edgeVis); });
+    const b=document.getElementById('btn-render'); if(b)b.classList.toggle('active',renderedView);
+    try{ localStorage.setItem('fcad-render',renderedView?'1':'0'); }catch(_){ }
+    if(!quiet)setHint(renderedView?'Rendered view — colours and materials, no edge lines'
+                                  :'Workshop view — matte with edges');
+  }
 
   /* ---- planes / frames ---- */
   const V=(x,y,z)=>new THREE.Vector3(x,y,z);
@@ -1848,6 +1902,7 @@ const CSG = (function(){
     selId=null; editing=null; selectedEdges=[]; hoveredEdge=null; closeProps(); setMode('model');
     demoActive=d.key;
     docName=d.key;
+    resetAppearance(); appearanceRev++;
     rebuild();
     controls.target.set(d.cam.t[0],d.cam.t[1],d.cam.t[2]);
     controls.sph.set(d.cam.s[0],d.cam.s[1],d.cam.s[2]);
@@ -4457,6 +4512,9 @@ const CSG = (function(){
     /* a drag that lands where it started takes THIS path — the mid-drag
        letter outline must still clear, or it lingers as a ghost twin */
     drawTextHandle();
+    /* a document load whose geometry matches what is on screen also takes
+       this path — its colours still have to land */
+    if(resultMeshes.length&&resultMeshes[0].userData.appRev!==appearanceRev)applyAppearance();
   }
   function rebuild(){
     const sig=geomSignature();
@@ -4581,6 +4639,7 @@ const CSG = (function(){
       mesh.add(new THREE.LineSegments(eg,edgeMat));
       scene.add(mesh);resultMeshes.push(mesh);
     }
+    applyAppearance();
     drawSketchOverlays(active);
     drawRefGeometry(active);
     buildPickEdges();
@@ -7392,11 +7451,61 @@ const CSG = (function(){
   }
   function endSketchPick(){ pendingSketchPick=false; hidePickCard(); updateDatumVis(); }
   function cancelPicks(msg){
-    const had=pendingSketchPick||pendingTextFace||pendingAxisPick||pendingFaceSketch;
+    const had=pendingSketchPick||pendingTextFace||pendingAxisPick||pendingFaceSketch
+             ||pendingBodyColor||pendingFaceColor;
     pendingSketchPick=false; pendingTextFace=false; pendingAxisPick=null; pendingFaceSketch=false;
+    pendingBodyColor=false; pendingFaceColor=false;
     hidePickCard(); updateDatumVis();
     if(had&&msg)setHint(msg);
     return had;
+  }
+  /* ---- colours: part directly, body and surface via a pick ---- */
+  let pendingBodyColor=false, pendingFaceColor=false;
+  function startBodyColorPick(){
+    if(!resultMeshes.length)return setHint('Nothing to colour yet — build a solid first');
+    if(resultMeshes.length===1){    // one body: no pick to make
+      openColorPopover('Body colour',appearance.bodies[0]||appearance.part,hex=>{
+        if(hex)appearance.bodies[0]=hex; else delete appearance.bodies[0];
+        bumpAppearance();
+      });
+      return;
+    }
+    pendingBodyColor=true;
+    showPickCard('Click the body to colour');
+  }
+  function startFaceColorPick(){
+    if(!resultMeshes.length)return setHint('Nothing to colour yet — build a solid first');
+    pendingFaceColor=true;
+    showPickCard('Click the face to colour');
+  }
+  function pickPartColor(){
+    openColorPopover('Part colour',appearance.part,hex=>{
+      appearance.part=hex||null;
+      bumpAppearance();
+    });
+  }
+  /* One small floating panel: a native colour input applying live, a clear
+     button back to the default grey, and Done. */
+  function openColorPopover(title,current,onPick){
+    const old=document.getElementById('colorpop'); if(old)old.remove();
+    const box=document.createElement('div'); box.id='colorpop';
+    box.style.cssText='position:fixed;top:60px;left:50%;transform:translateX(-50%);z-index:10001;'
+      +'background:#0d1117;border:1px solid var(--g-blue);border-radius:10px;padding:12px 14px;'
+      +'box-shadow:0 12px 40px rgba(0,0,0,.6);display:flex;gap:10px;align-items:center';
+    const lab=document.createElement('span');
+    lab.style.cssText='font-size:12.5px;font-weight:600'; lab.textContent=title;
+    const inp=document.createElement('input'); inp.type='color'; inp.value=current||'#e8f0f8';
+    inp.style.cssText='width:52px;height:30px;padding:0;border:1px solid var(--line);border-radius:5px;background:none;cursor:pointer';
+    inp.addEventListener('input',()=>onPick(inp.value));
+    const clr=document.createElement('button'); clr.className='btn-ghost'; clr.textContent='Default grey';
+    clr.addEventListener('click',()=>{ inp.value='#e8f0f8'; onPick(null); });
+    const done=document.createElement('button'); done.className='btn-primary'; done.textContent='Done';
+    done.addEventListener('click',()=>box.remove());
+    box.appendChild(lab); box.appendChild(inp); box.appendChild(clr); box.appendChild(done);
+    document.body.appendChild(box);
+    document.addEventListener('keydown',function esck(e){
+      if(e.key==='Escape'){ box.remove(); document.removeEventListener('keydown',esck); } });
+    inp.click();
   }
   /* ---- text placement: same arm-and-click as the face sketch ---- */
   let pendingTextFace=false;
@@ -7775,6 +7884,8 @@ const CSG = (function(){
   const _sw=(b)=>`<svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${b}</svg>`;
   const _B='#a9c2e8',_Y='#FBBC05',_G='#34A853',_R='#f28b82',_U='#4285F4';
   const ICONS={
+    render:_sw(`<circle cx="12" cy="12" r="8.4" stroke="${_B}"/><path d="M7.2 8.6a5.6 5.6 0 0 1 3.6-2.3" stroke="${_Y}" stroke-linecap="round"/><path d="M17.6 14.8a13 13 0 0 1-11.2 0" stroke="${_B}" opacity=".5"/>`),
+    paint:_sw(`<path d="M12 3.6c-2.6 3.4-5.4 6.6-5.4 9.6a5.4 5.4 0 0 0 10.8 0c0-3-2.8-6.2-5.4-9.6z" stroke="${_B}"/><path d="M9.6 13.8a2.6 2.6 0 0 0 2 2.5" stroke="${_Y}" stroke-linecap="round"/>`),
     line:_sw(`<path d="M5 19 19 5" stroke="${_B}"/><circle cx="5" cy="19" r="1.8" fill="${_Y}"/><circle cx="19" cy="5" r="1.8" fill="${_Y}"/>`),
     move:_sw(`<path d="M12 3v18M3 12h18" stroke="${_B}"/><path d="M9.8 5.2 12 3l2.2 2.2M9.8 18.8 12 21l2.2-2.2M5.2 9.8 3 12l2.2 2.2M18.8 9.8 21 12l-2.2 2.2" stroke="${_Y}"/>`),
     select:_sw(`<path d="M6.5 3.2 6.5 17.8 10.3 14.2 12.9 20 15.5 18.8 12.9 13.1 17.9 12.7z" stroke="#fff"/>`),
@@ -8194,6 +8305,20 @@ const CSG = (function(){
     w.addEventListener('click',()=>{const nv=!w.classList.contains('on');w.classList.toggle('on',nv);on(nv);});
     return w;
   }
+  /* colour swatch + native picker; the × clears back to the default grey */
+  function fieldColor(label,val,on){
+    const w=document.createElement('div');w.className='field';
+    w.innerHTML=`<span class="field-label">${label}</span>`;
+    const row=document.createElement('div');row.style.cssText='display:flex;gap:6px;align-items:center';
+    const inp=document.createElement('input');inp.type='color';inp.value=val||'#e8f0f8';
+    inp.style.cssText='width:44px;height:24px;padding:0;border:1px solid var(--line);border-radius:4px;background:none;cursor:pointer';
+    inp.addEventListener('input',()=>on(inp.value));
+    const clr=document.createElement('button');clr.className='btn-ghost';clr.textContent='×';
+    clr.title='Back to the default grey';
+    clr.addEventListener('click',()=>{inp.value='#e8f0f8';on(null);});
+    row.appendChild(inp);row.appendChild(clr);w.appendChild(row);
+    return w;
+  }
   function rerun(){rebuild();}
 
   /* A sketch with more than one bounded region gets a contour picker: tick the
@@ -8567,7 +8692,9 @@ const CSG = (function(){
     if(m==='asm')
       return {mode:'asm', demo:demoActive||0,
               data:{type:'assembly',components:asm.components,mates:asm.mates}};
-    return {mode:'part', demo:demoActive||0, data:features};
+    const p={mode:'part', demo:demoActive||0, data:features};
+    if(!appearanceEmpty())p.app=appearance;
+    return p;
   }
   function autosaveNow(){
     autosaveT=null;
@@ -8606,6 +8733,7 @@ const CSG = (function(){
     }
     try{
       loadDocData(p.data);
+      if(p.app){ appearance=normApp(p.app); bumpAppearance(); }
       if(p.demo)demoActive=p.demo;
       setHint('Restored your unsaved work — Save it to a file to keep it for good');
       return true;
@@ -9558,7 +9686,11 @@ const CSG = (function(){
       if(m==='asm')
         return {fname:docName+'.assembly',
                 data:JSON.stringify({type:'assembly',components:asm.components,mates:asm.mates})};
-      return {fname:docName+'.part', data:JSON.stringify(features)};
+      /* colours ride in the file; a part without any keeps the bare-array
+         format every earlier build wrote and reads */
+      return {fname:docName+'.part',
+              data:appearanceEmpty()?JSON.stringify(features)
+                  :JSON.stringify({type:'part',appearance,features})};
   }
   function saveProject(which) {
       const file=docFile(which);
@@ -9571,6 +9703,14 @@ const CSG = (function(){
       a.click(); URL.revokeObjectURL(url);
   }
 
+  /* a .part is a bare feature array, or {type:'part',appearance,features}
+     once colours are set — every reader of part files goes through this */
+  function partFileData(d){
+      if(Array.isArray(d))return {features:d,appearance:null};
+      if(d&&d.type==='part'&&Array.isArray(d.features))
+          return {features:d.features,appearance:d.appearance||null};
+      return null;
+  }
   function loadProject(file) {
       const ext=(file.name.match(/\.([a-z0-9]+)$/i)||[])[1];
       const fmt=/^ste?p$/i.test(ext||'')?'step':/^stl$/i.test(ext||'')?'stl':null;
@@ -9589,12 +9729,19 @@ const CSG = (function(){
      `name` is the file's base name when one exists; the autosave restore has
      none and the document keeps its current name. */
   function loadDocData(data, name){
+              /* a part with colours saves as an object; unwrap it here so the
+                 array branch below stays the one code path for parts */
+              let app=null;
+              if (data && data.type==='part' && Array.isArray(data.features)) {
+                  app=data.appearance||null; data=data.features;
+              }
               if (Array.isArray(data)) {                    // a part file
                   if (docMode==='asm') { clearAsm(); setDocMode('part'); }
                   features = data;      // checkpoints stay: see loadDemo
                   uid = Math.max(0,...features.map(f=>f.id)) + 1;
                   rollbackIndex = features.length;
                   if(name)docName=name;
+                  appearance=normApp(app); appearanceRev++;
                   selId = null; demoActive=false; closeProps(); rebuild(); refreshDemoTgl();
               } else if (data && data.type==='assembly') {  // an assembly file
                   if(name)docName=name;
@@ -9693,8 +9840,9 @@ const CSG = (function(){
           loadDocData(d, f.name.replace(/\.[a-z0-9]+$/i,''));
           clearDrawModel(); apply();
         }else{
-          if(!Array.isArray(d))return setHint('The drawing references a part — that file is not one');
-          if(!loadDrawModel(d, f.name))return;   // side build; the open document is untouched
+          const pf=partFileData(d);
+          if(!pf)return setHint('The drawing references a part — that file is not one');
+          if(!loadDrawModel(pf.features, f.name, pf.appearance))return;   // side build; the open document is untouched
           apply();
         }
         setHint('Sheet placed over '+f.name);
@@ -10096,6 +10244,36 @@ const CSG = (function(){
       const hit=pickBody(e); if(hit&&hit.face){hidePickCard();makeFaceSketch(hit);} else setHint('No face there — click on a solid');
       return;
     }
+    if(pendingBodyColor){
+      if(e.button!==0)return;
+      const hit=pickBody(e);
+      if(hit){
+        pendingBodyColor=false; hidePickCard();
+        const bi=resultMeshes.indexOf(hit.object);
+        openColorPopover('Body '+(bi+1)+' colour',appearance.bodies[bi]||appearance.part,hex=>{
+          if(hex)appearance.bodies[bi]=hex; else delete appearance.bodies[bi];
+          bumpAppearance();
+        });
+      } else setHint('No body there — click the solid');
+      return;
+    }
+    if(pendingFaceColor){
+      if(e.button!==0)return;
+      const hit=pickBody(e);
+      if(hit&&hit.faceIndex!=null){
+        pendingFaceColor=false; hidePickCard();
+        const sig=faceSig(hit.object.geometry,hit.faceIndex);
+        if(!sig){ setHint('Could not read that face'); return; }
+        const ex=appearance.faces.findIndex(fc=>sigMatch(fc.sig,sig));
+        openColorPopover('Surface colour',ex>=0?appearance.faces[ex].color:null,hex=>{
+          const at=appearance.faces.findIndex(fc=>sigMatch(fc.sig,sig));
+          if(at>=0)appearance.faces.splice(at,1);
+          if(hex)appearance.faces.push({sig,color:hex});
+          bumpAppearance();
+        });
+      } else setHint('No face there — click the solid');
+      return;
+    }
     if(pendingTextFace){
       if(e.button!==0)return;
       const hit=pickBody(e);
@@ -10176,7 +10354,8 @@ const CSG = (function(){
         openSketchMenu(e.clientX, e.clientY, pointerToSketch(e));
         return;
     }
-    if(pendingTextFace||pendingAxisPick||pendingFaceSketch||pendingSketchPick){
+    if(pendingTextFace||pendingAxisPick||pendingFaceSketch||pendingSketchPick
+       ||pendingBodyColor||pendingFaceColor){
       cancelPicks('Pick cancelled');
       return;
     }
@@ -10312,6 +10491,11 @@ const CSG = (function(){
     fit      :{ic:'fit',   label:'Fit all',  fn:()=>fitAll()},
     proj     :{ic:'proj',  label:'Projection',fn:()=>setProjection(!orthoOn),
                  dyn:()=>orthoOn?'Perspective':'Orthographic'},
+    v_render :{ic:'render',label:'Rendered view',fn:()=>setRenderedView(!renderedView),
+                 dyn:()=>renderedView?'Workshop view':'Rendered view'},
+    a_pcolor :{ic:'paint', label:'Part colour…',   fn:()=>pickPartColor(),need:'solid'},
+    a_bcolor :{ic:'paint', label:'Body colour…',   fn:()=>startBodyColorPick(),need:'solid'},
+    a_fcolor :{ic:'paint', label:'Surface colour…',fn:()=>startFaceColorPick(),need:'solid'},
     sketch   :{ic:'sketch',label:'Sketch',fn:()=>startSketchPick()},
     f_extrude:{ic:'extrude',label:'Extrude boss',fn:()=>addFeature('extrude'),need:'sketch'},
     f_cut    :{ic:'cut',    label:'Extrude cut', fn:()=>addFeature('cut'),    need:'sketch'},
@@ -10331,8 +10515,9 @@ const CSG = (function(){
     r_axis   :{ic:'daxis',  label:'Add axis', fn:()=>addFeature('daxis')}
   };
   const DEFAULT_MODEL_LAYOUT=[
-    {name:'View',     ids:['normal','iso','fit','proj']},
+    {name:'View',     ids:['normal','iso','fit','proj','v_render']},
     {name:'Features', ids:['sketch','f_extrude','f_cut','f_revolve','f_rcut','f_sweep','f_swcut','f_gfbin','f_gfplate','f_text','f_fillet','f_chamfer','t_mirror','t_lpat','t_cpat']},
+    {name:'Appearance',ids:['a_pcolor','a_bcolor','a_fcolor']},
     {name:'Reference',ids:['r_plane','r_axis']}
   ];
   function openModelMenu(x,y){
@@ -10473,6 +10658,14 @@ const CSG = (function(){
         }
         migrated=true;
       }
+    }
+    /* One-off (Aug 2026): the Appearance section is new to the model menu.
+       Give a stored layout the empty section in its default spot, so the new
+       colour commands adopt into it rather than into whatever came last. */
+    if(saved&&m.cmds.a_pcolor&&!m.layout.some(sec=>sec.name==='Appearance')){
+      const vi=m.layout.findIndex(x=>x.name==='View');
+      m.layout.splice(vi>=0?vi+1:0,0,{name:'Appearance',ids:[]});
+      migrated=true;
     }
     const adopted=adoptNewCommands(m,savedHidden);
     markHidden(m);
@@ -10854,9 +11047,11 @@ const CSG = (function(){
     const group=[];
     for(const s of shapes){
       let g; try{ g=OCK.mesh(s); }catch(_){ continue; }
-      const mesh=new THREE.Mesh(g,solidMat.clone());
+      const mesh=new THREE.Mesh(g,matFor(comp.color));
       mesh.castShadow=true;mesh.receiveShadow=true;
-      mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(g,25),edgeMat.clone()));
+      const el=new THREE.LineSegments(new THREE.EdgesGeometry(g,25),edgeMat.clone());
+      el.visible=!renderedView;
+      mesh.add(el);
       mesh.userData.compId=comp.id;
       mesh.visible=(docMode==='asm');
       scene.add(mesh);group.push(mesh);
@@ -10879,10 +11074,10 @@ const CSG = (function(){
     while(asm.components.length)removeComponent(asm.components[0]);
     asm={components:[],mates:[]};asmSel=null;
   }
-  function addComponent(featList,name){
+  function addComponent(featList,name,color){
     const n=asm.components.length;
     const comp={id:cuid++,name:name||('Part'+(n+1)),features:JSON.parse(JSON.stringify(featList)),
-      t:{x:n*16,y:0,z:0,rx:0,ry:0,rz:0},fixed:n===0};
+      t:{x:n*16,y:0,z:0,rx:0,ry:0,rz:0},fixed:n===0,color:color||null};
     asm.components.push(comp);
     buildComponent(comp);
     asmSel=comp.id;
@@ -11000,6 +11195,12 @@ const CSG = (function(){
     add(fieldCheck('Fixed in place',comp.fixed,v=>{comp.fixed=v;
       if(!v&&asm.mates.length){reportSolve(solveMates({}));syncCompProps(comp);}
       refreshAsmTree();}));
+    add(fieldColor('Colour',comp.color,v=>{
+      comp.color=v;
+      const ci=asm.components.indexOf(comp);
+      (asmMeshes[ci]||[]).forEach(mm=>{mm.material=matFor(comp.color);});
+      drawViewsStale=true; scheduleAutosave();
+    }));
     propsComp=comp;
     el.querySelector('#pc-close').addEventListener('click',closeProps);
     el.querySelector('#pc-del').addEventListener('click',()=>{closeProps();removeComponent(comp);});
@@ -11119,6 +11320,87 @@ const CSG = (function(){
       }
     }
     topo.fits.set(seed,out); return out;
+  }
+  /* ---- surface colours: signature-matched, since faces have no stable ids.
+     A face's signature is its fitted kind + centroid + direction + radius +
+     area, in world coordinates (part meshes carry no transform). After every
+     rebuild each stored colour hunts for the face that still matches; a face
+     that changed shape simply stops matching and its colour lies dormant
+     until re-applied. Honest, and self-healing for the common case of edits
+     elsewhere on the part. */
+  function faceSig(geom,seed){
+    const fit=fitFace(geom,seed); if(!fit)return null;
+    const ids=faceRegion(geom,seed), topo=meshTopo(geom);
+    let a=0; for(const t of ids)a+=(topo.tri[t].area||0);
+    return {k:fit.kind,p:[fit.p.x,fit.p.y,fit.p.z],d:[fit.d.x,fit.d.y,fit.d.z],
+            r:fit.r||0,a};
+  }
+  function sigMatch(s1,s2){
+    if(!s1||!s2||s1.k!==s2.k)return false;
+    const dp=Math.hypot(s1.p[0]-s2.p[0],s1.p[1]-s2.p[1],s1.p[2]-s2.p[2]);
+    if(dp>Math.max(0.6,0.1*Math.sqrt(Math.max(s1.a,s2.a))))return false;
+    const dot=Math.abs(s1.d[0]*s2.d[0]+s1.d[1]*s2.d[1]+s1.d[2]*s2.d[2]);
+    if(dot<0.985)return false;
+    if(Math.abs(s1.r-s2.r)>0.05+0.02*Math.max(s1.r,s2.r))return false;
+    const ar=s1.a/Math.max(1e-9,s2.a);
+    return ar>0.7&&ar<1.43;
+  }
+  function regionsOf(geom){
+    const topo=meshTopo(geom), out=[], done=new Uint8Array(topo.tri.length);
+    for(let t=0;t<topo.tri.length;t++){
+      if(done[t])continue;
+      const ids=faceRegion(geom,t);
+      for(const x of ids)done[x]=1;
+      out.push({seed:t,ids});
+    }
+    return out;
+  }
+  function faceOverlay(g,ids,hex){
+    const pos=g.attributes.position, idx=g.index;
+    const arr=new Float32Array(ids.length*9);
+    let o=0;
+    for(const t of ids)for(let j=0;j<3;j++){
+      const vi=idx?idx.getX(t*3+j):(t*3+j);
+      arr[o++]=pos.getX(vi);arr[o++]=pos.getY(vi);arr[o++]=pos.getZ(vi);
+    }
+    const bg=new THREE.BufferGeometry();
+    bg.setAttribute('position',new THREE.BufferAttribute(arr,3));
+    bg.computeVertexNormals();
+    const mm=new THREE.Mesh(bg,faceMatFor(hex));
+    mm.userData.faceCol=true; mm.castShadow=false;
+    return mm;
+  }
+  let appearanceRev=1;
+  function applyAppearance(){
+    resultMeshes.forEach((m,i)=>{
+      for(const c of [...m.children]) if(c.userData&&c.userData.faceCol){ m.remove(c); c.geometry.dispose(); }
+      m.material=matFor(bodyColorOf(i));
+      for(const c of m.children) if(c.isLineSegments)c.visible=!renderedView;
+      m.userData.appRev=appearanceRev;
+    });
+    if(!appearance.faces.length)return;
+    /* every region of every body, signed once, then each stored colour takes
+       its best match (nearest centroid among the matches) */
+    const cand=[];
+    for(const m of resultMeshes){
+      const g=m.geometry;
+      for(const reg of regionsOf(g))cand.push({m,g,reg,sig:faceSig(g,reg.seed)});
+    }
+    for(const fc of appearance.faces){
+      let best=null,bd=Infinity;
+      for(const c of cand){
+        if(!sigMatch(c.sig,fc.sig))continue;
+        const dp=Math.hypot(c.sig.p[0]-fc.sig.p[0],c.sig.p[1]-fc.sig.p[1],c.sig.p[2]-fc.sig.p[2]);
+        if(dp<bd){bd=dp;best=c;}
+      }
+      if(best)best.m.add(faceOverlay(best.g,best.reg.ids,fc.color));
+    }
+  }
+  function bumpAppearance(){
+    appearanceRev++;
+    applyAppearance();
+    drawViewsStale=true;
+    scheduleAutosave();
   }
   function faceAt(e){
     const r=canvas.getBoundingClientRect();ndc.x=((e.clientX-r.left)/r.width)*2-1;ndc.y=-((e.clientY-r.top)/r.height)*2+1;
@@ -11525,7 +11807,7 @@ const CSG = (function(){
        clutter. */
     $('tb-draw-main').style.display='none';
     // and nothing that drives a 3D view belongs above a sheet of paper
-    ['btn-normal','btn-iso','btn-fitall','btn-proj','btn-print']
+    ['btn-normal','btn-iso','btn-fitall','btn-proj','btn-render','btn-print']
       .forEach(id=>{ const el=$(id); if(el)el.style.display=isD?'none':''; });
     /* The Demo control used to be a part-only toggle, so it hid itself in an
        assembly or a drawing. It is a menu of documents now — one of them an
@@ -11545,6 +11827,9 @@ const CSG = (function(){
     asmMeshes.flat().forEach(mm=>mm.visible=!isD&&modelHost==='asm');
     closeProps();closeEdgeMenu();
     if(isD){
+      /* colours changed since the views were last projected: re-project, so
+         the sheet's isometric carries the part's current colours */
+      if(drawViewsStale){ rebuildDrawViews(); drawViewsStale=false; }
       renderSheet(); refreshDrawTree();
       setHint('Drawing — Add view places a projection; drag views to arrange them, then Print or Export SVG');
     } else if(isA){
@@ -11554,6 +11839,7 @@ const CSG = (function(){
     updateHelp();
   }
   let drawReturn='part';        // the document the drawing was made from
+  let drawViewsStale=false;     // colours changed while the sheet was away
   /* drag components on the ground plane (Shift = vertical) */
   let asmDrag=null;
   function pickComp(e){
@@ -11670,17 +11956,28 @@ const CSG = (function(){
      assembly — but a drawing can also be made of a part from a file it has
      never had open, which is `drawModel`: a feature list, built once on the
      side and kept as geometry. */
-  let drawModel=null;      // {name, geoms:[BufferGeometry]} — a part loaded just to draw
+  let drawModel=null;      // {name, geoms:[BufferGeometry], cols} — a part loaded just to draw
+  /* views project GEOMS and paint COLS: one colour (or null for the default
+     grey) per source geometry, so body and part colours reach the sheet */
   function drawSourceGeoms(){
-    if(drawModel)return drawModel.geoms.map(g=>g.clone());
-    if(drawReturn==='asm'||docMode==='asm')return asmTransformedGeoms();
-    return resultMeshes.map(m=>{m.updateMatrixWorld(true);
-      return m.geometry.clone().applyMatrix4(m.matrixWorld);});
+    if(drawModel)return {geoms:drawModel.geoms.map(g=>g.clone()),
+                         cols:(drawModel.cols||[]).slice()};
+    if(drawReturn==='asm'||docMode==='asm'){
+      const geoms=[],cols=[];
+      asmMeshes.flat().forEach(m=>{m.updateMatrixWorld(true);
+        geoms.push(m.geometry.clone().applyMatrix4(m.matrixWorld));
+        const comp=asm.components.find(c=>c.id===m.userData.compId);
+        cols.push((comp&&comp.color)||null);});
+      return {geoms,cols};
+    }
+    return {geoms:resultMeshes.map(m=>{m.updateMatrixWorld(true);
+              return m.geometry.clone().applyMatrix4(m.matrixWorld);}),
+            cols:resultMeshes.map((m,i)=>bodyColorOf(i))};
   }
   /* Build a saved part's geometry without disturbing what is open. The same
      side-build the assembly uses for its components, so a drawing of a file
      costs nothing more than inserting it would. */
-  function loadDrawModel(featList,name){
+  function loadDrawModel(featList,name,app){
     const {shapes,errs}=buildPartShapes(featList);
     const geoms=[];
     for(const s of shapes){ try{ geoms.push(OCK.mesh(s)); }catch(_){ } }
@@ -11688,7 +11985,9 @@ const CSG = (function(){
     if(!geoms.length){ setHint('That file has nothing solid in it to draw'
       +(errs.length?' — '+errs[0]:'')); return false; }
     if(drawModel)drawModel.geoms.forEach(g=>g.dispose());
-    drawModel={name:(name||'PART').replace(/\.[a-z]+$/i,''),geoms};
+    const a=normApp(app);
+    drawModel={name:(name||'PART').replace(/\.[a-z]+$/i,''),geoms,
+               cols:geoms.map((g,i)=>a.bodies[i]||a.part||null)};
     return true;
   }
   function clearDrawModel(){
@@ -11871,9 +12170,14 @@ const CSG = (function(){
     return out;
   }
   function buildView(kind,shade){
-    const geoms=drawSourceGeoms();
+    const src=drawSourceGeoms();
+    const geoms=src.geoms;
     if(!geoms.length)return null;
     const geoms2=geoms;
+    const hexRgb=h=>{ if(!h)return null;
+      const n=parseInt(h.replace('#',''),16);
+      return isNaN(n)?null:[(n>>16)&255,(n>>8)&255,n&255]; };
+    const gcols=geoms.map((g,i)=>hexRgb(src.cols[i]));
     const B=viewBasis(kind);
     // one mesh to shoot at, and one edge set to project
     const solids=geoms.map(g=>new THREE.Mesh(g,new THREE.MeshBasicMaterial()));
@@ -11943,7 +12247,8 @@ const CSG = (function(){
     if(shade){
       const light=B.n.clone().negate().addScaledVector(B.v,0.42).addScaledVector(B.u,0.3).normalize();
       const A2=new THREE.Vector3(),B2=new THREE.Vector3(),C2=new THREE.Vector3();
-      for(const g of geoms2){
+      for(let gi=0;gi<geoms2.length;gi++){
+        const g=geoms2[gi], col=gcols[gi];
         const pos=g.attributes.position, idx=g.index;
         const nT=Math.floor((idx?idx.count:pos.count)/3);
         for(let t=0;t<nT;t++){
@@ -11955,7 +12260,8 @@ const CSG = (function(){
           const sh=0.42+0.58*Math.max(0,nrm.dot(light));
           tris.push({p:[P(A2),P(B2),P(C2)],
             d:(A2.dot(B.n)+B2.dot(B.n)+C2.dot(B.n))/3,
-            s:Math.max(0,Math.min(1,sh))});
+            s:Math.max(0,Math.min(1,sh)),
+            c:col||null});
         }
       }
       tris.sort((x,y)=>y.d-x.d);                          // furthest first
@@ -12125,6 +12431,7 @@ const CSG = (function(){
   }
   function rebuildDrawViews(){
     for(const v of draw.views){ const g=buildView(v.kind,!!v.shaded); if(g)v.geo=g; }
+    drawViewsStale=false;
     renderSheet();
   }
   function removeDrawView(v){
@@ -12467,15 +12774,22 @@ const CSG = (function(){
           'stroke-dasharray':cls==='hid'?(1.6/s)+' '+(1.1/s):'none'});
       };
       if(v.shaded&&v.geo.tris&&v.geo.tris.length){
-        /* Runs of the same shade are merged into one path as we walk the
+        /* Runs of the same fill are merged into one path as we walk the
            sorted list, which keeps the paint order exact while cutting a few
-           thousand elements down to a few dozen. */
-        let d='',cur=-1;
-        const flushFill=()=>{ if(!d)return;
-          inner.appendChild(mk('path',{d,fill:'rgb('+cur+','+cur+','+cur+')',stroke:'none'})); d=''; };
-        for(const t of v.geo.tris){
+           thousand elements down to a few dozen. Uncoloured bodies keep the
+           grey ramp; coloured ones tint their body colour by the same shade. */
+        let d='',cur=null;
+        const fillOf=t=>{
+          if(t.c){ const k=0.45+0.55*t.s;
+            return 'rgb('+Math.round(t.c[0]*k)+','+Math.round(t.c[1]*k)+','+Math.round(t.c[2]*k)+')'; }
           const g2=Math.round(120+t.s*118);
-          if(g2!==cur){ flushFill(); cur=g2; }
+          return 'rgb('+g2+','+g2+','+g2+')';
+        };
+        const flushFill=()=>{ if(!d)return;
+          inner.appendChild(mk('path',{d,fill:cur,stroke:'none'})); d=''; };
+        for(const t of v.geo.tris){
+          const f=fillOf(t);
+          if(f!==cur){ flushFill(); cur=f; }
           d+='M'+t.p[0].x.toFixed(3)+' '+t.p[0].y.toFixed(3)+
              'L'+t.p[1].x.toFixed(3)+' '+t.p[1].y.toFixed(3)+
              'L'+t.p[2].x.toFixed(3)+' '+t.p[2].y.toFixed(3)+'Z';
@@ -12813,6 +13127,8 @@ const CSG = (function(){
   $('btn-normal').addEventListener('click',viewNormalTo);
   $('btn-iso').addEventListener('click',viewIso);
   $('btn-fitall').addEventListener('click',fitAll);
+  $('btn-render').addEventListener('click',()=>setRenderedView(!renderedView));
+  try{ if(localStorage.getItem('fcad-render')==='1')setRenderedView(true,true); }catch(_){ }
   $('btn-proj').addEventListener('click',()=>setProjection(!orthoOn));
   $('btn-customise').addEventListener('click',openCustomise);
   $('btn-manual').addEventListener('click',openManual);
@@ -13029,8 +13345,9 @@ const CSG = (function(){
     const rd=new FileReader();
     rd.onload=ev=>{
       let data; try{ data=JSON.parse(ev.target.result); }catch(_){ return setHint('That is not a part file'); }
-      if(!Array.isArray(data))return setHint('Drawings are made from parts — open a .part file');
-      if(!loadDrawModel(data,f.name))return;
+      const pf=partFileData(data);
+      if(!pf)return setHint('Drawings are made from parts — open a .part file');
+      if(!loadDrawModel(pf.features,f.name,pf.appearance))return;
       draw.title=drawModel.name.toUpperCase();
       rebuildDrawViews(); refreshDrawTree();
       setHint('Drawing '+drawModel.name+' — every view is projected from that file');
@@ -13102,9 +13419,10 @@ const CSG = (function(){
     const reader=new FileReader();
     reader.onload=ev=>{
       try{
-        const d=JSON.parse(ev.target.result);
-        if(!Array.isArray(d))throw new Error('not a part');
-        addComponent(d, file.name.replace(/\.(part|sketchcad|json)$/i,''));
+        const pf=partFileData(JSON.parse(ev.target.result));
+        if(!pf)throw new Error('not a part');
+        addComponent(pf.features, file.name.replace(/\.(part|sketchcad|json)$/i,''),
+                     pf.appearance&&pf.appearance.part);
       }catch(_){ alert('Not a part file — insert a .part saved from part mode'); }
     };
     reader.readAsText(file);
@@ -13123,6 +13441,7 @@ const CSG = (function(){
   function doNewPart(){
     dropAllCheckpoints();
     docName='project';
+    resetAppearance(); appearanceRev++;
     features=[];rollbackIndex=0;selId=null;editing=null;selectedEdges=[];hoveredEdge=null;closeEdgeMenu();closeProps();setMode('model');controls.unlock();demoActive=false;rebuild();refreshDemoTgl();
   }
   /* small choice dialog (used by New part) */
@@ -13394,7 +13713,10 @@ const CSG = (function(){
     get checkpoints(){ return checkpoints.map(c=>({i:c.i, bodies:c.shapes.length, key:c.key})); },
     get rollbackIndex(){ return rollbackIndex; },
     get docName(){ return docName; }, docFile, loadDocData,
-    get drawModel(){ return drawModel&&{name:drawModel.name,geoms:drawModel.geoms.length}; },
+    get drawModel(){ return drawModel&&{name:drawModel.name,geoms:drawModel.geoms.length,cols:(drawModel.cols||[]).slice()}; },
+    get appearance(){ return appearance; }, set appearance(v){ appearance=normApp(v); },
+    bumpAppearance, applyAppearance, setRenderedView, faceSig, sigMatch,
+    get renderedView(){ return renderedView; },
     dimHit, dimResolve, dimApply, polyCorners, cornerAt, applyCorner,
     get cornerSel(){ return cornerSel; }, set cornerSel(v){ cornerSel=v; },
     ensureSketchProps, setCornerTreatment, setCornerSize,
