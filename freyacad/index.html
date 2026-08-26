@@ -5425,6 +5425,7 @@ const CSG = (function(){
     const sd=sketchData[editing.id];
     if(sd)drawEntityLoopsColored(sketchOverlay,editing,sd.frame);
     redrawHandles(); drawSketchSel();
+    syncZoomRange();   // dragging a point outward can grow the sketch past the cap
   }
   // (the old blue dot that trailed the pointer is gone — the tool badge and
   // the snap markers do that job now)
@@ -5477,7 +5478,16 @@ const CSG = (function(){
     // the rebuild blocks the main thread for most of a second — started after
     // animateToFrame it ate the whole flight and the view just snapped flat.
     rebuild(); redrawDraft(null);
-    animateToFrame(feature.frame || planeFrame(feature.plane), 18);
+    /* Entering a sketch that already has content — a re-edit, or a traced
+       outline at photo scale — the old constant 18 framed one corner of it.
+       Fly to the sketch's own fit distance instead; 18 stays the floor for
+       an empty sketch. Measured about the frame origin the flight aims at. */
+    const skFrame=feature.frame || planeFrame(feature.plane);
+    syncZoomRange();
+    let r0=18;
+    const sb0=sketchBox();
+    if(sb0){ sb0.expandByPoint(skFrame.o); r0=Math.min(controls.maxR,Math.max(18,fitDistance(sb0))); }
+    animateToFrame(skFrame, r0);
     $('dock').querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.tool==='line'));
   }
   function finishSketch(){
@@ -12636,6 +12646,14 @@ const CSG = (function(){
     const fov=perspCam.fov*Math.PI/180;   // ortho derives its box from the same fov
     return (sz/2)/Math.tan(fov/2)*1.15+0.5;
   }
+  /* While sketching, the thing being framed is the SKETCH — which can be far
+     bigger than any solid yet built (a traced outline arrives at photo scale
+     with the part still empty). The envelope and Fit must measure it too. */
+  function sketchBox(){
+    if(mode!=='sketch'||!editing)return null;
+    const b=new THREE.Box3().setFromObject(sketchOverlay);
+    return b.isEmpty()?null:b;
+  }
   /* The zoom envelope follows the model: pull back far enough to see the whole
      thing plus a little context, and no further. maxR used to be an absolute
      300 from the 15 mm-part era — the wheel AND fitAll both clamp to it, so a
@@ -12643,6 +12661,8 @@ const CSG = (function(){
      component change, and before every fit. */
   function syncZoomRange(){
     let box=partBox();
+    const sb=sketchBox();
+    if(sb){ if(box)box.union(sb); else box=sb; }
     if(!box&&datumGroup.visible)box=new THREE.Box3().setFromObject(datumGroup);
     const fit=box?fitDistance(box):40;
     controls.maxR=Math.min(5000,Math.max(80,fit*1.6));
@@ -12651,6 +12671,8 @@ const CSG = (function(){
   function fitAll(){
     syncZoomRange();
     let box=partBox();
+    const sb=sketchBox();
+    if(sb){ if(box)box.union(sb); else box=sb; }
     if(!box){ if(datumGroup.visible){ box=new THREE.Box3().setFromObject(datumGroup); } else return; }
     const c=box.getCenter(new THREE.Vector3());
     controls.target.copy(c);
@@ -12851,7 +12873,7 @@ const CSG = (function(){
     get draw(){ return draw; }, renderSheet, addAllCentreMarks, toSheet, fitScale, loadDemo,
     startMate, cancelMate, fitFace, faceRegion, applyMate, applyCompTransform,
     faceAt, datumAt, edgeCircAt, mateEndAt, chainSegRun, fitEdgeCircle, fitEdgeCircleAround,
-    pickEdge, get pendingAxisPick(){ return pendingAxisPick; },
+    pickEdge, get pendingAxisPick(){ return pendingAxisPick; }, sketchBox,
     get mateSel(){ return mateSel; }, perimeterHit, datumAt, mateEndAt, updateDatumVis,
     isSpline, splinePath, splinePts, splineTangent, splineHandles, splineInsertPoint,
     splineDeletePoint, splineResetHandles, splineUnder, openSketchMenu,

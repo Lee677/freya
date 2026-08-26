@@ -743,7 +743,16 @@ having a visible pane to paste into.
     model but not much further"), floored at 80, run after every rebuild and component
     change and before every fit; it also pulls the camera in when the model shrinks.
     Anything else in the codebase still holding a bare distance constant should be
-    presumed guilty of the same 15 mm-era assumption until measured.
+    presumed guilty of the same 15 mm-era assumption until measured. And indeed: the
+    sketch editor had two more of the same. The zoom envelope measured only the SOLIDS
+    (`partBox`), so a sketch bigger than the part — every traced outline on an empty
+    part — could not be zoomed out to; `sketchBox()` now unions the live sketch overlay
+    into `syncZoomRange` and `fitAll` while sketching. And `startSketch` flew to a
+    constant radius 18, framing one corner of a big sketch on entry; it now flies to
+    the sketch's own fit distance (18 stays the floor for an empty one). When testing
+    the entry flight headlessly, wait ~2.5 s: `controls.sph.radius` is only written by
+    the flight's finish(), and rAF starts late under SwiftShader — a mid-flight read
+    shows the stale pre-flight radius and looks exactly like the bug.
 
 49. **A circle fit whose tolerance scales with its own radius accepts its own garbage.**
     The circular-edge pickers (`fitEdgeCircleAround`, feeding the axis tool's
