@@ -76,7 +76,15 @@ mostly append; a deleted body-creating feature can shift them — known, accepte
 `comp.color` tints assembly components (`matFor` shared material cache), drawing shaded
 views tint per body via `drawSourceGeoms()` `{geoms,cols}` and `tri.c`, and `drawViewsStale`
 re-projects the sheet on entry after colour edits. `setRenderedView` (btn-render, persisted
-`fcad-render`) is a material/edge-visibility swap only. `manifest.webmanifest` + `icons/` make freyacad
+`fcad-render`) is a material/edge-visibility swap only. **The document library** (owner's
+ask, 2026-08): Save writes to IndexedDB (`fcad-library`/`docs`, keyPath name WITH extension)
+instead of downloading; Open (`openLibrary`) lists records with the icons/*.png file icons —
+row click opens, ⭳ downloads the real file, × deletes (confirmed). `saveProject` serializes
+synchronously via `docFile` BEFORE the async put (guard dialogs mutate state right after),
+and falls back to a plain download if IndexedDB is refused (private mode). `resolveDrawingRef`
+checks the library for `ref.name` before raising its dialog — references self-resolve like a
+SolidWorks search path. Real files still come in through "Open from this computer…"
+(#file-load). `manifest.webmanifest` + `icons/` make freyacad
 installable as a PWA whose `file_handlers` give those extensions freyacad icons in
 the OS file explorer and route double-clicks into the app (`launchQueue` consumer
 at the foot of the script waits for the kernel before loading). The full /grid tracer toolset
