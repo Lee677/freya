@@ -797,6 +797,13 @@ having a visible pane to paste into.
     open re-arms the face pick for THAT text instead of creating a twin. If a future
     feature stores authored placement under `frame`, it needs the same exception —
     better, name the field something else.
+    A tail to this one: parts SAVED (or autosaved) by the buggy build carry the twin as
+    an ordinary second Text feature, and the fix cannot remove what is already data —
+    a later "it duplicated again" report on an old part is likely the stowaway showing
+    itself when the twin above it is edited. The tree shows both; delete the spare.
+    Also mind the ghost variant: a drag that releases where it started rebuilds through
+    the overlays-only path, which must still clear the mid-drag outline preview —
+    `rebuildOverlaysOnly` calls `drawTextHandle()` for exactly that.
 
 ## Biggest thing still missing
 
