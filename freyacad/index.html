@@ -8634,49 +8634,69 @@ const CSG = (function(){
   function openTraceDialog(){
     if(mode!=='sketch'||!editing){ setHint('Open a sketch first — the outline lands in it'); return; }
     const ov=document.createElement('div');
-    ov.style.cssText='position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center';
-    ov.innerHTML=`<div style="background:var(--panel);border:1px solid var(--g-blue);border-radius:12px;
-        padding:16px 18px;width:min(580px,94vw);max-height:94vh;overflow:auto;box-shadow:0 24px 60px -12px rgba(0,0,0,.9)">
-      <h3 style="margin:0 0 4px;font-size:15px">Trace a photo</h3>
-      <p style="margin:0 0 8px;font-size:11.5px;color:var(--muted)">Shoot square-on. For true scale, <b>Measure a line</b>: mark two ends of something you know the size of — a ruler in shot is perfect. If the automatic trace misses, teach it the colours; then grab the yellow line anywhere and drag to reshape it.</p>
-      <div style="display:flex;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
-        <button id="tr-pick" class="btn-primary">Choose photo…</button>
-        <button id="tr-cscale" class="btn-ghost" style="font-size:11.5px">Measure a line</button>
-        <label id="tr-side-l" style="font-size:12px;color:var(--muted)">Longest side
-          <input id="tr-mm" type="number" value="100" min="1" step="1"
-            style="width:64px;margin-left:6px"> mm</label>
-        <label id="tr-line-l" style="font-size:12px;color:var(--muted);display:none">that line is
-          <input id="tr-lmm" type="number" value="25" min="0.1" step="0.5"
-            style="width:56px;margin-left:6px"> mm
-          <button id="tr-lclear" class="btn-ghost" style="font-size:11px;padding:1px 7px;margin-left:2px">✕</button></label>
-        <label style="font-size:12px;color:var(--muted)"><input id="tr-inv" type="checkbox" style="margin-right:4px">dark background</label>
+    ov.style.cssText='position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.55)';
+    /* full-page on purpose (owner request): tracing is precision work and the
+       photo deserves every pixel. The toolbar is grouped in workflow order —
+       photo, teach the trace, fix the line, real size, cut-outs — instead of
+       the three arbitrary rows it grew as tools were ported one by one. */
+    const GRP='display:flex;flex-direction:column;gap:5px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;min-width:0';
+    const CAP='font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-2);white-space:nowrap';
+    const ROW='display:flex;gap:6px;align-items:center;flex-wrap:wrap';
+    ov.innerHTML=`<div style="background:var(--panel);width:100%;height:100%;display:flex;flex-direction:column;
+        padding:12px 16px;box-sizing:border-box">
+      <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+        <h3 style="margin:0;font-size:15px">Trace a photo</h3>
+        <p style="margin:0;font-size:11.5px;color:var(--muted);flex:1;min-width:240px">Shoot square-on. If the automatic trace misses, teach it the colours; grab the yellow line anywhere to reshape it; <b>Measure a line</b> on something of known size makes the outline true scale.</p>
       </div>
-      <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-        <button id="tr-ctool" class="btn-ghost" style="font-size:11.5px">Pick object colour</button>
-        <button id="tr-cbg" class="btn-ghost" style="font-size:11.5px">Pick background</button>
-        <span id="tr-sw" style="display:flex;gap:3px;align-items:center"></span>
-        <button id="tr-cclear" class="btn-ghost" style="font-size:11.5px;display:none">clear colours</button>
-        <span style="flex:1"></span>
-        <label style="font-size:11.5px;color:var(--muted)">Brush
-          <input id="tr-brush" type="range" min="12" max="70" value="30" style="width:64px;vertical-align:middle"></label>
-        <button id="tr-undo" class="btn-ghost" style="font-size:11.5px" disabled>Undo</button>
-        <button id="tr-reset" class="btn-ghost" style="font-size:11.5px" disabled>Reset line</button>
+      <div style="display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;margin:8px 0">
+        <div style="${GRP}"><span style="${CAP}">1 · Photo</span>
+          <div style="${ROW}">
+            <button id="tr-pick" class="btn-primary">Choose photo…</button>
+            <label style="font-size:11.5px;color:var(--muted);white-space:nowrap"><input id="tr-inv" type="checkbox" style="margin-right:4px">dark background</label>
+          </div></div>
+        <div style="${GRP}"><span style="${CAP}">2 · Help the trace</span>
+          <div style="${ROW}">
+            <button id="tr-ctool" class="btn-ghost" style="font-size:11.5px">Pick object colour</button>
+            <button id="tr-cbg" class="btn-ghost" style="font-size:11.5px">Pick background</button>
+            <span id="tr-sw" style="display:flex;gap:3px;align-items:center"></span>
+            <button id="tr-cclear" class="btn-ghost" style="font-size:11.5px;display:none">clear colours</button>
+            <span style="font-size:10.5px;color:var(--muted-2);white-space:nowrap">drag empty photo = search area</span>
+            <button id="tr-roiclear" class="btn-ghost" style="font-size:11.5px;display:none">clear search</button>
+          </div></div>
+        <div style="${GRP};flex:1;min-width:300px"><span style="${CAP}">3 · Fix the line</span>
+          <div style="${ROW}">
+            <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:6px;flex:1;min-width:210px">Brush size
+              <input id="tr-brush" type="range" min="5" max="80" value="30" style="flex:1;min-width:150px;vertical-align:middle"></label>
+            <button id="tr-undo" class="btn-ghost" style="font-size:11.5px" disabled>Undo</button>
+            <button id="tr-reset" class="btn-ghost" style="font-size:11.5px" disabled>Reset line</button>
+            <button id="tr-straight" class="btn-ghost" style="font-size:11.5px">Straighten</button>
+          </div></div>
+        <div style="${GRP}"><span style="${CAP}">4 · Real size</span>
+          <div style="${ROW}">
+            <button id="tr-cscale" class="btn-ghost" style="font-size:11.5px">Measure a line</button>
+            <label id="tr-side-l" style="font-size:12px;color:var(--muted);white-space:nowrap">Longest side
+              <input id="tr-mm" type="number" value="100" min="1" step="1"
+                style="width:60px;margin-left:6px"> mm</label>
+            <label id="tr-line-l" style="font-size:12px;color:var(--muted);display:none;white-space:nowrap">that line is
+              <input id="tr-lmm" type="number" value="25" min="0.1" step="0.5"
+                style="width:56px;margin-left:6px"> mm
+              <button id="tr-lclear" class="btn-ghost" style="font-size:11px;padding:1px 7px;margin-left:2px">✕</button></label>
+          </div></div>
+        <div style="${GRP}"><span style="${CAP}">5 · Cut-outs</span>
+          <div style="${ROW}">
+            <button id="tr-fing" class="btn-ghost" style="font-size:11.5px">Add finger hole</button>
+            <label style="font-size:11.5px;color:var(--muted);white-space:nowrap">r
+              <input id="tr-fr" type="number" value="9" min="1" step="1" style="width:50px;margin-left:4px"> mm</label>
+          </div></div>
       </div>
-      <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-        <button id="tr-fing" class="btn-ghost" style="font-size:11.5px">Add finger hole</button>
-        <label style="font-size:11.5px;color:var(--muted)">r
-          <input id="tr-fr" type="number" value="9" min="1" step="1" style="width:54px;margin-left:4px"> mm</label>
-        <button id="tr-straight" class="btn-ghost" style="font-size:11.5px">Straighten</button>
-        <span style="flex:1"></span>
-        <span style="font-size:11px;color:var(--muted-2)">drag empty photo = search area</span>
-        <button id="tr-roiclear" class="btn-ghost" style="font-size:11.5px;display:none">clear search</button>
+      <div id="tr-wrap" style="flex:1;min-height:0">
+        <canvas id="tr-cv" width="544" height="320" style="position:static;width:100%;height:100%;display:block;background:var(--panel-2,#161b22);border:1px solid var(--line);border-radius:8px;touch-action:none;box-sizing:border-box"></canvas>
       </div>
-      <canvas id="tr-cv" width="544" height="320" style="position:static;width:100%;background:var(--panel-2,#161b22);border:1px solid var(--line);border-radius:8px;touch-action:none"></canvas>
       <!-- position:static: the app-wide canvas{position:absolute;inset:0} rule
            (for the viewport) otherwise stretches this preview over the whole
            screen — an opaque sheet hiding the dialog. Same trap as #navcube. -->
-      <div style="font-size:11.5px;color:var(--muted);margin:8px 0"><span id="tr-status">No photo yet.</span><span id="tr-osize" style="color:var(--text)"></span></div>
-      <div style="display:flex;gap:8px;justify-content:flex-end">
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <div style="font-size:11.5px;color:var(--muted);flex:1;min-width:0"><span id="tr-status">No photo yet.</span><span id="tr-osize" style="color:var(--text)"></span></div>
         <button id="tr-cancel" class="btn-ghost">Cancel</button>
         <button id="tr-insert" class="btn-primary" disabled>Insert outline</button>
       </div></div>`;
@@ -8858,6 +8878,17 @@ const CSG = (function(){
           +(fingers.length?' · '+fingers.length+' finger hole'+(fingers.length>1?'s':''):'');
       } else $q('tr-osize').textContent='';
     };
+    /* the canvas is only a viewport (all state is in image px, K() rescales),
+       so sizing its backing store to the element is free — evPos divides by
+       the element rect, so input stays exact at any size */
+    const wrap=$q('tr-wrap');
+    const fitCanvas=()=>{
+      const w=Math.max(320,wrap.clientWidth|0), h=Math.max(240,wrap.clientHeight|0);
+      if(cv.width!==w||cv.height!==h){ cv.width=w; cv.height=h; }
+      paint();
+    };
+    window.addEventListener('resize',fitCanvas);
+    fitCanvas();
     function traceNow(){
       if(!img)return;
       try{
@@ -9072,7 +9103,7 @@ const CSG = (function(){
         traceNow();
       }catch(err){ status(err.message||String(err)); }
     });
-    const close=()=>ov.remove();
+    const close=()=>{ window.removeEventListener('resize',fitCanvas); ov.remove(); };
     $q('tr-cancel').addEventListener('click',close);
     ov.addEventListener('pointerdown',e=>{ if(e.target===ov)close(); });
     $q('tr-insert').addEventListener('click',()=>{
