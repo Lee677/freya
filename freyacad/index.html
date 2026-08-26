@@ -35,25 +35,19 @@
 </script>
 
 <script>
-/* Mobile gate. freyacad steers with a mouse, a keyboard and a big screen, so a
- * phone or tablet gets a friendly front door instead of an app it cannot
- * drive — and is spared the ~13 MB kernel download. The flag is honoured by
- * the kernel loader and by a bail-out at the top of the app script; the
- * html class shows #gate and hides #app (see the gate styles). iPadOS calls
- * itself a Mac, hence the maxTouchPoints test. */
+/* Mobile gate. freyacad steers with a mouse, a keyboard and a big screen, so
+ * phones and tablets get a friendly front door instead of an app they cannot
+ * drive properly — and are spared the ~13 MB kernel download. The flag is
+ * honoured by the kernel loader and by a bail-out at the top of the app
+ * script; the html class shows #gate and hides #app (see the gate styles).
+ * iPadOS calls itself a Mac, hence the maxTouchPoints test — a touch-screen
+ * Mac does not exist, so touch on a "Mac" is an iPad. */
 (function(){
   var ua = navigator.userAgent || '';
   var mobile = !!(navigator.userAgentData && navigator.userAgentData.mobile)
     || /Android|iPhone|iPod|Windows Phone|BlackBerry|Mobi/i.test(ua)
     || /iPad/.test(ua)
     || (/Macintosh|Mac OS/.test(ua) && navigator.maxTouchPoints > 1);
-  /* A tablet is not a phone. An iPad (or any touch device with a real screen)
-     drives the app fine now that the canvas speaks touch — one finger orbits,
-     two fingers pan and zoom, a long press right-clicks, and an Apple Pencil
-     is a precision pointer. The gate keeps only the genuinely thumb-sized out:
-     the shortest screen side under ~600 CSS px is a phone, and iPad Mini's is
-     744. */
-  if(mobile && Math.min(screen.width||0, screen.height||0) >= 600) mobile = false;
   if(mobile){
     window.__MOBILE_GATE = true;
     document.documentElement.className += ' mobile-gate';
@@ -605,11 +599,11 @@ if(!window.THREE){
     <path d="M50 12 83 30 83 66 50 84 17 66 17 30 Z M17 30 50 46 83 30 M50 46 50 84"/>
   </svg>
   <div class="g-eyebrow">freyacad &middot; wrong-sized workshop</div>
-  <h1>This bench doesn&rsquo;t fold down to phone size.</h1>
+  <h1>This bench doesn&rsquo;t fold down to touch size.</h1>
   <p>freyacad is a full parametric CAD bench &mdash; a real solid-modelling kernel, sketches,
-    fillets, booleans &mdash; and it needs a screen with elbow room. On a phone it would be
-    all thumbs. <b>Literally.</b></p>
-  <p>Open it on a <b>PC, a Mac or an iPad</b> and the whole workshop will be set up and
+    fillets, booleans &mdash; and it drives with a mouse, a keyboard and a hover cursor.
+    On a phone or a tablet it would be all thumbs. <b>Literally.</b></p>
+  <p>Open it on a <b>PC or a Mac</b> and the whole workshop will be set up and
     waiting for you.</p>
   <a class="g-home" href="/">&larr; The rest of freya.co.nz works fine on your phone</a>
   <div class="g-small">also: you were just spared an 11&nbsp;MB CAD-kernel download. you&rsquo;re welcome.</div>
