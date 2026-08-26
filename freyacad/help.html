@@ -866,15 +866,28 @@ sketch as it was.</p>
 A new feature still takes a single press to remove, panel edit and all.</p>
 
 <h2 id="save">Saving &amp; opening</h2>
-<p><b>Save</b> writes a <code>.sketchcad</code> file — plain JSON holding the entire
+<p><b>Save</b> writes a <code>.part</code> file — plain JSON holding the entire
 recipe: every sketch, dimension, feature and parameter. It's small, diffable, and opens
-back up fully editable. This is your working format; use it for anything you might revisit.</p>
-<p><b>Open</b> loads one back. <b>New part</b> starts fresh.</p>
+back up fully editable. This is your working format; use it for anything you might revisit.
+An assembly saves as <code>.assembly</code>, and saving from a drawing writes a
+<code>.drawing</code> that carries the sheet <em>and</em> the model it was drawn from, so
+it reopens whole. Files saved with the old <code>.sketchcad</code> /
+<code>.asmcad</code> names still open.</p>
+<p><b>Open</b> loads any of them back. <b>New part</b> starts fresh.</p>
+<div class="note">
+  <span class="tag">Worth knowing</span>
+  <p>To give these files freyacad's own icons in your file explorer — and open them by
+  double-click — <b>install freyacad as an app</b>: in Edge or Chrome, the install button
+  at the right end of the address bar (or menu → Apps → Install). Windows then associates
+  <code>.part</code>, <code>.assembly</code> and <code>.drawing</code> with the app, each
+  with its own icon. A web page can't change Explorer icons without that install — file
+  type icons belong to installed apps.</p>
+</div>
 
 <h3>Importing STEP and STL</h3>
 <p>The same <b>Open</b> button also takes <code>.step</code> / <code>.stp</code> and
 <code>.stl</code> files. They come into the current part as an <b>import feature</b> in
-the tree — the file's bytes travel inside your <code>.sketchcad</code>, so the part still
+the tree — the file's bytes travel inside your <code>.part</code>, so the part still
 saves, reopens and replays as one self-contained recipe.</p>
 <ul>
   <li><b>STEP</b> arrives as true B-rep solid geometry, read by the same kernel that
@@ -927,7 +940,7 @@ stay cylinders, fillets stay analytic blend surfaces. Nothing is tessellated. Th
 format to hand to a machine shop, to import into Fusion or SolidWorks, or to keep as a
 neutral archive.</p>
 
-<p>None of the three carries feature history — keep the <code>.sketchcad</code> file
+<p>None of the three carries feature history — keep the <code>.part</code> file
 too.</p>
 <div class="note">
   <span class="tag">Worth knowing</span>
@@ -939,7 +952,7 @@ too.</p>
 <h2 id="assembly">Assemblies</h2>
 <p><b>New assembly</b> starts a document that holds several parts rather than one.
 <b>Insert</b> brings a saved part in as a component; select one and <kbd>Delete</kbd>
-removes it. Assemblies save as <code>.asmcad</code>.</p>
+removes it. Assemblies save as <code>.assembly</code>.</p>
 <p>Drag a component to slide it on the ground plane; hold <kbd>Shift</kbd> to raise or lower
 it instead. Right-click for the component menu — position, fix in place, remove, and the two
 mates. A component that is <b>fixed</b> won't move, and nothing mated to it can pull it: the
@@ -1073,7 +1086,7 @@ the parent and its projections come along. Which view you get follows the sheet'
 the other way about, and the title block carries the matching symbol. Dragging from inside a
 view still just moves it, and <b>Add view</b> is still there when you want to name one.</p>
 <p><b>Model…</b> draws a <em>saved</em> part instead of the one you have open — pick a
-<code>.sketchcad</code> file and every view re-projects from it, without disturbing your work.</p>
+<code>.part</code> file and every view re-projects from it, without disturbing your work.</p>
 <h3>Dimensioning</h3>
 <p><b>Dimension</b> (or <kbd>D</kbd>) arms the dimension tool. Click a corner on a view, click
 a second corner, then click where the line should sit. Corners snap, so a dimension always

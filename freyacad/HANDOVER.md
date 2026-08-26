@@ -52,7 +52,13 @@ click starts the sketch, and the nearest hit wins so a plane behind the solid ca
 steal a face click). That work also added the persistent top-right **pick card**
 (`showPickCard`/`hidePickCard`), shared by every click-something-next arm — sketch,
 text face and axis picks — because the fading bottom hint left armed states looking
-dead. The full /grid tracer toolset
+dead. Saved files are **.part / .assembly / .drawing** now (the old .sketchcad /
+.asmcad still open); a .drawing is NEW as a saved thing — it carries the sheet and
+the recipe (or assembly) it was drawn from, and reopens whole, where before the
+sheet was simply lost on save. `manifest.webmanifest` + `icons/` make freyacad
+installable as a PWA whose `file_handlers` give those extensions freyacad icons in
+the OS file explorer and route double-clicks into the app (`launchQueue` consumer
+at the foot of the script waits for the kernel before loading). The full /grid tracer toolset
 is ported into the trace dialog (colour pick, brush, scale line, finger holes,
 straighten, ROI, search box — everything but the printable fit-check template, by
 choice). Newest: **Text on a face** (raised or sunk, same or separate body for
