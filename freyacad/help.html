@@ -90,6 +90,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line-soft);
   <a href="#navigate">Getting around</a>
   <a href="#gridfinity">Gridfinity</a>
   <a href="#views">Views &amp; projection</a>
+  <a href="#appearance">Colours &amp; rendered view</a>
   <div class="grp">Sketching</div>
   <a href="#sketch">Making a sketch</a>
   <a href="#draw">The drawing tools</a>
@@ -267,6 +268,28 @@ drop back with <kbd>Ctrl</kbd>+<kbd>8</kbd>.</p>
 </ul>
 <p>Both cameras share one orbit, so the swap holds your position and framing — only the
 projection changes.</p>
+
+<h2 id="appearance">Colours &amp; the rendered view</h2>
+<p>Right-click the viewport and the <b>Appearance</b> section colours the model at three
+levels, each overriding the one above it:</p>
+<ul>
+  <li><b>Part colour</b> paints every body that has no colour of its own.</li>
+  <li><b>Body colour</b> — click the body, pick its colour. In a multi-body part (separate-body
+      text, an import next to your model) each body can differ, which is also how you preview
+      a multi-colour print.</li>
+  <li><b>Surface colour</b> — click a single face. Faces have no permanent names in the
+      kernel, so a painted face is re-found <em>by its shape</em> after every rebuild: edit
+      something else and the colour stays put, but change the painted face itself — move it,
+      resize it — and the colour lets go rather than guessing. Re-apply it with two clicks.</li>
+</ul>
+<p>Colours save inside the <code>.part</code> file, follow the part into assemblies (an
+inserted part arrives in its part colour, and each component also has its own colour swatch
+in its Position panel), and <b>carry through to the drawing's shaded isometric views</b> —
+the sheet tints each body's faces with its colour.</p>
+<p>The <b>Render</b> button in the toolbar (also in the right-click View section) swaps the
+workshop look — matte grey, green edge lines — for a rendered one: your colours with a satin
+finish and no edge lines. It's presentation only; nothing about the model changes, and the
+choice is remembered.</p>
 
 <h2 id="sketch">Making a sketch</h2>
 <p>One tool, one click: pick <b>Sketch</b> (under Features, in the Add menu or the
