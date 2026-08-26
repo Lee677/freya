@@ -812,6 +812,18 @@ having a visible pane to paste into.
     the overlays-only path, which must still clear the mid-drag outline preview —
     `rebuildOverlaysOnly` calls `drawTextHandle()` for exactly that.
 
+53. **A pick preference has to know what the pick is FOR.** `mateEndAt` preferred a
+    circular EDGE whenever one was near the cursor — right for concentric mates (that is
+    why the preference exists), fatal for coincident ones: an edge end is kind `cyl`, a
+    coincident mate wants `plane`, and on a bolt or a nut every flat face is a narrow
+    annulus with a rim millimetres away. The owner's "error mating them coincident" was
+    the pick reading "That is not a flat face" on faces that plainly were. The edge
+    branch now only runs when the active mate wants a cylinder. Related UX finding from
+    the same session: after a concentric mate the moving part often lands OVERLAPPING
+    the fixed one (the solver moves it minimally onto the axis, leaving it at its old
+    height), and then every click near the joint hits a curved wall — the concentric
+    success hint now says to drag along the axis or add a coincident mate to seat it.
+
 ## Biggest thing still missing
 
 **A real constraint solver *for sketches*.** Dimensions are applied one at a time, so
