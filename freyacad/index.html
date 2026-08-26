@@ -4332,6 +4332,15 @@ const CSG = (function(){
      checkpoint that can never match. It is derived from `plane`, which is in the
      key already, so skipping it loses nothing. */
   const SIG_SKIP={error:1,errorDetail:1,_previewGeoms:1,_isNew:1,frame:1};
+  /* One exception to the frame skip: a TEXT feature's frame is its authored
+     anchor (plain arrays, never derived during the build), so it must count —
+     skipping it froze "move to a different face" solid, and worse, left a
+     checkpoint with the old placement matching the new key, so the moved text
+     kept building where it used to be. */
+  const sigStr=f=>{
+    const keepFrame=f&&f.type==='text';
+    return JSON.stringify(f,(k,v)=>(SIG_SKIP[k]&&!(keepFrame&&k==='frame'))?undefined:v);
+  };
   let lastGeomSig=null;
   function geomSignature(){
     try{
@@ -4339,8 +4348,7 @@ const CSG = (function(){
         (propsFeat&&draftFeat&&propsFeat.id===f.id)?draftFeat:f);
       return JSON.stringify([docMode,rollbackIndex,
         propsFeat?propsFeat.id:0, draftFeat?1:0,
-        selectedEdges.map(e=>e.mid), active],
-        (k,v)=>SIG_SKIP[k]?undefined:v);
+        selectedEdges.map(e=>e.mid)])+'|'+active.map(sigStr).join('|');
     }catch(_){ return null; }      // never let the cache break a rebuild
   }
   /* ---- per-feature checkpoints ---------------------------------------------
@@ -4462,7 +4470,7 @@ const CSG = (function(){
       const selKey=JSON.stringify(selectedEdges.map(e=>e.mid));
       let run=JSON.stringify([docMode]);
       for(let i=0;i<keyed.length;i++){
-        run+='|'+JSON.stringify(keyed[i],(k,v)=>SIG_SKIP[k]?undefined:v);
+        run+='|'+sigStr(keyed[i]);
         keys[i]=(i>=pfIdx?selKey:'')+run;
       }
     }catch(_){ /* unkeyable: no checkpointing this time round, build it all */ }
@@ -4556,6 +4564,7 @@ const CSG = (function(){
     if(typeof updateHelp==='function')updateHelp();
     if(typeof scheduleAutosave==='function')scheduleAutosave();
     syncZoomRange();   // the model may have grown or shrunk; the zoom cap follows
+    drawTextHandle();  // the open text panel's move handle rides every rebuild
   }
 
   /* ---- pickable edges ---- */
@@ -7277,9 +7286,83 @@ const CSG = (function(){
   function startTextOnFace(hit){
     const frame=textFrameFromHit(hit);
     if(!frame){ setHint('That face is curved — text needs a flat face'); return; }
+    /* an open text panel claims the click: move that text, don't start a twin */
+    if(draftFeat&&draftFeat.type==='text'){
+      draftFeat.frame=frame; draftFeat.du=0; draftFeat.dv=0; rebuild();
+      setHint('Text moved to this face — drag its handle to place it');
+      return;
+    }
     const f=defaults('text'); f.frame=frame; f._isNew=true;
     insertFeature(f); selectFeature(f.id); openProps(f);
-    setHint('Type your text in the panel — position and angle move it on the face');
+    setHint('Type your text in the panel — drag the handle on the face to place it');
+  }
+  /* ---- drag the text about its face ----
+     While a text panel is open, an amber MOVE HANDLE sits on the text's
+     anchor. Grab it and the slide values follow the pointer in the face
+     plane; only the letter outlines redraw during the drag (instant), and
+     the solid rebuilds once on release. The slide fields stay for exact
+     numbers — the handle is how you place it by eye. */
+  let textDrag=null;
+  const textHandleGroup=new THREE.Group(); scene.add(textHandleGroup);
+  function textFrameVecs(f){
+    const fr=f&&f.frame; if(!fr)return null;
+    return {o:new THREE.Vector3(fr.o[0],fr.o[1],fr.o[2]),
+            u:new THREE.Vector3(fr.u[0],fr.u[1],fr.u[2]),
+            v:new THREE.Vector3(fr.v[0],fr.v[1],fr.v[2]),
+            n:new THREE.Vector3(fr.n[0],fr.n[1],fr.n[2])};
+  }
+  function textAnchorWorld(f){
+    const t=textFrameVecs(f); if(!t)return null;
+    return t.o.clone().addScaledVector(t.u,f.du||0).addScaledVector(t.v,f.dv||0)
+            .addScaledVector(t.n,0.15);
+  }
+  function drawTextHandle(){
+    while(textHandleGroup.children.length){const c=textHandleGroup.children.pop();
+      if(c.geometry)c.geometry.dispose(); if(c.material)c.material.dispose();}
+    const f=(draftFeat&&draftFeat.type==='text')?draftFeat:null;
+    if(!f||mode!=='model'||docMode!=='part')return;
+    const p=textAnchorWorld(f); if(!p)return;
+    const t=textFrameVecs(f);
+    const R=Math.max(0.35,controls.sph.radius/70);
+    const dot=new THREE.Mesh(new THREE.SphereGeometry(R,16,12),
+      new THREE.MeshBasicMaterial({color:0xFBBC05,depthTest:false,transparent:true,opacity:0.95}));
+    dot.position.copy(p); dot.renderOrder=8; textHandleGroup.add(dot);
+    const ring=new THREE.Mesh(new THREE.TorusGeometry(R*1.9,R*0.22,8,32),
+      new THREE.MeshBasicMaterial({color:0xFBBC05,depthTest:false,transparent:true,opacity:0.5}));
+    ring.position.copy(p);
+    ring.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),t.n);
+    ring.renderOrder=8; textHandleGroup.add(ring);
+    if(textDrag){
+      let ents=null; try{ ents=textLoops(f); }catch(_){ ents=null; }
+      if(ents){
+        const mat=new THREE.LineBasicMaterial({color:0xFBBC05,depthTest:false,transparent:true,opacity:0.9});
+        for(const e2 of ents){
+          const pts=e2.pts.map(q=>t.o.clone().addScaledVector(t.u,q.x)
+            .addScaledVector(t.v,q.y).addScaledVector(t.n,0.15));
+          pts.push(pts[0].clone());
+          const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),mat);
+          ln.renderOrder=8; textHandleGroup.add(ln);
+        }
+      }
+    }
+  }
+  function textPlanePoint(e){
+    const t=textFrameVecs(draftFeat); if(!t)return null;
+    const r=canvas.getBoundingClientRect();
+    ndc.x=((e.clientX-r.left)/r.width)*2-1; ndc.y=-((e.clientY-r.top)/r.height)*2+1;
+    raycaster.setFromCamera(ndc,camera);
+    const pl=new THREE.Plane().setFromNormalAndCoplanarPoint(t.n,t.o);
+    const hit=new THREE.Vector3();
+    return raycaster.ray.intersectPlane(pl,hit)?hit:null;
+  }
+  function textHandleHit(e){
+    const f=(draftFeat&&draftFeat.type==='text')?draftFeat:null;
+    if(!f||mode!=='model'||docMode!=='part')return false;
+    const p=textAnchorWorld(f); if(!p)return false;
+    const r=canvas.getBoundingClientRect();
+    const v=p.clone().project(camera);
+    const sx=r.left+(v.x+1)/2*r.width, sy=r.top+(1-(v.y+1)/2)*r.height;
+    return Math.hypot(e.clientX-sx,e.clientY-sy)<(lastCoarse?26:16);
   }
   /* ---- circles from edges ---------------------------------------------------
      A tessellated circular edge is a run of tiny segments. Chain them by
@@ -7480,6 +7563,14 @@ const CSG = (function(){
   function addFeature(type,sketchId){
     if(type==='text'){
       if(!resultShapes.length){setHint('Text needs a solid to sit on — extrude something first');return;}
+      /* A text panel already open means "this text": re-arm the face pick for
+         it rather than silently starting a SECOND text — invoking the tool
+         again is how people try to move the one they are editing. */
+      if(draftFeat&&draftFeat.type==='text'){
+        pendingTextFace={forFeat:draftFeat};
+        setHint('Click a flat face to move this text — or Done first, then Text again for a second one');
+        return;
+      }
       pendingTextFace=true;
       setHint('Click a flat face for the text');
       return;
@@ -8025,7 +8116,7 @@ const CSG = (function(){
         setHint('Click the flat face the text should move to');});
       add(repick);
       const ntx=document.createElement('div');ntx.className='note';
-      ntx.textContent='A separate body keeps its own colour in the slicer — paint it there for two-colour text. Slide and angle move the text on its face any time.';
+      ntx.textContent='Drag the amber handle on the face to place the text by eye — the slide fields are the exact version. A separate body keeps its own colour in the slicer for two-colour text.';
       add(ntx);
     } else if(f.type==='gfbin'){
       add(fieldNumber('Width (42 mm units)',f.nx,1,1,8,'',v=>{f.nx=Math.max(1,Math.round(v));rerun();}));
@@ -8542,9 +8633,12 @@ const CSG = (function(){
   function textLoops(f){
     const label=String(f.text==null?'':f.text);
     if(!label.trim())throw new Error('type some text in the panel');
-    const key=JSON.stringify([label,f.font,f.size,!!f.bold,!!f.italic,!!f.underline,f.du,f.dv,f.angle]);
+    /* raster + trace cached on the GLYPH inputs only — placement (du/dv,
+       angle) is applied on the way out, so dragging the text about its face
+       never re-rasterises */
+    const key=JSON.stringify([label,f.font,f.size,!!f.bold,!!f.italic,!!f.underline]);
     const hit=textLoopCache.get(f.id);
-    if(hit&&hit.key===key)return hit.ents;
+    if(hit&&hit.key===key)return textPlace(f,hit.raw);
     const size=Math.max(1,+f.size||8);
     const fam=(TEXT_FONTS[f.font]||TEXT_FONTS.sans).css;
     // resolution: enough pixels for crisp letters, capped so a long line of
@@ -8578,21 +8672,22 @@ const CSG = (function(){
     for(const L of loops)for(const p of L.pts){
       if(p[0]<x0)x0=p[0];if(p[0]>x1)x1=p[0];if(p[1]<y0)y0=p[1];if(p[1]>y1)y1=p[1];}
     const cx3=(x0+x1)/2, cy3=(y0+y1)/2;
-    const ca=Math.cos((f.angle||0)*Math.PI/180), sa=Math.sin((f.angle||0)*Math.PI/180);
-    const ents=[];
+    const raw=[];
     for(const L of loops){
       const thin=textRDP(L.pts,Math.max(0.8,RES*0.12));
       if(thin.length<3)continue;
-      const pts=thin.map(p=>{
-        const mx=(p[0]-cx3)/RES, my=(cy3-p[1])/RES;         // mm, y up
-        return {x:+((mx*ca-my*sa)+(f.du||0)).toFixed(4),
-                y:+((mx*sa+my*ca)+(f.dv||0)).toFixed(4)};
-      });
-      ents.push({type:'poly',closed:true,pts});
+      raw.push(thin.map(p=>({x:(p[0]-cx3)/RES, y:(cy3-p[1])/RES})));   // mm, y up, centred
     }
-    if(!ents.length)throw new Error('the text is too small to trace — make it larger');
-    textLoopCache.set(f.id,{key,ents});
-    return ents;
+    if(!raw.length)throw new Error('the text is too small to trace — make it larger');
+    textLoopCache.set(f.id,{key,raw});
+    return textPlace(f,raw);
+  }
+  /* centred mm loops -> entities at the feature's angle and slides */
+  function textPlace(f,raw){
+    const ca=Math.cos((f.angle||0)*Math.PI/180), sa=Math.sin((f.angle||0)*Math.PI/180);
+    return raw.map(L=>({type:'poly',closed:true,
+      pts:L.map(q=>({x:+((q.x*ca-q.y*sa)+(f.du||0)).toFixed(4),
+                     y:+((q.x*sa+q.y*ca)+(f.dv||0)).toFixed(4)}))}));
   }
 
   /* ---- Trace a photo --------------------------------------------------------
@@ -8658,7 +8753,6 @@ const CSG = (function(){
           <div style="${ROW}">
             <button id="tr-ctool" class="btn-ghost" style="font-size:11.5px">Pick object colour</button>
             <button id="tr-cbg" class="btn-ghost" style="font-size:11.5px">Pick background</button>
-            <span id="tr-sw" style="display:flex;gap:3px;align-items:center"></span>
             <button id="tr-cclear" class="btn-ghost" style="font-size:11.5px;display:none">clear colours</button>
             <span style="font-size:10.5px;color:var(--muted-2);white-space:nowrap">drag empty photo = search area</span>
             <button id="tr-roiclear" class="btn-ghost" style="font-size:11.5px;display:none">clear search</button>
@@ -8791,12 +8885,10 @@ const CSG = (function(){
       $q('tr-reset').disabled=!(rawContour&&edited);
       $q('tr-cclear').style.display=(colors.tool.length||colors.bg.length)?'':'none';
       $q('tr-insert').disabled=!(contour&&contour.length>7);};
-    const renderSw=()=>{const host=$q('tr-sw');host.innerHTML='';
-      [['tool','#FBBC05'],['bg','#5f6368']].forEach(([kk,bd])=>{
-        colors[kk].forEach(c=>{const s=document.createElement('span');
-          s.style.cssText='width:14px;height:14px;border-radius:4px;display:inline-block;'+
-            'border:2px solid '+bd+';background:rgb('+c[0]+','+c[1]+','+c[2]+')';
-          host.appendChild(s);});});};
+    /* no swatch strip (owner: "messy") — the clear button carries the count
+       and the status line says when a sample lands */
+    const renderSw=()=>{const n=colors.tool.length+colors.bg.length;
+      $q('tr-cclear').textContent='clear colours'+(n?' ('+n+')':'');};
     const paint=()=>{
       g.clearRect(0,0,cv.width,cv.height);
       if(!img)return;
@@ -8932,6 +9024,13 @@ const CSG = (function(){
     $q('tr-fing').addEventListener('click',()=>armBtn('finger'));
     $q('tr-straight').addEventListener('click',()=>armBtn('straight'));
     $q('tr-fr').addEventListener('input',paint);
+    /* sizing the brush means you are about to USE the brush — put the cursor
+       back on it if a colour picker was armed */
+    $q('tr-brush').addEventListener('input',()=>{
+      if(arm==='tool'||arm==='bg'){ armBtn(arm);
+        status('Brush sized — grab the yellow line to reshape it'); }
+      else paint();
+    });
     $q('tr-roiclear').addEventListener('click',()=>{roi=null;
       $q('tr-roiclear').style.display='none';traceNow();});
     $q('tr-cclear').addEventListener('click',()=>{colors.tool=[];colors.bg=[];
@@ -9385,6 +9484,13 @@ const CSG = (function(){
   canvas.addEventListener('pointerdown',e=>{
       downX=e.clientX; downY=e.clientY; downBtn=e.button;
       if(docMode==='asm'){ asmPointerDown(e); return; }
+      if(mode==='model'&&e.button===0&&textHandleHit(e)){
+        const p0=textPlanePoint(e);
+        if(p0){ textDrag={p0,du0:draftFeat.du||0,dv0:draftFeat.dv||0};
+          controls._s=0; controls.enableRotate=false;
+          try{canvas.setPointerCapture(e.pointerId);}catch(_){}
+          return; }
+      }
       if(mode==='sketch'&&editing&&tool==='select'&&e.button===0){
         const p=pointerToSketch(e);
         if(p){ const tol=Math.max(0.6,controls.sph.radius*0.04)*(lastCoarse?1.8:1);
@@ -9501,6 +9607,16 @@ const CSG = (function(){
         if(raycaster.ray.intersectPlane(dragPlane, target)) dragLight.position.copy(target);
         return;
     }
+    if(textDrag){
+      const f=draftFeat;
+      if(!f||f.type!=='text'){ textDrag=null; controls.enableRotate=true; return; }
+      const p=textPlanePoint(e); if(!p)return;
+      const t=textFrameVecs(f), d=p.clone().sub(textDrag.p0);
+      f.du=+(textDrag.du0+d.dot(t.u)).toFixed(2);
+      f.dv=+(textDrag.dv0+d.dot(t.v)).toFixed(2);
+      drawTextHandle();           // handle + letter outlines track the pointer
+      return;
+    }
     if(mode==='sketch'&&editing){
       moveToolCursor(e);
       const p0=pointerToSketch(e);if(!p0)return;
@@ -9521,6 +9637,7 @@ const CSG = (function(){
       drawSnapMark();
       redrawDraft(p);
     } else if(mode==='model'&&!pendingFaceSketch){
+      if(textHandleHit(e)){ canvas.style.cursor='move'; return; }
       if(datumGroup.visible){
         const d=pickDatum(e); setDatumHover(d);
         canvas.style.cursor=d?'pointer':'default';
@@ -9609,6 +9726,13 @@ const CSG = (function(){
       dragJoins=null; dragVtx=null; dragSnapPt=null; rebuild(); redrawHandles(); return;
     }
     if(dragLight){ dragLight = null; controls.enableRotate = true; return; }
+    if(textDrag){
+      textDrag=null; controls.enableRotate=true;
+      try{canvas.releasePointerCapture(e.pointerId);}catch(_){}
+      rebuild();                          // one solid rebuild, at the drop
+      if(propsFeat)openProps(propsFeat);  // the slide fields show where it landed
+      return;
+    }
     const moved=Math.hypot(e.clientX-downX,e.clientY-downY)>5;
     if(moved)return;
     if(pendingFaceSketch){

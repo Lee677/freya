@@ -782,6 +782,22 @@ having a visible pane to paste into.
     suppressed:false}`). A probe that asks `defaults('sketch')` gets `undefined` and
     fails a few lines later on `.id`.
 
+52. **`SIG_SKIP` skipped `frame` for every feature — and the text feature's frame is its
+    authored anchor.** The skip exists because sketches get `frame` written DURING the
+    build (derived from `plane`), so keying it made every checkpoint self-invalidating.
+    But the text feature stores its face placement in `f.frame` as plain arrays, and the
+    blanket skip meant a "move to a different face" changed NOTHING in the geometry
+    signature or the checkpoint keys: rebuild() early-returned, and worse, a checkpoint
+    holding the text at its OLD placement still key-matched, so the text kept building
+    where it used to be. The owner's report read as "duplicated text" and "deleted the
+    feature but the cut remained": the app looking frozen invites invoking the tool
+    again, which minted a SECOND text feature — delete one and the other stays.
+    Two fixes: `sigStr(f)` keeps `frame` when `f.type==='text'` (both the signature and
+    the checkpoint keys go through it), and invoking the text tool while a text panel is
+    open re-arms the face pick for THAT text instead of creating a twin. If a future
+    feature stores authored placement under `frame`, it needs the same exception —
+    better, name the field something else.
+
 ## Biggest thing still missing
 
 **A real constraint solver *for sketches*.** Dimensions are applied one at a time, so
