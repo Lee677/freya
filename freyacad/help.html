@@ -724,10 +724,19 @@ count, spacing. Edit them and the model rebuilds.</p>
   it tints; click and it stays selected in blue until you pick something else. An edge
   within reach of the cursor wins, so the face answers for its interior. Then
   <b>right-click</b> for what that face can do: a flat one offers <b>Sketch on this
-  face</b>, <b>Text on this face</b>, <b>Normal to</b> and <b>Surface colour</b>; a
-  cylindrical one offers <b>Surface colour</b> and <b>Add axis</b> down its centre. A face
-  and an edge are never selected at once — picking either lets the other go, and a click
-  on empty space clears both.</p>
+  face</b>, <b>Text on this face</b>, <b>Normal to</b> and <b>Surface colour</b>; a round
+  one offers <b>Surface colour</b> and <b>Add axis</b> down its centre. A face and an edge
+  are never selected at once — picking either lets the other go, and a click on empty space
+  clears both.</p>
+  <p><b>Small flat faces forgive a near miss.</b> The end of a swept tube can be a couple of
+  millimetres across — a few pixels on screen, with the curved wall right beside it. When a
+  click that needs a flat face lands just off one, freyacad takes the flat face whose centre
+  is under the cursor rather than the wall the ray happened to graze. The hover highlight
+  never does this: it always shows exactly what is under the pointer.</p>
+  <p><b>Round means round, not just cylindrical.</b> Cones, spheres, tori and anything made
+  by a revolve are read from the geometry kernel by name, so a revolved wall carries a real
+  axis. <b>Add axis</b> and <b>concentric</b> mates take any of them, not only true
+  cylinders.</p>
 </div>
 <h3>Sketches with more than one shape</h3>
 <p>A sketch can hold several separate closed regions — say a hexagon with a hole and a
@@ -838,6 +847,12 @@ put the fillet earlier in the tree before the geometry gets tight.</p>
 
 <h2 id="tree">The feature tree</h2>
 <p>Build order, top to bottom. Click any item to select and highlight it.</p>
+<p><b>Hover a row and the model answers.</b> Point at any item in the tree — no click — and
+the thing it made lights up in the viewport: an origin plane or axis appears for as long as
+you hover it, a sketch glows in yellow even when it has been consumed and hidden, a plane or
+axis you added glows, and a solid feature shows the shape it contributed as a translucent
+ghost. Where a feature has no separable shape of its own — a fillet rounds what is already
+there — the whole body tints instead, which still answers "that row is about this solid".</p>
 <table>
   <tr><th>Action</th><th>How</th></tr>
   <tr><td>Rename</td><td><kbd>F2</kbd>, or right-click → Rename</td></tr>
@@ -871,8 +886,9 @@ your own:</p>
       circular pattern. Its panel asks how the axis is defined: <b>two planes</b> (the line
       where they meet), <b>normal to a plane</b> through a point, a plain
       <b>position and direction</b>, or the <b>centre of a circle</b> — press the pick
-      button and click anything circular on the model: a hole wall, a cylinder, a round
-      face, a rim, or just the <b>arc of a rounded corner</b>. The axis lands at its centre,
+      button and click anything circular on the model: a hole wall, a cylinder, a
+      <b>revolved wall</b>, a round face, a rim, or just the <b>arc of a rounded
+      corner</b>. The axis lands at its centre,
       pointing along it. Parallel planes are refused — they never meet.</li>
 </ul>
 
@@ -1012,6 +1028,9 @@ hole, the lip of a boss, or even a <b>rounded corner's arc</b>. Hover one and a 
 up around it; click and the mate lines up on that circle's centre and axis. It's the natural
 pick when the cylindrical wall is hidden or too thin to hit — a countersunk hole, a thin
 plate, a chamfered rim.</p>
+<p>"Round" means anything with an <b>axis</b>: a cylinder, a cone, a torus, or a wall made by
+a revolve. What the mate needs is a shared axis, not a matching radius, so a tapered boss and
+a straight hole line up perfectly well.</p>
 <p>The <b>second</b> pick can be the origin instead of another part: an origin plane for a
 coincident mate, an origin axis for a concentric one. Whichever sort the mate needs appears
 on its own as soon as you start it, so there's nothing to turn on first. The first pick is

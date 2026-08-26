@@ -200,8 +200,11 @@ if(!window.THREE){
   .tree{flex:1;overflow-y:auto;padding:6px 8px 30px;position:relative;min-height:0}
   
   .feat{display:flex;align-items:center;gap:7px;padding:4.5px 7px;border-radius:6px;cursor:pointer;border:1px solid transparent;position:relative;user-select:none;transition:all 0.1s}
-  .feat:hover{background:var(--panel-2)}
+  /* the row and the glow it lights in the viewport are one event, so the row
+     wears the hover colour the viewport uses */
+  .feat:hover{background:rgba(53,212,230,.13);border-color:rgba(53,212,230,.4)}
   .feat.sel{background:rgba(52,168,83,.1);border-color:var(--g-green);box-shadow:inset 0 0 10px rgba(52,168,83,0.15)}
+  .feat.sel:hover{background:rgba(52,168,83,.18);border-color:var(--g-green)}
   .feat.rolled{opacity:.4}
   .feat.errored{border-color:var(--g-red);background:rgba(234,67,53,.07);box-shadow:inset 0 0 8px rgba(234,67,53,0.2)}
   .feat .fi{width:16px;height:16px;flex:0 0 auto;display:grid;place-items:center;color:var(--muted)}
@@ -3436,7 +3439,32 @@ const CSG = (function(){
     // for the mesher to work on — skip remeshing rather than die
     try{ new oc.BRepMesh_IncrementalMesh_2(shape, defl, false, 0.22, false); }
     catch(_){ }
-    const pos = [], idx = [], ranges = [];
+    const pos = [], idx = [], ranges = [], info = [];
+    /* What KIND of surface each face really is, straight from the kernel.
+       Fitting it from the triangles can only ever say "plane", "cylinder" or
+       "don't know", which left every cone, sphere, torus and surface of
+       revolution as 'other' — and so refused by everything that wants an axis
+       (owner report: "all round surfaces unselectable"). The adaptor bakes the
+       face's location in, so what comes back is already world-space. */
+    const ST = oc.GeomAbs_SurfaceType;
+    const sameEnum = (a,b) => a===b || (a!=null&&b!=null&&a.value!==undefined&&a.value===b.value);
+    const ax1 = a => ({p:[a.Location().X(), a.Location().Y(), a.Location().Z()],
+                       d:[a.Direction().X(), a.Direction().Y(), a.Direction().Z()]});
+    const surfInfo = face => {
+      try{
+        const ad = new oc.BRepAdaptor_Surface_2(face, true), t = ad.GetType();
+        if(sameEnum(t, ST.GeomAbs_Plane))    { const q=ad.Plane();    return Object.assign({k:'plane', r:0}, ax1(q.Axis())); }
+        if(sameEnum(t, ST.GeomAbs_Cylinder)) { const q=ad.Cylinder(); return Object.assign({k:'cyl',   r:q.Radius()}, ax1(q.Axis())); }
+        if(sameEnum(t, ST.GeomAbs_Cone))     { const q=ad.Cone();     return Object.assign({k:'cone',  r:q.RefRadius()}, ax1(q.Axis())); }
+        if(sameEnum(t, ST.GeomAbs_Torus))    { const q=ad.Torus();    return Object.assign({k:'torus', r:q.MajorRadius()}, ax1(q.Axis())); }
+        if(sameEnum(t, ST.GeomAbs_Sphere))   { const q=ad.Sphere(), c=q.Location();
+          return {k:'sphere', p:[c.X(),c.Y(),c.Z()], d:[0,1,0], r:q.Radius()}; }
+        if(sameEnum(t, ST.GeomAbs_SurfaceOfRevolution))
+          return Object.assign({k:'rev', r:0}, ax1(ad.AxeOfRevolution()));
+      }catch(_){ }
+      // BSplines (the swept spout among them) have no one axis — say so
+      return {k:'other', p:[0,0,0], d:[0,0,0], r:0};
+    };
     const fx = new oc.TopExp_Explorer_2(shape, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE);
     while(fx.More()){
       const face = oc.TopoDS.Face_1(fx.Current());
@@ -3455,6 +3483,7 @@ const CSG = (function(){
           if(rev) idx.push(a, c, b2); else idx.push(a, b2, c);
         }
         ranges.push({start: triStart, count: idx.length/3 - triStart});
+        info.push(surfInfo(face));      // one per RANGE, so the indices line up
       }
       fx.Next();
     }
@@ -3465,8 +3494,10 @@ const CSG = (function(){
     geo.userData.isCSG = true;
     /* one triangle range per B-REP FACE, in explorer order — this is what
        lets a face click select the real face instead of a crease-flood
-       guess (see faceRegion) */
+       guess (see faceRegion) — and the kernel's own surface type for each,
+       same order, which is what fitFace answers with (see there) */
     geo.userData.faceRanges = ranges;
+    geo.userData.faceInfo = info;
     return geo;
   };
   /* Every real B-rep edge of the shape as a display polyline — what the
@@ -4186,7 +4217,15 @@ const CSG = (function(){
      tool outlives the boolean that consumed it, and the shapes are freed the
      usual way — against the set the checkpoints still hold. */
   let featTools=new Map();          // feature id -> [{shape, op:'merge'|'cut'}]
-  function resetFeatTools(){ featTools=new Map(); }
+  /* The tree-hover ghost is meshed from those tool shapes, so it lives exactly
+     as long as they do: a rebuild replaces every shape, and a ghost held past
+     that would be drawing the model as it used to be. */
+  const treeGhostCache=new Map();
+  function dropTreeGhosts(){
+    treeGhostCache.forEach(gs=>{ for(const g of gs) g.dispose(); });
+    treeGhostCache.clear();
+  }
+  function resetFeatTools(){ featTools=new Map(); dropTreeGhosts(); }
   function noteTool(f,op,shape){
     if(!f||!shape)return;
     const a=featTools.get(f.id);
@@ -7928,10 +7967,11 @@ const CSG = (function(){
     const hit=pickBody(e);
     if(hit&&hit.faceIndex!=null){
       const fit=fitFace(hit.object.geometry,hit.faceIndex);
-      if(fit&&fit.kind==='cyl')return done(fit.p,fit.d,'cylinder axis');
+      if(fit&&axisKind(fit.kind))return done(fit.p,fit.d,
+        fit.kind==='cyl'?'cylinder axis':'axis of revolution');
       if(fit&&fit.kind==='plane')return done(fit.p,fit.d,'face centre');
     }
-    setHint('Nothing circular there — click a round edge, an arc, a hole wall or a circular face');
+    setHint('Nothing with an axis there — click a round edge, an arc, a hole wall, or a round or revolved face');
   }
   function makeFaceSketch(hit){
     const n=hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
@@ -8125,6 +8165,102 @@ const CSG = (function(){
     if(k===treeHover)return;
     treeHover=k; updateDatumVis();
   }
+  /* ---- feature-tree hover: the row and the thing it made, lit together ------
+     Hovering a row has to answer "which of these is that one?" without a
+     click, because clicking selects and selection has its own consequences.
+     Everything drawn here is temporary and lives in ONE group. The origin
+     rows are not handled here — updateDatumVis owns the datums' visibility and
+     is the only thing allowed to decide it (see setTreeHover). The last resort
+     for a solid feature is the body's own emissive, stored and put back
+     exactly: without face naming, which faces a feature made is unknowable. */
+  const treeHoverGroup=new THREE.Group(); scene.add(treeHoverGroup);
+  const treeGhostMat=new THREE.MeshBasicMaterial({color:0xFBBC05,transparent:true,
+    opacity:0.25,depthWrite:false,side:THREE.DoubleSide});
+  const treeGlowMat=new THREE.LineBasicMaterial({color:0xFBBC05,transparent:true,
+    opacity:0.95,depthTest:false});
+  let treeFeatHover=null, treeEmis=null;
+  function clearTreeHover(){
+    while(treeHoverGroup.children.length){
+      const c=treeHoverGroup.children.pop();
+      if(c.geometry&&!c.userData.keep)c.geometry.dispose();   // ghosts are cached
+    }
+    if(treeEmis){ for(const e of treeEmis)e.mat.emissive.setHex(e.hex); treeEmis=null; }
+    treeFeatHover=null;
+  }
+  /* One display mesh per tool the feature contributed. Meshing is why this is
+     cached and lazy: a tool is a real B-rep solid, and hovering must not cost
+     a tessellation every time the pointer crosses a row. A tool shape can also
+     have been freed with the checkpoint that shared it, which the kernel
+     reports by throwing — that feature simply falls back to the body tint. */
+  function ghostGeoms(f){
+    if(treeGhostCache.has(f.id))return treeGhostCache.get(f.id);
+    const out=[];
+    for(const t of (featTools.get(f.id)||[])){
+      try{ if(t.shape.IsNull())continue; const g=OCK.mesh(t.shape); if(g)out.push(g); }
+      catch(_){ }
+    }
+    treeGhostCache.set(f.id,out);
+    return out;
+  }
+  function setFeatHover(f){
+    const id=f?f.id:null;
+    if(treeFeatHover===id)return;
+    clearTreeHover();
+    if(!f||docMode!=='part'||f.suppressed)return;
+    treeFeatHover=id;
+    if(f.type==='sketch'){
+      /* the sketch's own loops, glowing — this is the whole point for a
+         CONSUMED sketch, which the viewport otherwise never draws */
+      const sd=sketchData[f.id]; if(!sd)return;
+      for(const loop of entityLoops(f)){
+        if(loop.length<2)continue;
+        const pts=loop.map(p=>worldFromSketch(sd.frame,p.x,p.y)); pts.push(pts[0]);
+        const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),treeGlowMat);
+        ln.renderOrder=10; treeHoverGroup.add(ln);
+      }
+      return;
+    }
+    if(f.type==='dplane'){
+      let fr; try{ fr=planeFrame({kind:'dplane',refId:f.id}); }catch(_){ return; }
+      const SZ=8;
+      const cor=[[-SZ/2,-SZ/2],[SZ/2,-SZ/2],[SZ/2,SZ/2],[-SZ/2,SZ/2]]
+        .map(([a,b])=>fr.o.clone().addScaledVector(fr.u,a).addScaledVector(fr.v,b));
+      const fill=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),treeGhostMat);
+      fill.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(fr.u,fr.v,fr.n));
+      fill.position.copy(fr.o); fill.renderOrder=9;
+      const border=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(cor),treeGlowMat);
+      border.renderOrder=10;
+      treeHoverGroup.add(fill); treeHoverGroup.add(border);
+      return;
+    }
+    if(f.type==='daxis'){
+      let g; try{ g=axisGeom(f); }catch(_){ return; }
+      if(!g)return;
+      const o=new THREE.Vector3(g.o.x,g.o.y,g.o.z), dv=new THREE.Vector3(g.d.x,g.d.y,g.d.z), L=14;
+      const ln=new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+        o.clone().addScaledVector(dv,-L), o.clone().addScaledVector(dv,L)]),treeGlowMat);
+      ln.renderOrder=10; treeHoverGroup.add(ln);
+      return;
+    }
+    const gs=ghostGeoms(f);
+    if(gs.length){
+      for(const g of gs){
+        const m=new THREE.Mesh(g,treeGhostMat);
+        m.userData.keep=true; m.renderOrder=9; treeHoverGroup.add(m);
+      }
+      return;
+    }
+    /* Nothing of this feature is separable — a fillet rounds what is already
+       there, and a checkpoint-restored feature never ran a tool this rebuild.
+       Say "this row is about the solid" rather than nothing at all. */
+    treeEmis=[];
+    for(const m of resultMeshes){
+      const mat=m.material;
+      if(!mat||!mat.emissive||treeEmis.some(x=>x.mat===mat))continue;
+      treeEmis.push({mat,hex:mat.emissive.getHex()});
+      mat.emissive.setHex(0x3a2c00);
+    }
+  }
   function sketchConsumedBy(f){ return features.find(x=>x.sketchId===f.id)||null; }
   function sketchVisible(f){
     if(editing&&editing.id===f.id) return true;      // open for editing
@@ -8154,6 +8290,8 @@ const CSG = (function(){
       selectFeature(f.id);
     });
     el.addEventListener('dblclick',()=>{ if(f.type==='sketch')editSketch(f); else openProps(f); });
+    el.addEventListener('mouseenter',()=>setFeatHover(f));
+    el.addEventListener('mouseleave',()=>setFeatHover(null));
     el.addEventListener('contextmenu',e=>{
       e.preventDefault(); e.stopPropagation();
       selectFeature(f.id); openTreeMenu(e.clientX,e.clientY,f);
@@ -8161,6 +8299,8 @@ const CSG = (function(){
     return el;
   }
   function refreshTree(){
+    // the rows are about to be replaced, so no mouseleave will ever arrive
+    clearTreeHover();
     if(docMode==='draw')return;   // the drawing owns the tree while it is open
     tree.innerHTML='';
     // the three datum planes are always there, so they head the tree as their
@@ -10154,6 +10294,7 @@ const CSG = (function(){
   let mode='model';
   function setMode(m){
     mode=m;
+    clearTreeHover();          // a glow from the other mode is a lie about this one
     $('tb-main').style.display=(m==='model'&&docMode==='part')?'flex':'none';
     $('tb-asm-main').style.display=(docMode==='asm')?'flex':'none';
     $('tb-sketch').style.display=m==='sketch'?'flex':'none';
@@ -10291,7 +10432,7 @@ const CSG = (function(){
           mateSel.hover=key;
           while(mateHi.length>(mateSel.a?1:0)){ const m=mateHi.pop();
             if(m.parent)m.parent.remove(m); m.geometry.dispose(); m.material.dispose(); }
-          const usable=f&&f.kind===want&&
+          const usable=f&&kindFits(f.kind,want)&&
             (f.datum ? !!mateSel.a          // the origin is only ever the second pick
                      : (!mateSel.a||f.compId!==mateSel.a.compId));
           if(usable)faceHilite(f,0x35d4e6);
@@ -10513,13 +10654,19 @@ const CSG = (function(){
       if(dh&&(!hit||dh.distance<hit.distance)){
         endSketchPick(); setDatumHover(null); addSketch(dh.object.userData.plane); return;
       }
-      if(hit&&hit.face){ endSketchPick(); makeFaceSketch(hit); return; }
+      if(hit&&hit.face){
+        // the ray may have grazed the wall beside a small flat cap
+        const rf=planarFaceFor(e,hit);
+        endSketchPick(); makeFaceSketch(rf?faceHit(rf):hit); return;
+      }
       setHint('Nothing to sketch on there — click a flat face or an origin plane');
       return;
     }
     if(pendingFaceSketch){
       if(e.button!==0)return;
-      const hit=pickBody(e); if(hit&&hit.face){hidePickCard();makeFaceSketch(hit);} else setHint('No face there — click on a solid');
+      const hit=pickBody(e);
+      if(hit&&hit.face){ const rf=planarFaceFor(e,hit); hidePickCard(); makeFaceSketch(rf?faceHit(rf):hit); }
+      else setHint('No face there — click on a solid');
       return;
     }
     if(pendingBodyColor){
@@ -10546,7 +10693,9 @@ const CSG = (function(){
     }
     if(pendingTextFace){
       if(e.button!==0)return;
-      const hit=pickBody(e);
+      const raw=pickBody(e);
+      // text needs a flat face, so a near miss onto a curved wall is forgiven
+      const rf=planarFaceFor(e,raw), hit=rf?faceHit(rf):raw;
       if(hit&&hit.faceIndex!=null){
         const tgt=pendingTextFace&&pendingTextFace.forFeat;
         pendingTextFace=false; hidePickCard();
@@ -10637,7 +10786,21 @@ const CSG = (function(){
       return;
     }
     const e2=pickEdge(e);
-    if(e2||selectedEdges.length){ if(e2&&!selectedEdges.some(s=>s.idx===e2.rec.idx))toggleEdge(e2.rec); openEdgeMenu(e.clientX,e.clientY); }
+    /* A selected face states which thing the menu is about, so a right-click
+       back on it must offer ITS commands — otherwise a small cap, which is
+       nothing but rim within the edge pick tolerance, could never reach them.
+       Everywhere else the edge keeps its priority. */
+    const onSelFace=!!selectedFace&&!selectedEdges.length
+      &&faceKey(faceAtPointer(e))===faceKey(selectedFace);
+    /* And a face small enough to need rescuing is nothing but rim: the ray that
+       reaches its centre passes within the pick tolerance of an edge as well,
+       so on that face the edge menu would be the ONLY menu. A cold right-click
+       within RESCUE px of a flat face's confirmed centre is about that face.
+       An edge already SELECTED still keeps the edge menu — that is how you ask
+       for the other one. */
+    const rescued=(!onSelFace&&!selectedFace&&!selectedEdges.length)
+      ?rescuePlanarFace(e):null;
+    if(!onSelFace&&!rescued&&(e2||selectedEdges.length)){ if(e2&&!selectedEdges.some(s=>s.idx===e2.rec.idx))toggleEdge(e2.rec); openEdgeMenu(e.clientX,e.clientY); }
     else openModelMenu(e.clientX,e.clientY);
   });
 
@@ -10819,7 +10982,12 @@ const CSG = (function(){
        click. What it can do follows from its fitted shape: only a flat face
        carries a sketch or text, only a cylinder has an axis to drop. */
     const mf=(()=>{ if(!hasSolid)return null;
-      try{ return selectedFace||faceAtPointer({clientX:x,clientY:y}); }catch(_){ return null; } })();
+      try{
+        if(selectedFace)return selectedFace;      // an explicit pick needs no guessing
+        const pt={clientX:x,clientY:y}, f=faceAtPointer(pt);
+        // a right-click that grazed the wall beside a small cap meant the cap
+        return (f&&f.fit.kind!=='plane'&&rescuePlanarFace(pt))||f;
+      }catch(_){ return null; } })();
     if(mf){
       const kind=mf.fit&&mf.fit.kind;
       items.push({sect:'Face'});
@@ -10830,7 +10998,7 @@ const CSG = (function(){
       }
       items.push({ic:'paint',label:'Surface colour…',
         fn:()=>openFaceColor(resultMeshes[mf.body].geometry,mf.seed)});
-      if(kind==='cyl')items.push({ic:'daxis',label:'Add axis',fn:()=>axisFromFace(mf)});
+      if(axisKind(kind))items.push({ic:'daxis',label:'Add axis',fn:()=>axisFromFace(mf)});
     }
     for(const sec of MENUS.model.layout){
       const live=sec.ids.filter(id=>MCMD[id]);
@@ -11532,6 +11700,20 @@ const CSG = (function(){
     const topo={tri,byV,verts,regions:new Map(),fits:new Map()};
     geom.userData._topo=topo; return topo;
   }
+  /* which B-rep face a triangle belongs to, or -1 when the geometry carries no
+     usable ranges (see faceRegion for why one range counts as none) */
+  function faceRangeIdx(geom,seed){
+    const fr=geom.userData&&geom.userData.faceRanges;
+    if(!fr||fr.length<2)return -1;
+    let lo=0,hi=fr.length-1;
+    while(lo<=hi){
+      const m=(lo+hi)>>1, r=fr[m];
+      if(seed<r.start)hi=m-1;
+      else if(seed>=r.start+r.count)lo=m+1;
+      else return m;
+    }
+    return -1;
+  }
   function faceRegion(geom,seed){
     const topo=meshTopo(geom);
     if(topo.regions.has(seed))return topo.regions.get(seed);
@@ -11541,20 +11723,12 @@ const CSG = (function(){
        flood below stays for meshes without ranges (STL imports, and the one
        whole-shell face a mesh import is wrapped in — a single range tells
        us nothing, so those flood too). */
-    const fr=geom.userData&&geom.userData.faceRanges;
-    if(fr&&fr.length>1){
-      let lo=0,hi=fr.length-1;
-      while(lo<=hi){
-        const m=(lo+hi)>>1, r=fr[m];
-        if(seed<r.start)hi=m-1;
-        else if(seed>=r.start+r.count)lo=m+1;
-        else{
-          const ids=[];
-          for(let t=r.start;t<r.start+r.count;t++)ids.push(t);
-          topo.regions.set(seed,ids);
-          return ids;
-        }
-      }
+    const ri=faceRangeIdx(geom,seed);
+    if(ri>=0){
+      const r=geom.userData.faceRanges[ri], ids=[];
+      for(let t=r.start;t<r.start+r.count;t++)ids.push(t);
+      topo.regions.set(seed,ids);
+      return ids;
     }
     /* 38° is the crease: a cylinder tessellated finer than that stays whole as
        the normal walks round it, while a chamfer or a box corner stops the
@@ -11581,6 +11755,33 @@ const CSG = (function(){
     for(const t of ids){ const w=T[t].area||1e-9; wsum+=w;
       N.addScaledVector(T[t].n,w); Cen.addScaledVector(T[t].c,w); }
     Cen.divideScalar(wsum||1);
+    /* The kernel already knows what this surface is, so ask it rather than
+       guessing from triangles: a cone, a torus and a surface of revolution all
+       carry a real axis that no mesh fit could name, and everything that wants
+       an axis was refusing them as 'other'. Two things stay MESH-derived on
+       purpose: the point (the face's own centroid for a plane, the axis point
+       NEAREST that centroid otherwise) so a fit still says where the face IS
+       and not where its infinite surface is anchored, and the plane normal's
+       SENSE, since consumers rely on it pointing out of the solid. The fit
+       below stays for mesh imports and for anything the kernel calls other. */
+    const info=(()=>{ const ri=faceRangeIdx(geom,seed), fi=geom.userData&&geom.userData.faceInfo;
+      return (ri>=0&&fi&&fi[ri]&&fi[ri].k!=='other')?fi[ri]:null; })();
+    if(info){
+      const d=new THREE.Vector3(info.d[0],info.d[1],info.d[2]);
+      const ap=new THREE.Vector3(info.p[0],info.p[1],info.p[2]);
+      let out2=null;
+      if(info.k==='plane'){
+        if(d.dot(N)<0)d.negate();
+        out2={kind:'plane',p:Cen,d:d.normalize(),r:0,n:ids.length};
+      } else if(info.k==='sphere'){
+        out2={kind:'sphere',p:ap,d:d.normalize(),r:info.r||0,n:ids.length};
+      } else if(d.lengthSq()>1e-12){
+        d.normalize();
+        const on=ap.clone().addScaledVector(d,Cen.clone().sub(ap).dot(d));
+        out2={kind:info.k==='cyl'?'cyl':'rev',p:on,d,r:info.r||0,n:ids.length};
+      }
+      if(out2){ topo.fits.set(seed,out2); return out2; }
+    }
     let out;
     if(N.length()/wsum>0.9995){                     // normals agree: a planar face
       out={kind:'plane',p:Cen,d:N.normalize(),r:0,n:ids.length};
@@ -11634,6 +11835,11 @@ const CSG = (function(){
     }
     topo.fits.set(seed,out); return out;
   }
+  /* A face that carries an axis: a cylinder, and now every revolved surface
+     (cone, torus, surface of revolution) the kernel names. Everything that
+     wants an axis — the axis tool, a concentric mate — asks this, not for a
+     cylinder specifically. A sphere has a centre but no axis, so it is out. */
+  const axisKind=k=>k==='cyl'||k==='rev';
   /* ---- surface colours: signature-matched, since faces have no stable ids.
      A face's signature is its fitted kind + centroid + direction + radius +
      area, in world coordinates (part meshes carry no transform). After every
@@ -11649,7 +11855,16 @@ const CSG = (function(){
             r:fit.r||0,a};
   }
   function sigMatch(s1,s2){
-    if(!s1||!s2||s1.k!==s2.k)return false;
+    if(!s1||!s2)return false;
+    /* Flat and round never match each other; among the round kinds the NAME is
+       not evidence. A colour stored before the kernel's own surface types were
+       read calls every round face 'other', and a wall the mesh fit once called
+       a cylinder is now honestly a surface of revolution — the face did not
+       change, only what we can say about it. The centroid, direction and
+       radius tests below still have to pass, so a face whose fit genuinely
+       moved still goes dormant, exactly as the signature promises. */
+    const kOK=s1.k===s2.k||(s1.k!=='plane'&&s2.k!=='plane');
+    if(!kOK)return false;
     const dp=Math.hypot(s1.p[0]-s2.p[0],s1.p[1]-s2.p[1],s1.p[2]-s2.p[2]);
     if(dp>Math.max(0.6,0.1*Math.sqrt(Math.max(s1.a,s2.a))))return false;
     const dot=Math.abs(s1.d[0]*s2.d[0]+s1.d[1]*s2.d[1]+s1.d[2]*s2.d[2]);
@@ -11704,11 +11919,52 @@ const CSG = (function(){
     return {body,ids,seed,fit:fitFace(g,seed)};
   }
   const faceKey=f=>f?f.body+':'+f.seed:null;
+  /* A cap a few millimetres across is a few PIXELS on screen, and the ray that
+     misses it lands on the curved wall beside it — which is why "sketch on the
+     end of the spout" kept answering "that face is curved". So the flows that
+     REQUIRE a flat face forgive a near miss: if a planar face's own centre
+     projects within RESCUE px of the click, and a ray fired at that centre
+     really does land inside that same face, the click meant that face. The
+     confirming ray is what keeps it honest — a plane hidden behind the solid
+     can never be rescued. Hover does NOT rescue (a highlight has to be the
+     truth), and neither does a plain selection click: it takes what it hit. */
+  function rescuePlanarFace(e){
+    if(docMode!=='part'||mode!=='model')return null;
+    const RESCUE=12, r=canvas.getBoundingClientRect();
+    let best=null, bd=RESCUE;
+    resultMeshes.forEach((m,bi)=>{
+      const g=m.geometry, fr=(g.userData&&g.userData.faceRanges)||[];
+      if(fr.length<2)return;
+      for(const range of fr){
+        if(!range.count)continue;
+        const fit=fitFace(g,range.start);
+        if(!fit||fit.kind!=='plane')continue;
+        const w=fit.p.clone().project(camera);
+        if(w.z>1)continue;                                   // behind the camera
+        const sx=r.left+(w.x+1)/2*r.width, sy=r.top+(1-(w.y+1)/2)*r.height;
+        const d=Math.hypot(sx-e.clientX,sy-e.clientY);
+        if(d>=bd)continue;
+        const h=pickBody({clientX:sx,clientY:sy});
+        if(!h||h.object!==m||h.faceIndex==null)continue;
+        if(h.faceIndex<range.start||h.faceIndex>=range.start+range.count)continue;
+        bd=d; best={body:bi,ids:faceRegion(g,range.start),seed:range.start,fit};
+      }
+    });
+    return best;
+  }
+  // the flat face a flat-requiring click meant: what it hit, else a near miss
+  function planarFaceFor(e,hit){
+    if(!hit||hit.faceIndex==null)return null;
+    const fit=fitFace(hit.object.geometry,hit.faceIndex);
+    return (fit&&fit.kind==='plane')?null:rescuePlanarFace(e);
+  }
   /* makeFaceSketch and startTextOnFace were written for a raycast hit, so a
      stored face hands them one: its canonical triangle stands in for the
      struck facet (same winding, same plane) and the fitted centre for the hit
      point, which puts a face sketch's origin at the middle of the face. Part
-     bodies carry no transform, so the body's own space IS world space. */
+     bodies carry no transform, so the body's own space IS world space. Both
+     consumers want a FLAT face, which is the only kind whose fitted point lies
+     on the face at all — on a round one it sits on the axis. */
   function faceHit(f){
     const m=f&&resultMeshes[f.body]; if(!m)return null;
     const tri=meshTopo(m.geometry).tri[f.seed]; if(!tri)return null;
@@ -11743,9 +11999,9 @@ const CSG = (function(){
   }
   function faceSelHint(f){
     const k=f&&f.fit&&f.fit.kind;
-    return k==='plane' ? 'Face selected — right-click for sketch, text or colour'
-         : k==='cyl'   ? 'Face selected — right-click for colour or an axis'
-                       : 'Face selected — right-click for its colour';
+    return k==='plane'  ? 'Face selected — right-click for sketch, text or colour'
+         : axisKind(k)  ? 'Face selected — right-click for colour or an axis'
+                        : 'Face selected — right-click for its colour';
   }
   /* Normal to the face in hand rather than to a plane in the tree, so it
      reuses flyOrbit — the same flight the named views take. Aimed from the
@@ -11762,12 +12018,12 @@ const CSG = (function(){
      carries exactly the position and direction consumeAxisPick writes, and the
      panel opens on it so Pick again / Done behave as they always do. */
   function axisFromFace(f){
-    if(!f||!f.fit||f.fit.kind!=='cyl')return;
+    if(!f||!f.fit||!axisKind(f.fit.kind))return;
     const a=defaults('daxis'); a._isNew=true; a.method='circ';
     a.px=+f.fit.p.x.toFixed(4); a.py=+f.fit.p.y.toFixed(4); a.pz=+f.fit.p.z.toFixed(4);
     a.dx=+f.fit.d.x.toFixed(6); a.dy=+f.fit.d.y.toFixed(6); a.dz=+f.fit.d.z.toFixed(6);
     insertFeature(a); selectFeature(a.id); openProps(a);
-    setHint('Axis placed through the cylinder axis — Done keeps it');
+    setHint('Axis placed through the face’s own axis — Done keeps it');
   }
   let appearanceRev=1;
   function applyAppearance(){
@@ -11935,14 +12191,18 @@ const CSG = (function(){
     refreshAsmUI(); return true;
   }
   function wantKind(k){ return k==='concentric'?'cyl':'plane'; }
+  /* Concentric wants a shared AXIS, not a cylinder specifically: a cone, a
+     torus or a revolved wall carries one just as well, and the solver reads
+     only p/d. Coincident still means exactly planar. */
+  function kindFits(k,need){ return need==='cyl'?axisKind(k):k===need; }
   function mateFaceClick(e){
     const f=mateEndAt(e);
     const need=wantKind(mateSel.kind);
     if(!f)return setHint(need==='cyl'
       ? 'Nothing there — click a round face, a circular edge or an arc, or one of the origin axes'
       : 'Nothing there — click a flat face, or one of the origin planes');
-    if(f.kind!==need)return setHint(need==='cyl'
-      ? 'That is not a round face — pick a hole, a boss, or an origin axis'
+    if(!kindFits(f.kind,need))return setHint(need==='cyl'
+      ? 'That face has no axis — pick a hole, a boss, a revolved wall, or an origin axis'
       : 'That is not a flat face — pick a planar one, or an origin plane');
     if(!mateSel.a){
       if(f.datum)return setHint('Start with a face on the part you want to move — the origin can only be the second pick');
@@ -12218,7 +12478,8 @@ const CSG = (function(){
     if(isD)refreshDrawDock();
     canvas.style.display=isD?'none':'block';   // nothing 3D behind a sheet of paper
     document.querySelector('.tree-head h2').textContent=isD?'Drawing':isA?'Components':'Feature Tree';
-    [sketchOverlay,previewOverlay,refOverlay,hoverGroup,selGroup,handleGroup,draftGroup].forEach(g=>g.visible=!isA&&!isD);
+    [sketchOverlay,previewOverlay,refOverlay,hoverGroup,selGroup,handleGroup,draftGroup,treeHoverGroup].forEach(g=>g.visible=!isA&&!isD);
+    clearTreeHover();
     const modelHost=(isD?drawReturn:docMode);
     resultMeshes.forEach(mm=>mm.visible=!isD&&modelHost!=='asm');
     if(pickLines)pickLines.visible=!isD&&modelHost!=='asm';
@@ -13592,9 +13853,9 @@ const CSG = (function(){
     if(selectedFace){
       const k=selectedFace.fit&&selectedFace.fit.kind;
       return {title:'Face selected', body:'<b>Right-click</b> for what this face can do — '+
-        (k==='plane'?'<b>Sketch on this face</b>, <b>Text on this face</b>, <b>Normal to</b> and <b>Surface colour</b>'
-        :k==='cyl' ?'<b>Surface colour</b>, and <b>Add axis</b> down its centre'
-                    :'<b>Surface colour</b>')+
+        (k==='plane'   ?'<b>Sketch on this face</b>, <b>Text on this face</b>, <b>Normal to</b> and <b>Surface colour</b>'
+        :axisKind(k)   ?'<b>Surface colour</b>, and <b>Add axis</b> down its centre'
+                       :'<b>Surface colour</b>')+
         '. Click an edge, another face or empty space to let it go.'};
     }
     return {title:'Model', body:'<b>Right-click</b> the viewport for commands, or a <b>tree item</b> for its options. <b>Double-click</b> a feature to edit it. Hover edges and click to select them for fillets. Drag the yellow <b>ROLLBACK</b> bar to step back through history.'};
@@ -14116,7 +14377,7 @@ const CSG = (function(){
     set selectedEdges(v){ selectedEdges = v; },
     get selectedFace(){ return selectedFace; },
     get hoveredFace(){ return hoveredFace; },
-    faceAtPointer, drawFaceHl,
+    faceAtPointer, drawFaceHl, rescuePlanarFace, treeHoverGroup, setFeatHover,
     get propsFeat(){ return propsFeat; },
     get draftFeat(){ return draftFeat; },
     insertFeature, deleteFeature, defaults, addFeature, rebuild, openProps, closeProps,

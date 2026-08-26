@@ -118,7 +118,45 @@ fit centre — part bodies carry no transform, so body space IS world space), `o
 is the `pendingFaceColor` consumption body extracted so both routes store one signature per
 face, `axisFromFace` writes the daxis fields `consumeAxisPick` writes (method `circ`), and
 `viewNormalToFace` aims `flyOrbit` at the face normal from whichever side the camera is
-already on.
+already on. **The kernel names the surface, the mesh no longer guesses** (owner report: "all
+round surfaces unselectable"): `OCK.mesh` records `geo.userData.faceInfo` beside faceRanges —
+one `{k,p,d,r}` per RANGE, same order, from `BRepAdaptor_Surface_2().GetType()` (plane / cyl /
+cone / sphere / torus / rev / other; the adaptor bakes in the face location so it is already
+world-space, every face in a try/catch, a throw records 'other'). `fitFace` returns the exact
+fit whenever the seed resolves through a range with `k!=='other'` — the mesh fit stays for
+imports and BSplines (the swept spout honestly stays 'other'). Two things stay MESH-derived
+on purpose: `p` is the face's own centroid for a plane and the axis point NEAREST that
+centroid otherwise (never the infinite surface's anchor — `faceSig` keys colours on `p`, and
+two coaxial cylinders must not sign alike), and a plane's normal SENSE is flipped to agree
+with the triangles, since consumers rely on outward. Cone/torus/rev all report `kind:'rev'`,
+so `axisKind(k)` (`cyl`|`rev`) is what anything wanting an axis asks: `consumeAxisPick`, the
+Face menu's Add axis, and `kindFits` for the concentric-mate pick (the mate SOLVER is
+untouched — it only ever read p/d). `sigMatch` now compares round kinds by name-free rules
+(flat still never matches round): a colour saved before this carried 'other' for every round
+face, and a wall the mesh called a cylinder is honestly a revolution — same face, better
+name; centroid/direction/radius still gate the match. **Small flat faces forgive a near
+miss** (`rescuePlanarFace`, RESCUE=12 px): the Ø3 mm spout cap is a few pixels with the tube
+right beside it, so the flows that REQUIRE a plane — armed Sketch pick, `pendingFaceSketch`,
+armed Text pick, and a cold right-click — take the planar face whose projected centroid is
+nearest the click when a confirming raycast at that centroid really lands inside it (that ray
+is what stops a hidden plane being rescued). `planarFaceFor(e,hit)` is the "what a
+flat-requiring click meant" wrapper. Hover never rescues and neither does a plain selection
+click — a highlight has to be the truth. The right-click routing takes one extra rule: a
+rescued plane, or a right-click back on the SELECTED face, beats the edge menu, because a
+face that small is nothing but rim within the edge pick tolerance and the edge menu would
+otherwise be the only menu it could ever show; an edge already selected still keeps the edge
+menu. **Feature-tree hover cross-highlights** (owner ask): `setFeatHover` on every
+`makeFeatRow` row lights the thing the row made in one `treeHoverGroup` — sketch rows glow
+their `entityLoops` through `sketchData[id].frame` (the point: a CONSUMED sketch is otherwise
+never drawn), dplane/daxis rows redraw their reference geometry, and a solid feature ghosts
+the tool shapes `featTools` kept for it, meshed lazily and cached in `treeGhostCache` (dropped
+in `resetFeatTools` — the shapes' own lifetime; a tool freed with a checkpoint throws and
+falls through). The fallback for a feature with no separable tool (a fillet, a
+checkpoint-restored rebuild) is a slight emissive tint on every body material, stored and put
+back exactly on leave: without face naming, which faces a feature made is unknowable. The
+origin rows already did this through `setTreeHover`/`updateDatumVis`, which stays the only
+thing allowed to decide datum visibility. Cleared on leave, on `refreshTree` (the rows are
+replaced, so no mouseleave arrives), on `setMode` and on doc-mode change.
 Angular deflection is the scale-free quality knob: 0.22 rad (was 0.35), linear diag*0.003.
 `featureEdges` (crease detector) still serves the DRAWING views — crease lines double as
 silhouettes on sheets, real edges alone would lose a cylinder's side profile — and the
