@@ -372,6 +372,8 @@ if(!window.THREE){
   .pickcard{position:absolute;top:14px;right:14px;z-index:9;background:rgba(13,17,23,.92);backdrop-filter:blur(8px);border:1px solid var(--g-yellow);border-radius:11px;padding:11px 13px;max-width:236px;font-size:12px;color:var(--text);box-shadow:0 12px 34px -10px rgba(0,0,0,.9),0 0 18px rgba(251,188,5,.14);display:none}
   .pickcard.show{display:block}
   .pickcard.beside{right:288px}
+  body.menu-open .pickcard{opacity:0;pointer-events:none}
+  .pickcard{transition:opacity .15s}
   .pickcard .pc-t{display:flex;gap:8px;align-items:flex-start;line-height:1.45}
   .pickcard .pip{margin-top:4px;flex:none}
   .pickcard button{margin-top:9px;font-size:11.5px;padding:3px 11px}
@@ -1608,7 +1610,8 @@ const CSG = (function(){
   function entPoints(e){
     if(e.type==='poly')return e.pts;
     if(e.type==='rect')return [e.a,{x:e.a.x,y:e.b.y},e.b,{x:e.b.x,y:e.a.y}];
-    if(e.type==='circle'||e.type==='polygon')return [e.c];
+    if(e.type==='circle')return [e.c];
+    if(e.type==='polygon')return [e.c].concat(polyCorners(e));   // centre, then corners
     return [];
   }
   function anchoredSet(sk){
@@ -1660,17 +1663,32 @@ const CSG = (function(){
   }
   // coincidences holding this entity: on the origin, or shared with another
   // entity. Each pins two coordinates.
+  /* anchoredSet with one entity removed from the graph entirely — neither a
+     source of ground nor a bridge to it. Answers "is j grounded WITHOUT i". */
+  function anchoredSetSans(sk,skip){
+    const EPS=1e-4,ents=sk.entities,nE=ents.length,pts=ents.map(entPoints);
+    const anc=new Array(nE).fill(false);
+    for(let i=0;i<nE;i++)anc[i]=i!==skip&&pts[i].some(p=>Math.hypot(p.x,p.y)<EPS);
+    let changed=true;
+    while(changed){changed=false;
+      for(let i=0;i<nE;i++){if(anc[i]||i===skip)continue;
+        for(let j=0;j<nE&&!anc[i];j++){if(!anc[j]||j===skip)continue;
+          for(const a of pts[i]){if(pts[j].some(b=>Math.hypot(a.x-b.x,a.y-b.y)<EPS)){anc[i]=true;changed=true;break;}}}}}
+    return anc;
+  }
   function pinsOn(sk,i,anc){
     const EPS=1e-4, e=sk.entities[i]; if(!e)return 0;
-    if(!anc)anc=anchoredSet(sk);
+    /* Only a partner grounded WITHOUT this entity can hold a point still.
+       The old test used the global flood, where a dangling line glued to a
+       polygon corner read as "anchored" — through the polygon itself — and
+       its touch then pinned the polygon against the very drag that should
+       carry the line along. Followers do not pin what they follow. */
+    const sans=anchoredSetSans(sk,i);
     let n=0;
     for(const p of entPoints(e)){
       if(Math.hypot(p.x,p.y)<EPS){ n++; continue; }
       for(let j=0;j<sk.entities.length;j++){
-        /* Only a grounded partner can hold a point still. Two floating shapes
-           glued to each other used to pin one another and read "defined" while
-           the pair could still slide around the plane as one. */
-        if(j===i||!anc[j])continue;
+        if(j===i||!sans[j])continue;
         if(entPoints(sk.entities[j]).some(q=>Math.hypot(q.x-p.x,q.y-p.y)<EPS)){ n++; break; }
       }
     }
@@ -5742,12 +5760,19 @@ const CSG = (function(){
       drawSnapMark(); return;
     } else if(tool==='horiz' || tool==='vert'){
       const d=dimHit(p);
-      if(d && d.kind==='seg'){
-        if(guardDims(()=>{applyHVConstraint(d,tool);storeHV(editing,d,tool);return true;},
+      const pgE=(d&&d.kind==='pedge')?editing.entities[d.entIdx]:null;
+      if(d && (d.kind==='seg'||(pgE&&pgE.type==='polygon'))){
+        if(guardDims(()=>{
+             if(pgE)applyHVPolygonEdge(pgE,d.seg,tool); else applyHVConstraint(d,tool);
+             storeHV(editing,d,tool);
+             relaxDims(editing,3);   // stored coincidences follow the swing at once
+             return true;},
              tool==='horiz'?'Horizontal':'Vertical'))
-          setHint(tool==='horiz'?'Line constrained horizontal — delete its badge to free it'
+          setHint(pgE?(tool==='horiz'?'Polygon edge laid flat — delete its badge to free the spin'
+                                     :'Polygon edge stood upright — delete its badge to free the spin')
+                 :tool==='horiz'?'Line constrained horizontal — delete its badge to free it'
                                 :'Line constrained vertical — delete its badge to free it'); }
-      else setHint('Click on a line segment');
+      else setHint('Click a line segment or a polygon edge');
     } else if(tool==='paral'){
       const d=dimHit(p);
       if(d && d.kind==='seg'){
@@ -5798,7 +5823,10 @@ const CSG = (function(){
       /* a click on a circle or polygon means its centre — the rim is a far
          easier target than the centre dot, which is what the old separate
          concentric tool was really for */
-      let pr=nearestPointRef(p);
+      /* the second pick skips the first point, so clicking a visually merged
+         pair (a line end snapped onto a corner) locks the pair rather than
+         reporting "pick a different point" */
+      let pr=nearestPointRef(p,coincRef);
       if(!pr){ const eh=dimHit(p);
         // clicking the outline of a round or regular shape means its centre —
         // 'pedge' is how a polygon reports now, 'pdia' only in older files
@@ -6029,6 +6057,18 @@ const CSG = (function(){
     if(kind==='horiz'){ const sgn=s.b.x>=s.a.x?1:-1; s.a.x=mx-sgn*L; s.b.x=mx+sgn*L; s.a.y=my; s.b.y=my; }
     else              { const sgn=s.b.y>=s.a.y?1:-1; s.a.y=my-sgn*L; s.b.y=my+sgn*L; s.a.x=mx; s.b.x=mx; }
   }
+  /* A polygon edge stood upright or laid flat solves ROT alone — the centre
+     and size stay put, and the nearer of the two axis alignments wins so the
+     shape barely moves. Two corners vertically above each other IS the edge
+     between them made vertical, which is how the tool reads a polygon. */
+  function applyHVPolygonEdge(e,seg,kind){
+    const n=e.sides;
+    const phi=e.rot+(seg+0.5)/n*Math.PI*2+Math.PI/2;      // the edge's direction
+    const want=kind==='vert'?Math.PI/2:0;
+    let d=(want-phi)%Math.PI;
+    if(d>Math.PI/2)d-=Math.PI; if(d<-Math.PI/2)d+=Math.PI;
+    e.rot+=d;
+  }
   function applyParallel(refD, tgtD){
     const r=polySeg(refD), t=polySeg(tgtD); if(!r||!t) return;
     let dx=r.b.x-r.a.x, dy=r.b.y-r.a.y; const RL=Math.hypot(dx,dy)||1; dx/=RL; dy/=RL;
@@ -6125,12 +6165,34 @@ const CSG = (function(){
     sk.entities.forEach((e,ei)=>{
       if(e.type==='poly') e.pts.forEach((q,i)=>out.push({ent:ei,idx:i,pt:q}));
       else if(e.type==='rect'){ out.push({ent:ei,idx:0,pt:e.a}); out.push({ent:ei,idx:2,pt:e.b}); }
-      else if(e.type==='circle'||e.type==='polygon') out.push({ent:ei,idx:0,pt:e.c});
+      else if(e.type==='circle') out.push({ent:ei,idx:0,pt:e.c});
+      else if(e.type==='polygon'){
+        out.push({ent:ei,idx:0,pt:e.c});
+        // corners are refs too: idx k+1 is corner k (see polyCornerRef)
+        polyCorners(e).forEach((q,k)=>out.push({ent:ei,idx:k+1,pt:q}));
+      }
     });
     // origin first, so a vertex sitting on it loses the tie: dimensioning to
     // the origin is the useful reading, and the origin can never be dragged
     out.unshift({ent:-1,idx:0,pt:{x:0,y:0}});
     return out;
+  }
+  /* A polygon's corners are DERIVED from (c, r, rot) — but constraints and
+     dimensions need to read AND write them like any stored point. This live
+     view maps writes back onto r and rot about the centre, which is exactly
+     what dragging a corner already does: the polygon spins and stretches to
+     put that corner where it was told to go. */
+  function setPolyCorner(e,k,x,y){
+    const dx=x-e.c.x, dy=y-e.c.y, r=Math.hypot(dx,dy);
+    if(r>1e-3){ e.r=r; e.rot=Math.atan2(dy,dx)-k/e.sides*Math.PI*2; }
+  }
+  function polyCornerRef(e,k){
+    return {
+      get x(){ const a=e.rot+k/e.sides*Math.PI*2; return e.c.x+e.r*Math.cos(a); },
+      get y(){ const a=e.rot+k/e.sides*Math.PI*2; return e.c.y+e.r*Math.sin(a); },
+      set x(v){ setPolyCorner(e,k,v,this.y); },
+      set y(v){ setPolyCorner(e,k,this.x,v); }
+    };
   }
   function resolvePt(sk,ref){
     if(!ref) return null;
@@ -6138,15 +6200,17 @@ const CSG = (function(){
     const e=sk.entities[ref.ent]; if(!e) return null;
     if(e.type==='poly') return e.pts[ref.idx]||null;
     if(e.type==='rect') return ref.idx===0?e.a:e.b;
-    if(e.type==='circle'||e.type==='polygon') return e.c;
+    if(e.type==='circle') return e.c;
+    if(e.type==='polygon') return ref.idx>0?polyCornerRef(e,ref.idx-1):e.c;
     return null;
   }
   function sameRef(a,b){ return a&&b&&a.ent===b.ent&&a.idx===b.idx; }
-  function nearestPointRef(p){
+  function nearestPointRef(p,excl){
     if(!editing) return null;
     const tol=Math.max(0.55,controls.sph.radius*0.035);
     let best=null,bd=tol;
     for(const r of pointRefs(editing)){
+      if(excl&&r.ent===excl.ent&&r.idx===excl.idx)continue;
       const d=Math.hypot(r.pt.x-p.x,r.pt.y-p.y);
       if(d<bd){bd=d;best=r;}
     }
@@ -6623,7 +6687,8 @@ const CSG = (function(){
     if(!r||r.ent==null||r.ent<0)return false;
     const e=sk.entities[r.ent]; if(!e)return false;
     if(e.type==='poly')return r.idx>=0&&r.idx<e.pts.length;
-    if(e.type==='circle'||e.type==='polygon')return r.idx===0;
+    if(e.type==='circle')return r.idx===0;
+    if(e.type==='polygon')return r.idx>=0&&r.idx<=e.sides;   // 0 centre, k corner k-1
     if(e.type==='rect')return r.idx===0||r.idx===2;
     return false;
   }
@@ -6668,7 +6733,7 @@ const CSG = (function(){
     const EPS=1e-4, refs=[], out=[];
     sk.entities.forEach((e,ei)=>{
       entPoints(e).forEach((q,qi)=>{
-        const live=(e.type==='poly')||((e.type==='circle'||e.type==='polygon')&&qi===0)
+        const live=(e.type==='poly')||(e.type==='polygon')||(e.type==='circle'&&qi===0)
                  ||(e.type==='rect'&&(qi===0||qi===2));
         if(live)refs.push({ent:ei,idx:qi,x:q.x,y:q.y});
       });
@@ -6703,7 +6768,9 @@ const CSG = (function(){
     if(!h||h.ei==null)return null;
     const e=editing&&editing.entities[h.ei]; if(!e)return null;
     if(e.type==='poly'){ const i=e.pts.indexOf(h.pt); return i<0?null:{ent:h.ei,idx:i}; }
-    if(e.type==='circle'||e.type==='polygon') return h.pt===e.c?{ent:h.ei,idx:0}:null;
+    if(e.type==='circle') return h.pt===e.c?{ent:h.ei,idx:0}:null;
+    if(e.type==='polygon') return h.pt===e.c?{ent:h.ei,idx:0}
+      :(h.kind==='pg'&&h.corner!=null?{ent:h.ei,idx:h.corner+1}:null);
     if(e.type==='rect') return h.pt===e.a?{ent:h.ei,idx:0}:h.pt===e.b?{ent:h.ei,idx:2}:null;
     return null;
   }
@@ -6723,6 +6790,11 @@ const CSG = (function(){
     }
     let src=ra,dst=rb;                        // second-picked point moves...
     if(!liveRef(sk,dst)){ if(!liveRef(sk,src))return false; const t=src;src=dst;dst=t; }
+    /* ...unless one side is a POLYGON corner or centre: writing a corner
+       reshapes the whole polygon, so the shape anchors and the plain point
+       jumps to it — which is also what "lock it to" reads as */
+    const isPg=r=>{const e2=sk.entities[r.ent];return !!e2&&e2.type==='polygon';};
+    if(isPg(dst)&&!isPg(src)&&liveRef(sk,src)){ const t=src;src=dst;dst=t; }
     const S=resolvePt(sk,src), D=resolvePt(sk,dst); if(!S||!D)return false;
     D.x=S.x; D.y=S.y;
     const key=r=>r.ent+'.'+r.idx, cons=consOf(sk);
@@ -6771,6 +6843,8 @@ const CSG = (function(){
         continue;
       }
       if(c.kind==='horiz'||c.kind==='vert'){
+        const pe=sk.entities[c.ent];
+        if(pe&&pe.type==='polygon'){ applyHVPolygonEdge(pe,c.seg||0,c.kind); continue; }
         const s=segPts(sk,{ent:c.ent,seg:c.seg}); if(!s)continue;
         /* Swing the line flat about the held end, keeping its length. Setting
            one coordinate equal to the other's projects the line onto the axis
@@ -6800,14 +6874,19 @@ const CSG = (function(){
         if(!L||!Q)continue;
         const F=traceFoot(L,Q); Q.x=F.x; Q.y=F.y;
       } else if(c.kind==='coinc'){
-        // origin is ground; otherwise the dragged (or only-live) side leads
+        // origin is ground; otherwise the dragged (or only-live) side leads,
+        // and a POLYGON side leads a plain point — one corner write reshapes
+        // the whole polygon, so the point is the one that follows
         let src=c.a,dst=c.b;
+        const isPg=r=>{const e2=r&&r.ent>=0?sk.entities[r.ent]:null;return !!e2&&e2.type==='polygon';};
         if(c.b.ent===-1||!liveRef(sk,c.b)){ src=c.b; dst=c.a; }
         else if(dragged&&liveRef(sk,c.b)&&liveRef(sk,c.a)){
           const e=sk.entities[c.b.ent];
           const pi=e&&e.type==='poly'?e.pts.indexOf(dragged.pt):-1;
           if(dragged.ei===c.b.ent&&(e.type!=='poly'||pi===c.b.idx)){ src=c.b; dst=c.a; }
+          else if(dragged.ei!==c.a.ent&&isPg(c.b)&&!isPg(c.a)){ src=c.b; dst=c.a; }
         }
+        else if(isPg(c.b)&&!isPg(c.a)&&liveRef(sk,c.a)){ src=c.b; dst=c.a; }
         if(!liveRef(sk,dst))continue;
         const S=resolvePt(sk,src), D=resolvePt(sk,dst); if(!S||!D)continue;
         D.x=S.x; D.y=S.y;
@@ -6820,7 +6899,9 @@ const CSG = (function(){
     let n=0;
     for(const c of (sk.cons||[])){
       if((c.kind==='horiz'||c.kind==='vert')&&c.ent===i){
-        const s=segPts(sk,{ent:i,seg:c.seg}); if(s)n++;
+        const pe=sk.entities[i];
+        if(pe&&pe.type==='polygon')n++;                    // the spin is spent
+        else { const s=segPts(sk,{ent:i,seg:c.seg}); if(s)n++; }
       }
       // parallel/equal each cost the following line one freedom
       else if((c.kind==='paral'||c.kind==='equal')&&c.b&&c.b.ent===i){
@@ -6834,7 +6915,8 @@ const CSG = (function(){
   function relaxDims(sk,iters,dragged){
     if(!sk)return;
     const hasD=sk.dims&&sk.dims.length, hasC=sk.cons&&sk.cons.length;
-    if(!hasD&&!hasC)return;
+    const hasJ=dragged&&dragJoins&&dragJoins.length;   // grab-time joints count too
+    if(!hasD&&!hasC&&!hasJ)return;
     if(hasD)ensureDimValues(sk);
     /* dimApply restores a two-ref dim by moving the *b* side. During a drag
        that's an asymmetry the user can feel: with an angle dim, dragging the
@@ -7145,8 +7227,14 @@ const CSG = (function(){
         } else {
           // H/V carry {ent,seg}; parallel/equal badge the following line
           const ref=(c.kind==='paral'||c.kind==='equal')?{ent:c.b.ent,seg:c.b.seg}:{ent:c.ent,seg:c.seg};
-          const s=segPts(editing,ref);
-          if(s)ap={x:(s.a.x+s.b.x)/2+0.7,y:(s.a.y+s.b.y)/2+0.7};
+          const pe=editing.entities[ref.ent];
+          if(pe&&pe.type==='polygon'&&(c.kind==='horiz'||c.kind==='vert')){
+            const cor=polyCorners(pe), a2=cor[ref.seg%cor.length], b2=cor[(ref.seg+1)%cor.length];
+            ap={x:(a2.x+b2.x)/2+0.7,y:(a2.y+b2.y)/2+0.7};
+          } else {
+            const s=segPts(editing,ref);
+            if(s)ap={x:(s.a.x+s.b.x)/2+0.7,y:(s.a.y+s.b.y)/2+0.7};
+          }
         }
         if(!ap){ o.el.style.display='none'; continue; }
         const spc=screenOf(ap);
@@ -7284,6 +7372,12 @@ const CSG = (function(){
   function showPickCard(msg){ const c=$('pickcard'); $('pickcard-msg').textContent=msg;
     c.classList.toggle('beside',!!propsEl); c.classList.add('show'); }
   function hidePickCard(){ $('pickcard').classList.remove('show'); }
+  /* the card shares its corner with the dropdown and context menus — while
+     ANY menu is open the card steps out of the way entirely (owner report:
+     "the prompt card often covers over the tool menu") */
+  new MutationObserver(()=>{
+    document.body.classList.toggle('menu-open',!!document.querySelector('.menu.open'));
+  }).observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['class']});
   $('pickcard-cancel').addEventListener('click',()=>cancelPicks('Pick cancelled'));
   /* ---- the merged Sketch tool: one button, then click WHERE ----
      A flat face of the model or one of the origin planes; the planes are
@@ -9579,13 +9673,13 @@ const CSG = (function(){
       else if(tool==='select')h.innerHTML='<span class="pip"></span> Pointer: drag to rotate · drag a point (it snaps to the origin, plane traces and other points) · drag a dimension to reposition · click a line then <kbd>Del</kbd>';
       else if(tool==='dim')h.innerHTML='<span class="pip"></span> Dim: click a circle, polygon, rectangle edge, line, point or plane trace — then type a value to drive it';
       else if(tool==='erase')h.innerHTML='<span class="pip"></span> Erase: click a shape to delete it';
-      else if(tool==='horiz')h.innerHTML='<span class="pip"></span> Horizontal: click a line segment to lay it flat';
-      else if(tool==='vert')h.innerHTML='<span class="pip"></span> Vertical: click a line segment to stand it upright';
+      else if(tool==='horiz')h.innerHTML='<span class="pip"></span> Horizontal: click a line segment or a polygon edge to lay it flat';
+      else if(tool==='vert')h.innerHTML='<span class="pip"></span> Vertical: click a line segment or a polygon edge to stand it upright';
       else if(tool==='paral')h.innerHTML='<span class="pip"></span> Parallel: click the reference line, then the line to align to it';
       else if(tool==='cline')h.innerHTML='<span class="pip"></span> Construction line: draws like a line but never becomes part of the solid — mirror lines, centre lines, references';
       else if(tool==='mirror')h.innerHTML='<span class="pip"></span> Mirror: click the line to mirror about, then click each shape to mirror';
       else if(tool==='dynmirror')h.innerHTML='<span class="pip"></span> Dynamic mirror: click a line to arm it — what you draw then appears both sides. Click it again to stop';
-      else if(tool==='coinc')h.innerHTML='<span class="pip"></span> Coincident: click a point, then the point to lock it to — the pair then moves as one';
+      else if(tool==='coinc')h.innerHTML='<span class="pip"></span> Coincident: click a point (line ends, polygon corners and centres all count), then the point to lock it to — the pair then moves as one';
       else if(tool==='equal')h.innerHTML='<span class="pip"></span> Equal: click the reference line, then the line to match its length';
       else h.innerHTML=`<span class="pip"></span> ${tool}: click two points`;
     } else h.classList.remove('show');
