@@ -7869,6 +7869,7 @@ const CSG = (function(){
     el.className='feat'+(child?' child':'')+(f.id===selId?' sel':'')+(i>=rollbackIndex?' rolled':'')
       +(f.error?' errored':'')+(f.suppressed?' suppressed':'');
     el.dataset.fid=f.id;
+    el.dataset.fi=i;
     const fname=(propsFeat&&propsFeat.id===f.id&&draftFeat)?draftFeat.name:f.name;
     el.title=fname;
     el.innerHTML=(twist?`<span class="twist" title="Collapse or expand">${twist==='open'?'−':'+'}</span>`:'')+
@@ -8027,6 +8028,23 @@ const CSG = (function(){
   let rolling=false;
   function startRollDrag(e){
     e.preventDefault();rolling=true;
+    /* The bar must stay glued to the pointer even when a rebuild would take
+       whole seconds, so the drag works in two layers. Every pointermove
+       repositions the bar ELEMENT and re-greys the rows — pure DOM, always
+       instant. Geometry follows live only while rebuilds are proving cheap
+       (rolling back lands on checkpoints, so it usually is); the moment one
+       measures slow, further rebuilds wait for release, where the final
+       index is applied once. */
+    let pend=rollbackIndex, raf=0, lastMs=0;
+    const place=idx=>{
+      const b=tree.querySelector('.rollbar');         // rebuilds replace the element
+      if(!b)return;
+      let before=null;
+      for(const el of tree.querySelectorAll('.feat[data-gs]'))
+        if(+el.dataset.gs>=idx){before=el;break;}
+      tree.insertBefore(b,before);
+      tree.querySelectorAll('.feat').forEach(el=>el.classList.toggle('rolled',+el.dataset.fi>=idx));
+    };
     const move=ev=>{
       /* Only rows that carry a group start count — that excludes the datum
          planes and axes above the Features section and the nested sketch
@@ -8040,9 +8058,23 @@ const CSG = (function(){
         if(ev.clientY < r.top+r.height/2){ idx=+el.dataset.gs; break; }
       }
       idx=Math.max(0,Math.min(features.length,idx));
-      if(idx!==rollbackIndex){rollbackIndex=idx;rebuild();}
+      if(idx===pend)return;
+      pend=idx;
+      place(idx);
+      if(lastMs<90&&!raf)raf=requestAnimationFrame(()=>{
+        raf=0;
+        if(pend===rollbackIndex)return;
+        const t0=performance.now();
+        rollbackIndex=pend;rebuild();
+        lastMs=performance.now()-t0;
+      });
     };
-    const up=()=>{rolling=false;document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);};
+    const up=()=>{
+      rolling=false;
+      if(raf)cancelAnimationFrame(raf);
+      document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);
+      if(pend!==rollbackIndex){rollbackIndex=pend;rebuild();}
+    };
     document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);
   }
 
@@ -13270,6 +13302,7 @@ const CSG = (function(){
     get camera(){return camera}, setProjection, get orthoOn(){return orthoOn}, controls, fitAll,
     OCK, featureEdges,
     get checkpoints(){ return checkpoints.map(c=>({i:c.i, bodies:c.shapes.length, key:c.key})); },
+    get rollbackIndex(){ return rollbackIndex; },
     dimHit, dimResolve, dimApply, polyCorners, cornerAt, applyCorner,
     get cornerSel(){ return cornerSel; }, set cornerSel(v){ cornerSel=v; },
     ensureSketchProps, setCornerTreatment, setCornerSize,
