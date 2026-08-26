@@ -366,6 +366,14 @@ if(!window.THREE){
   .note{font-size:11px;color:var(--muted-2);line-height:1.5}
 
   .hint{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);background:rgba(13,17,23,.9);backdrop-filter:blur(6px);border:1px solid var(--g-yellow);border-radius:999px;padding:7px 15px;font-size:11.5px;color:var(--text);display:flex;align-items:center;gap:9px;box-shadow:0 0 15px rgba(251,188,5,0.2);pointer-events:none;opacity:0;transition:opacity .2s;white-space:nowrap;z-index:8}
+  /* the pick card: a PERSISTENT prompt, top right, for click-something-next
+     states — the transient hint fades, which left armed picks looking dead */
+  .pickcard{position:absolute;top:14px;right:14px;z-index:9;background:rgba(13,17,23,.92);backdrop-filter:blur(8px);border:1px solid var(--g-yellow);border-radius:11px;padding:11px 13px;max-width:236px;font-size:12px;color:var(--text);box-shadow:0 12px 34px -10px rgba(0,0,0,.9),0 0 18px rgba(251,188,5,.14);display:none}
+  .pickcard.show{display:block}
+  .pickcard.beside{right:288px}
+  .pickcard .pc-t{display:flex;gap:8px;align-items:flex-start;line-height:1.45}
+  .pickcard .pip{margin-top:4px;flex:none}
+  .pickcard button{margin-top:9px;font-size:11.5px;padding:3px 11px}
   .hint.show{opacity:1}
   .hint kbd{font-family:var(--mono);font-size:10px;color:var(--g-yellow);background:var(--panel-2);border:1px solid var(--g-yellow);border-radius:4px;padding:1px 6px;box-shadow:0 0 4px rgba(251,188,5,0.2)}
   .hint .pip{width:6px;height:6px;border-radius:50%;background:var(--g-yellow);box-shadow:0 0 8px var(--g-yellow)}
@@ -730,6 +738,7 @@ if(!window.THREE){
       <button data-tool="erase">Erase</button>
     </div>
     <div class="hint" id="hint"></div>
+    <div class="pickcard" id="pickcard"><div class="pc-t"><span class="pip"></span><span id="pickcard-msg"></span></div><button id="pickcard-cancel" class="btn-ghost">Cancel</button></div>
     <div id="build-tag"></div>
     <script>
     /* The deploy stamp. document.lastModified is only honest when the server
@@ -759,12 +768,8 @@ if(!window.THREE){
   </main>
 
   <div class="menu" id="menu">
-    <div class="menu-sect">Sketch</div>
-    <button data-add="sketch-top" data-ic="sketch">Sketch · Top plane</button>
-    <button data-add="sketch-front" data-ic="sketch">Sketch · Front plane</button>
-    <button data-add="sketch-right" data-ic="sketch">Sketch · Right plane</button>
-    <button data-add="sketch-face" data-ic="face-sketch">Sketch · on a face</button>
     <div class="menu-sect">Features</div>
+    <button data-add="sketch" data-ic="sketch">Sketch</button>
     <button data-add="extrude" data-ic="extrude">Extrude boss</button>
     <button data-add="cut" data-ic="cut">Extrude cut</button>
     <button data-add="revolve" data-ic="revolve">Revolve boss</button>
@@ -1205,8 +1210,9 @@ const CSG = (function(){
     const isA=docMode==='asm', live=isA||docMode==='part';
     const auto=(docMode==='part')&&(mode==='model')&&features.length===0;
     const matePick=isA&&!!mateSel;
+    const skPick=(docMode==='part')&&(mode==='model')&&!!pendingSketchPick;
     const anyPinned=datumShow.Top||datumShow.Front||datumShow.Right;
-    datumGroup.visible=live&&(auto||anyPinned||matePick);
+    datumGroup.visible=live&&(auto||anyPinned||matePick||skPick);
     const hov=treeHover?treeHover.split(':'):null;
     const hovPlane=(hov&&hov[0]==='plane')?hov[1]:null;
     const hovAxis =(hov&&hov[0]==='axis') ?hov[1]:null;
@@ -1216,8 +1222,8 @@ const CSG = (function(){
     const wantA=!matePick||mateSel.kind==='concentric';
     for(const m of datumPlanes){
       const lit=hovPlane===m.userData.plane;          // hovered in the tree
-      const on=(auto||(matePick&&wantP)||!!datumShow[m.userData.plane]||lit);
-      if(m.material)m.material.opacity=lit?0.34:(matePick&&wantP?0.2:0.12);
+      const on=(auto||skPick||(matePick&&wantP)||!!datumShow[m.userData.plane]||lit);
+      if(m.material)m.material.opacity=lit?0.34:((matePick&&wantP)||skPick?0.2:0.12);
       m.visible=on;
       if(m.userData.border)m.userData.border.visible=on;
       if(m.userData.label)m.userData.label.visible=on;
@@ -1228,7 +1234,7 @@ const CSG = (function(){
       ln.visible=live&&(!!axisShow[ln.userData.axis]||lit||(matePick&&wantA));
       if(ln.material){ln.material.opacity=lit?1:0.75;ln.material.linewidth=lit?2:1;}
     }
-    if(!auto&&!matePick)setDatumHover(null);   // clickable as the plane picker, or for a mate
+    if(!auto&&!matePick&&!skPick)setDatumHover(null);   // clickable as the plane picker, or for a mate
     const db=$('btn-demo'); if(db)db.style.display=auto?'':'none';
   }
 
@@ -7256,7 +7262,9 @@ const CSG = (function(){
   /* ============================ FEATURE CREATION ============================ */
   function addSketch(planeKind){
     let plane;
-    if(planeKind==='face'){ pendingFaceSketch=true; setHint('Click a flat face to place the sketch'); return; }
+    if(planeKind==='face'){ pendingFaceSketch=true;
+      showPickCard('Click a flat face to place the sketch');
+      setHint('Click a flat face to place the sketch'); return; }
     plane={kind:'datum',name:planeKind};
     const f={id:nextId(),type:'sketch',name:'Sketch'+sketchCount(),plane,entities:[],fillet:0,chamfer:0,suppressed:false,_isNew:true};
     f.frame=frameClone(DATUM[planeKind]);
@@ -7268,6 +7276,33 @@ const CSG = (function(){
     insertFeature(f); startSketch(f);
   }
   let pendingFaceSketch=false;
+  /* ---- the pick card: one persistent top-right prompt for armed picks ----
+     The bottom hint fades after a couple of seconds, which left "now click
+     something" states looking dead. The card stays up until the pick lands
+     or is cancelled, and steps aside when a property panel holds the corner. */
+  function showPickCard(msg){ const c=$('pickcard'); $('pickcard-msg').textContent=msg;
+    c.classList.toggle('beside',!!propsEl); c.classList.add('show'); }
+  function hidePickCard(){ $('pickcard').classList.remove('show'); }
+  $('pickcard-cancel').addEventListener('click',()=>cancelPicks('Pick cancelled'));
+  /* ---- the merged Sketch tool: one button, then click WHERE ----
+     A flat face of the model or one of the origin planes; the planes are
+     shown for the duration of the pick so there is something to click. */
+  let pendingSketchPick=false;
+  function startSketchPick(){
+    if(docMode!=='part'||mode!=='model'){ setHint('Sketches start from the model view of a part'); return; }
+    pendingSketchPick=true;
+    updateDatumVis();
+    showPickCard('Click a face of the model, or one of the origin planes, to sketch on it');
+    setHint('Pick where the sketch goes — Esc cancels');
+  }
+  function endSketchPick(){ pendingSketchPick=false; hidePickCard(); updateDatumVis(); }
+  function cancelPicks(msg){
+    const had=pendingSketchPick||pendingTextFace||pendingAxisPick||pendingFaceSketch;
+    pendingSketchPick=false; pendingTextFace=false; pendingAxisPick=null; pendingFaceSketch=false;
+    hidePickCard(); updateDatumVis();
+    if(had&&msg)setHint(msg);
+    return had;
+  }
   /* ---- text placement: same arm-and-click as the face sketch ---- */
   let pendingTextFace=false;
   function textFrameFromHit(hit){
@@ -7524,7 +7559,7 @@ const CSG = (function(){
     const done=(p,d,what)=>{
       f.px=+p.x.toFixed(4);f.py=+p.y.toFixed(4);f.pz=+p.z.toFixed(4);
       f.dx=+d.x.toFixed(6);f.dy=+d.y.toFixed(6);f.dz=+d.z.toFixed(6);
-      pendingAxisPick=null;
+      pendingAxisPick=null; hidePickCard();
       setHint('Axis placed through the '+what+' — Done keeps it');
       rebuild();
     };
@@ -7603,10 +7638,12 @@ const CSG = (function(){
          again is how people try to move the one they are editing. */
       if(draftFeat&&draftFeat.type==='text'){
         pendingTextFace={forFeat:draftFeat};
-        setHint('Click a flat face to move this text — or Done first, then Text again for a second one');
+        showPickCard('Click a flat face to move this text — or Done first, then Text again for a second one');
+        setHint('Click a flat face to move this text');
         return;
       }
       pendingTextFace=true;
+      showPickCard('Click a flat face for the text');
       setHint('Click a flat face for the text');
       return;
     }
@@ -8149,6 +8186,7 @@ const CSG = (function(){
       repick.className='btn-ghost';repick.style.cssText='margin:4px 0;font-size:12px';
       repick.textContent='Move to a different face…';
       repick.addEventListener('click',()=>{ pendingTextFace={forFeat:f};
+        showPickCard('Click the flat face the text should move to');
         setHint('Click the flat face the text should move to');});
       add(repick);
       const ntx=document.createElement('div');ntx.className='note';
@@ -8271,7 +8309,8 @@ const CSG = (function(){
         pick.textContent=pendingAxisPick===f?'Click a circular face or edge…':'Pick a circular face or edge';
         pick.addEventListener('click',()=>{ pendingAxisPick=f;
           pick.textContent='Click a circular face or edge…';
-          setHint('Click a round edge, an arc, a hole wall or a circular face — the axis lands at its centre');});
+          showPickCard('Click a round edge, an arc, a hole wall or a circular face — the axis lands at its centre');
+          setHint('Click something circular — the axis lands at its centre');});
         add(pick);
         const nc=document.createElement('div');nc.className='note';
         nc.textContent=f.dx==null?'Nothing picked yet — the axis appears once you click something circular.'
@@ -9803,9 +9842,24 @@ const CSG = (function(){
     }
     const moved=Math.hypot(e.clientX-downX,e.clientY-downY)>5;
     if(moved)return;
+    if(pendingSketchPick){
+      if(e.button!==0)return;
+      const r2=canvas.getBoundingClientRect();
+      ndc.x=((e.clientX-r2.left)/r2.width)*2-1; ndc.y=-((e.clientY-r2.top)/r2.height)*2+1;
+      raycaster.setFromCamera(ndc,camera);
+      const dh=raycaster.intersectObjects(datumPlanes,false)[0]||null;
+      const hit=pickBody(e);
+      /* nearest wins — a plane BEHIND the solid must not steal a face click */
+      if(dh&&(!hit||dh.distance<hit.distance)){
+        endSketchPick(); setDatumHover(null); addSketch(dh.object.userData.plane); return;
+      }
+      if(hit&&hit.face){ endSketchPick(); makeFaceSketch(hit); return; }
+      setHint('Nothing to sketch on there — click a flat face or an origin plane');
+      return;
+    }
     if(pendingFaceSketch){
       if(e.button!==0)return;
-      const hit=pickBody(e); if(hit&&hit.face)makeFaceSketch(hit); else setHint('No face there — click on a solid');
+      const hit=pickBody(e); if(hit&&hit.face){hidePickCard();makeFaceSketch(hit);} else setHint('No face there — click on a solid');
       return;
     }
     if(pendingTextFace){
@@ -9813,7 +9867,7 @@ const CSG = (function(){
       const hit=pickBody(e);
       if(hit&&hit.faceIndex!=null){
         const tgt=pendingTextFace&&pendingTextFace.forFeat;
-        pendingTextFace=false;
+        pendingTextFace=false; hidePickCard();
         if(tgt){                             // moving existing text to a new face
           const frame=textFrameFromHit(hit);
           if(!frame){setHint('That face is curved — text needs a flat face');return;}
@@ -9888,9 +9942,8 @@ const CSG = (function(){
         openSketchMenu(e.clientX, e.clientY, pointerToSketch(e));
         return;
     }
-    if(pendingTextFace||pendingAxisPick||pendingFaceSketch){
-      pendingTextFace=false; pendingAxisPick=null; pendingFaceSketch=false;
-      setHint('Face pick cancelled');
+    if(pendingTextFace||pendingAxisPick||pendingFaceSketch||pendingSketchPick){
+      cancelPicks('Pick cancelled');
       return;
     }
     const e2=pickEdge(e);
@@ -10025,10 +10078,7 @@ const CSG = (function(){
     fit      :{ic:'fit',   label:'Fit all',  fn:()=>fitAll()},
     proj     :{ic:'proj',  label:'Projection',fn:()=>setProjection(!orthoOn),
                  dyn:()=>orthoOn?'Perspective':'Orthographic'},
-    sk_top   :{ic:'sketch',label:'Sketch · Top plane',  fn:()=>addSketch('Top')},
-    sk_front :{ic:'sketch',label:'Sketch · Front plane',fn:()=>addSketch('Front')},
-    sk_right :{ic:'sketch',label:'Sketch · Right plane',fn:()=>addSketch('Right')},
-    sk_face  :{ic:'face-sketch',label:'Sketch · on a face',fn:()=>addSketch('face'),need:'solid'},
+    sketch   :{ic:'sketch',label:'Sketch',fn:()=>startSketchPick()},
     f_extrude:{ic:'extrude',label:'Extrude boss',fn:()=>addFeature('extrude'),need:'sketch'},
     f_cut    :{ic:'cut',    label:'Extrude cut', fn:()=>addFeature('cut'),    need:'sketch'},
     f_revolve:{ic:'revolve',label:'Revolve boss',fn:()=>addFeature('revolve'),need:'sketch'},
@@ -10048,8 +10098,7 @@ const CSG = (function(){
   };
   const DEFAULT_MODEL_LAYOUT=[
     {name:'View',     ids:['normal','iso','fit','proj']},
-    {name:'Sketch',   ids:['sk_top','sk_front','sk_right','sk_face']},
-    {name:'Features', ids:['f_extrude','f_cut','f_revolve','f_rcut','f_sweep','f_swcut','f_gfbin','f_gfplate','f_text','f_fillet','f_chamfer','t_mirror','t_lpat','t_cpat']},
+    {name:'Features', ids:['sketch','f_extrude','f_cut','f_revolve','f_rcut','f_sweep','f_swcut','f_gfbin','f_gfplate','f_text','f_fillet','f_chamfer','t_mirror','t_lpat','t_cpat']},
     {name:'Reference',ids:['r_plane','r_axis']}
   ];
   function openModelMenu(x,y){
@@ -10171,6 +10220,25 @@ const CSG = (function(){
       const feat=m.layout.find(x=>x.name==='Features')||m.layout[0];
       for(const id of m.layout[ti].ids)if(feat.ids.indexOf(id)<0)feat.ids.push(id);
       m.layout.splice(ti,1); migrated=true;
+    }
+    /* One-off merge (Aug 2026): the four sketch entries became ONE Sketch
+       tool at the head of Features. Stored layouts carrying the old ids get
+       the same treatment, wherever the user had moved them. */
+    if(saved){
+      const OLD_SK={sk_top:1,sk_front:1,sk_right:1,sk_face:1};
+      let hadOld=false;
+      for(const sec of m.layout){
+        const kept=sec.ids.filter(id=>!OLD_SK[id]);
+        if(kept.length!==sec.ids.length){ hadOld=true; sec.ids=kept; }
+      }
+      if(hadOld){
+        m.layout=m.layout.filter(sec=>sec.ids.length||sec.name!=='Sketch');
+        if(!m.layout.some(sec=>sec.ids.indexOf('sketch')>=0)){
+          const feat=m.layout.find(x=>x.name==='Features')||m.layout[0];
+          feat.ids.unshift('sketch');
+        }
+        migrated=true;
+      }
     }
     const adopted=adoptNewCommands(m,savedHidden);
     markHidden(m);
@@ -12562,6 +12630,7 @@ const CSG = (function(){
         erase:'Click any shape to delete it.'};
       return {title:'Sketch · '+tool, body:(t[tool]||'Pick a tool from the dock above.')+'<br>Right-click for every tool. <b>Finish sketch</b> when the profile is closed.'};
     }
+    if(pendingSketchPick) return {title:'Start a sketch', body:'Click a <b>flat face</b> of the model, or one of the <b>origin planes</b>, and the sketch opens there. <kbd>Esc</kbd> or right-click cancels.'};
     if(pendingFaceSketch) return {title:'Pick a face', body:'Click a <b>flat face</b> on the solid to place the new sketch there. Right-click to cancel.'};
     if(draftFeat&&draftFeat.type==='fillet') return {title:draftFeat.kind==='chamfer'?'Chamfer':'Fillet', body:'Click <b>edges in the viewport</b> to add or remove them — the result previews live. Set the radius in the panel, then <b>Done</b>.'};
     if(propsFeat) return {title:'Feature properties', body:'Adjust the values — the model rebuilds live. <b>Done</b> keeps the change, <b>Cancel</b> rolls it back.'};
@@ -12596,7 +12665,7 @@ const CSG = (function(){
   document.addEventListener('click',e=>{if(!menu.contains(e.target)&&e.target.id!=='btn-add')menu.classList.remove('open');});
   menu.querySelectorAll('[data-add]').forEach(b=>b.addEventListener('click',()=>{
     menu.classList.remove('open');const a=b.dataset.add;
-    if(a.startsWith('sketch-'))addSketch(a.split('-')[1]==='top'?'Top':a.split('-')[1]==='front'?'Front':a.split('-')[1]==='right'?'Right':'face');
+    if(a==='sketch')startSketchPick();
     else addFeature(a);
   }));
   $('dock').querySelectorAll('button').forEach(b=>b.addEventListener('click',e=>{
@@ -12950,6 +13019,8 @@ const CSG = (function(){
     }
     if(e.key==='F1'){e.preventDefault();openManual();return;}
     if(e.key==='Escape'&&mateSel){e.preventDefault();cancelMate();return;}
+    if(e.key==='Escape'&&(pendingSketchPick||pendingTextFace||pendingAxisPick||pendingFaceSketch)){
+      e.preventDefault();cancelPicks('Pick cancelled');return;}
     if(docMode==='draw'){
       // a sheet does not orbit, zoom or fit — those keys belong to the model
       if(/^Arrow/.test(e.key)||combo===keyFor('fit')||
@@ -13097,7 +13168,8 @@ const CSG = (function(){
     startMate, cancelMate, fitFace, faceRegion, applyMate, applyCompTransform,
     faceAt, datumAt, edgeCircAt, mateEndAt, chainSegRun, fitEdgeCircle, fitEdgeCircleAround,
     pickEdge, get pendingAxisPick(){ return pendingAxisPick; }, sketchBox,
-    textAnchorWorld, textGripWorld,
+    textAnchorWorld, textGripWorld, startSketchPick,
+    get pendingSketchPick(){ return pendingSketchPick; },
     get mateSel(){ return mateSel; }, perimeterHit, datumAt, mateEndAt, updateDatumVis,
     isSpline, splinePath, splinePts, splineTangent, splineHandles, splineInsertPoint,
     splineDeletePoint, splineResetHandles, splineUnder, openSketchMenu,

@@ -45,7 +45,14 @@ Already done from that plan: the Print/Export dialog with 3MF export, the unit f
 B-rep features (trap 40); photo-trace into any sketch (vision.js shared from /grid); and
 the /grid ⇄ freyacad hand-over (`?gf=WxDxH` deep link, "Edit in freyacad" on /grid). The
 menus lost their Transform heading — mirror and the patterns live under Features now,
-with a one-off localStorage layout migration in `loadMenu`. The full /grid tracer toolset
+with a one-off localStorage layout migration in `loadMenu`; a second migration there
+merged the four sketch entries into ONE pick-driven **Sketch** tool at the head of
+Features (`startSketchPick` — the origin planes show for the pick, a face or plane
+click starts the sketch, and the nearest hit wins so a plane behind the solid cannot
+steal a face click). That work also added the persistent top-right **pick card**
+(`showPickCard`/`hidePickCard`), shared by every click-something-next arm — sketch,
+text face and axis picks — because the fading bottom hint left armed states looking
+dead. The full /grid tracer toolset
 is ported into the trace dialog (colour pick, brush, scale line, finger holes,
 straighten, ROI, search box — everything but the printable fit-check template, by
 choice). Newest: **Text on a face** (raised or sunk, same or separate body for
