@@ -830,6 +830,22 @@ having a visible pane to paste into.
     height), and then every click near the joint hits a curved wall — the concentric
     success hint now says to drag along the axis or add a coincident mate to seat it.
 
+54. **Polygon corners are live point references now.** A polygon stores (c, r, rot) and
+    its corners are derived — but `pointRefs`/`resolvePt` expose corner k as ref idx k+1,
+    where reads compute the corner and WRITES solve r and rot about the centre
+    (`polyCornerRef`/`setPolyCorner`). That one mechanism gives coincident-to-a-corner,
+    dims to corners, drag-time joins on corners, and "snapped lines ride the polygon"
+    when it spins or stretches. Three companion rules earned their keep: the H/V tools
+    accept a polygon EDGE and solve rot (`applyHVPolygonEdge`, enforced in `applyCons`);
+    coincident enforcement lets the POLYGON side lead a plain point (one corner write
+    reshapes the whole shape, so the point is the follower); and `pinsOn` now grounds a
+    partner only via `anchoredSetSans` — anchored WITHOUT the pinned entity — because a
+    dangling line glued to a corner used to read as "anchored" through the polygon
+    itself and locked the polygon against the very drag that should carry the line.
+    Also from that session: `relaxDims` runs for grab-time joins even in a sketch with
+    no dims and no stored constraints, and a successful H/V apply settles stored
+    coincidences immediately (`relaxDims(editing,3)`).
+
 ## Biggest thing still missing
 
 **A real constraint solver *for sketches*.** Dimensions are applied one at a time, so
