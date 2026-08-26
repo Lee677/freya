@@ -45,7 +45,15 @@ Already done from that plan: the Print/Export dialog with 3MF export, the unit f
 B-rep features (trap 40); photo-trace into any sketch (vision.js shared from /grid); and
 the /grid ⇄ freyacad hand-over (`?gf=WxDxH` deep link, "Edit in freyacad" on /grid). The
 menus lost their Transform heading — mirror and the patterns live under Features now,
-with a one-off localStorage layout migration in `loadMenu`.
+with a one-off localStorage layout migration in `loadMenu`. The full /grid tracer toolset
+is ported into the trace dialog (colour pick, brush, scale line, finger holes,
+straighten, ROI, search box — everything but the printable fit-check template, by
+choice). Newest: **Text on a face** (raised or sunk, same or separate body for
+multi-colour 3MF, five system-font faces, B/I/U, repositionable — the letters go through
+an offscreen-canvas raster → boundary trace → RDP pipeline in `textLoops`, cached in
+`textLoopCache`), concentric mates accepting **circular edges and arcs** (`edgeCircAt`),
+and the axis tool's **centre-of-a-circle** pick (`consumeAxisPick`; traps 49–51 came out
+of this trio).
 
 **The engine job** remains closing the gap to SolidWorks and FreeCAD, working through
 `FEATURE-MATRIX.html` **cheapest first**. The matrix carries a token estimate per gap and
@@ -735,7 +743,44 @@ having a visible pane to paste into.
     model but not much further"), floored at 80, run after every rebuild and component
     change and before every fit; it also pulls the camera in when the model shrinks.
     Anything else in the codebase still holding a bare distance constant should be
-    presumed guilty of the same 15 mm-era assumption until measured.
+    presumed guilty of the same 15 mm-era assumption until measured. And indeed: the
+    sketch editor had two more of the same. The zoom envelope measured only the SOLIDS
+    (`partBox`), so a sketch bigger than the part — every traced outline on an empty
+    part — could not be zoomed out to; `sketchBox()` now unions the live sketch overlay
+    into `syncZoomRange` and `fitAll` while sketching. And `startSketch` flew to a
+    constant radius 18, framing one corner of a big sketch on entry; it now flies to
+    the sketch's own fit distance (18 stays the floor for an empty one). When testing
+    the entry flight headlessly, wait ~2.5 s: `controls.sph.radius` is only written by
+    the flight's finish(), and rAF starts late under SwiftShader — a mid-flight read
+    shows the stale pre-flight radius and looks exactly like the bug.
+
+49. **A circle fit whose tolerance scales with its own radius accepts its own garbage.**
+    The circular-edge pickers (`fitEdgeCircleAround`, feeding the axis tool's
+    centre-of-a-circle pick and the concentric mate's edge picks) chain tessellation
+    segments into a run and fit a window of points around the clicked segment. The first
+    version put the window at a fixed offset (`seedAt−3..seedAt+4`): click two segments
+    from the arc's end and the window straddles the tangent junction, catching seven arc
+    points plus one straight endpoint 30 mm away. Kåsa then fits a HUGE circle (r≈26 for
+    an r=5 corner arc) — and the acceptance test `rms < 0.02·r` passes, because the bogus
+    radius inflated its own tolerance. Growth (also toleranced on r) then swallowed the
+    whole rounded-rectangle outline and returned its inscribed-ish circle as "the arc".
+    The fix: try EVERY window shift that still contains the clicked segment, over several
+    window sizes, and keep the lowest RELATIVE residual (rms/r) — the pure-arc shift
+    always wins that contest, after which radius-relative growth is safe because the
+    radius is real. The near-miss version "worked" whenever the click landed mid-arc,
+    which is exactly why the first probe passed and the real-mouse test failed.
+
+50. **`applyCompTransform(comp)` reads `comp.t`; it takes no transform argument.** A test
+    called `applyCompTransform(comp, {x:-35,...})` and the second argument was silently
+    ignored — the pin stayed where auto-placement put it and the mate test's first click
+    hit empty space. Set the fields on `comp.t` first (`Object.assign(comp2.t,{...})`),
+    then call `applyCompTransform(comp2)`. Nothing warns; the position is just stale.
+
+51. **`defaults('sketch')` does not exist.** The `defaults()` switch covers solid/datum
+    features only — sketches are constructed literally everywhere (`{id, type:'sketch',
+    plane:{kind:'datum',name:'Top'}, entities:[…], dims:[], cons:[], fillet:0, chamfer:0,
+    suppressed:false}`). A probe that asks `defaults('sketch')` gets `undefined` and
+    fails a few lines later on `.id`.
 
 ## Biggest thing still missing
 

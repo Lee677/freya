@@ -702,6 +702,8 @@ sketch, or an existing solid — stay greyed out until it exists.</p>
     spacing — the whole body, or chosen features.</td></tr>
   <tr><td><b>Circular pattern</b></td><td>A solid</td><td>Repeats around an axis — bolt
     circles, splines, cooling fins. The whole body, or chosen features.</td></tr>
+  <tr><td><b>Text on a face</b></td><td>A solid with a flat face</td><td>Raised or engraved
+    lettering — labels, part numbers, names. Click a flat face and type.</td></tr>
 </table>
 <p>Select a feature in the tree and its parameters appear in a panel — depth, radius,
 count, spacing. Edit them and the model rebuilds.</p>
@@ -751,6 +753,28 @@ feature.</p>
   A sweep also cannot twist along its path or change section as it goes, and it takes one path
   rather than a path plus guide curves.</p>
 </div>
+<h3 id="text">Text on a face</h3>
+<p>Pick <b>Text on a face</b> from Add and click any <b>flat</b> face — or right-click a flat
+face and choose it from the menu, which skips the pick. The panel opens with the text ready to
+type over, and the letters appear on the model as you type.</p>
+<p>The first choice is whether the text is <b>raised</b> or <b>sunk</b>:</p>
+<ul>
+  <li><b>Raised</b> text stands proud of the face. It can be <b>part of the body</b> — one
+      solid, as if it were moulded in — or a <b>separate body</b> sitting on top.</li>
+  <li><b>Sunk</b> text is engraved into the face. It can be <b>just the cut</b>, or the cut
+      with a <b>separate filler body</b> that exactly fills it, flush with the face.</li>
+</ul>
+<p>The separate-body options exist for <b>multi-colour printing</b>: export as 3MF and the
+lettering arrives in the slicer as its own object, so you can give it its own filament —
+raised letters in a second colour, or an engraving inlaid flush.</p>
+<p><b>Bold</b>, <b>italic</b> and <b>underline</b> work as anywhere else, and there are five
+faces to choose from — sans, serif, mono, round and narrow. They render from fonts already on
+your machine, so nothing downloads and nothing slows the app down.</p>
+<p>Nothing is fixed at typing time: <b>letter height</b>, <b>depth</b>, the two <b>slide</b>
+fields and <b>angle</b> move the text about on its face whenever you come back to the feature,
+and <b>Move to a different face…</b> re-picks the face while keeping everything else. The
+letters become real solid geometry, so the text mirrors, patterns and exports like anything
+else you model.</p>
 <h3 id="scope">What a mirror or pattern copies</h3>
 <p>Mirror, linear pattern and circular pattern all ask the same question, at the top of
 their panel:</p>
@@ -818,8 +842,11 @@ your own:</p>
       a floating one. This is how you sketch somewhere that isn't a face of the model.</li>
   <li><b>Add axis</b> — a reference line, useful as the spin axis for a revolve or a
       circular pattern. Its panel asks how the axis is defined: <b>two planes</b> (the line
-      where they meet), <b>normal to a plane</b> through a point, or a plain
-      <b>position and direction</b>. Parallel planes are refused — they never meet.</li>
+      where they meet), <b>normal to a plane</b> through a point, a plain
+      <b>position and direction</b>, or the <b>centre of a circle</b> — press the pick
+      button and click anything circular on the model: a hole wall, a cylinder, a round
+      face, a rim, or just the <b>arc of a rounded corner</b>. The axis lands at its centre,
+      pointing along it. Parallel planes are refused — they never meet.</li>
 </ul>
 
 <h2 id="undo">Undo</h2>
@@ -853,11 +880,16 @@ saves, reopens and replays as one self-contained recipe.</p>
 </ul>
 <p>Files over 30&nbsp;MB are refused — they'd make the saved part unwieldy. Decimate
 large scans first.</p>
-<div class="note warn">
-  <span class="tag">Save early</span>
-  <p>There is no autosave and no recovery. Everything lives in the tab, so a crash, a
-  closed window or a stray refresh takes the part with it. Save whenever you've made
-  progress you'd be annoyed to redo.</p>
+<div class="note">
+  <span class="tag">Worth knowing</span>
+  <p>The open document also keeps an <b>autosave</b> in the browser's local storage: every
+  change is captured a moment after you make it, and the next time freyacad opens in this
+  browser it picks up where you left off — a refresh, a crash or a closed tab doesn't lose
+  the part. A demo you only looked at doesn't count as work, so it won't be "restored" at
+  you. The net has limits: it's one slot, in this browser on this machine; clearing the
+  browser's site data clears it too; and a part carrying a very large imported file is too
+  big for it. Real work still deserves a real <b>Save</b> — a file is yours to keep, back up
+  and send.</p>
 </div>
 
 <h3>Units</h3>
@@ -913,11 +945,16 @@ to them</b>, so you can sit a part on the Top plane or run it down the Y axis wi
 another part to reference.</p>
 
 <h3>Mates</h3>
-<p>Both mates work by <b>picking faces</b>, one on each part. Choose the mate, click the face
+<p>Both mates work by <b>picking</b>, one pick on each part. Choose the mate, click the face
 on the part you want to move, then click the face it should meet. Faces light up as the
 cursor passes over them, the first pick stays highlighted in amber, and <kbd>Esc</kbd>
 cancels. If a face is the wrong sort for the mate you chose, the pick is refused and says so
 rather than doing something surprising.</p>
+<p>A concentric mate also takes <b>circular edges</b>, not just round faces: the rim of a
+hole, the lip of a boss, or even a <b>rounded corner's arc</b>. Hover one and a ring lights
+up around it; click and the mate lines up on that circle's centre and axis. It's the natural
+pick when the cylindrical wall is hidden or too thin to hit — a countersunk hole, a thin
+plate, a chamfered rim.</p>
 <p>The <b>second</b> pick can be the origin instead of another part: an origin plane for a
 coincident mate, an origin axis for a concentric one. Whichever sort the mate needs appears
 on its own as soon as you start it, so there's nothing to turn on first. The first pick is
@@ -925,10 +962,10 @@ always a face on the part you want to move — the origin can't travel, so it ca
 thing that moves.</p>
 <table>
   <tr><th>Mate</th><th>Pick</th><th>Does</th></tr>
-  <tr><td><b>Concentric</b></td><td>Two round faces, or a round face and an <b>origin
-    axis</b></td><td>Puts the two on a common axis — a pin into a hole, a boss into a
-    counterbore, a shaft onto Y. The part stays free to slide along that axis and spin about
-    it.</td></tr>
+  <tr><td><b>Concentric</b></td><td>Two round faces or <b>circular edges</b> in any mix, or
+    one of those and an <b>origin axis</b></td><td>Puts the two on a common axis — a pin into
+    a hole, a boss into a counterbore, a shaft onto Y. The part stays free to slide along
+    that axis and spin about it.</td></tr>
   <tr><td><b>Coincident</b></td><td>Two flat faces, or a flat face and an <b>origin
     plane</b></td><td>Sets the faces against each other, face to face. The part stays free to
     slide about on that plane.</td></tr>
@@ -969,8 +1006,10 @@ app works on it</b>: sketch on the floor and cut a pocket, fillet an edge, patte
 then Print&nbsp;/&nbsp;Export. That is the difference between this and every mesh generator.</p>
 <h3>Tracing a real tool</h3>
 <p><b>Trace a photo&hellip;</b> (in the sketch menu) turns a photo into an outline in the
-open sketch. Lay the tool on a plain background, shoot square-on, pick the photo, and the
-traced outline appears. For scale, the honest way is <b>Measure a line</b>: click the two
+open sketch. The dialog fills the screen — tracing is precision work — with the tools
+grouped across the top in working order: the photo, helping the trace, fixing the line,
+real size, cut-outs. Lay the tool on a plain background, shoot square-on, pick the photo,
+and the traced outline appears. For scale, the honest way is <b>Measure a line</b>: click the two
 ends of something in the photo whose size you know — a ruler laid next to the tool is
 perfect — or drag from one end to the other, then type that line's real length. The
 readout under the photo shows the outline's true size, marked <em>(measured)</em>. With no

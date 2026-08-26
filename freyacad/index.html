@@ -775,6 +775,7 @@ if(!window.THREE){
     <button data-add="gfplate" data-ic="gfplate">Gridfinity baseplate</button>
     <button data-add="fillet" data-ic="fillet">Fillet</button>
     <button data-add="chamfer" data-ic="chamfer">Chamfer</button>
+    <button data-add="text" data-ic="text">Text on a face</button>
     <button data-add="mirror" data-ic="mirror">Mirror</button>
     <button data-add="lpattern" data-ic="lpattern">Linear pattern</button>
     <button data-add="cpattern" data-ic="cpattern">Circular pattern</button>
@@ -3990,6 +3991,12 @@ const CSG = (function(){
       const A=planeOf(af.pa||'Top'); if(!A) throw new Error('needs a plane');
       return {o:{x:af.px,y:af.py,z:af.pz}, d:{x:A.n.x,y:A.n.y,z:A.n.z}};
     }
+    if(M==='circ'){
+      if(af.dx==null&&af.dy==null&&af.dz==null)
+        throw new Error('pick a circular face or edge in the panel');
+      return {o:{x:af.px||0,y:af.py||0,z:af.pz||0},
+              d:{x:af.dx||0,y:af.dy||0,z:af.dz||0}};
+    }
     return {o:{x:af.px,y:af.py,z:af.pz}, d:AXDIR[af.dir]};
   }
   function resolveAxis(spec){
@@ -4130,6 +4137,45 @@ const CSG = (function(){
       }
       else if(f.merge && resultShapes.length) pendOp('merge',shp,f);
       else { flushPending(); resultShapes.push(shp); }
+      return;
+    }
+    if(f.type==='text'){
+      const fr=f.frame;
+      if(!fr)throw new Error('needs a face — edit the feature and pick a flat face');
+      const frame={o:new THREE.Vector3(fr.o[0],fr.o[1],fr.o[2]),
+                   u:new THREE.Vector3(fr.u[0],fr.u[1],fr.u[2]),
+                   v:new THREE.Vector3(fr.v[0],fr.v[1],fr.v[2]),
+                   n:new THREE.Vector3(fr.n[0],fr.n[1],fr.n[2])};
+      const ents=textLoops(f);
+      const depth=Math.max(0.05,+f.depth||1);
+      const OVER=0.05;    // sink/overshoot so booleans meet real material
+      if(f.mode==='cut'){
+        if(!resultShapes.length)throw new Error('nothing to cut');
+        const co=frameClone(frame); co.o.addScaledVector(frame.n,OVER);
+        const tool=OCK.extrude({entities:ents,fillet:0,chamfer:0,frame:co},depth+OVER,{flip:true});
+        noteTool(f,'cut',tool);
+        pendOp('cut',tool,f);
+        if(f.sep){
+          /* the engraving refilled by its own body — same loops, exact depth,
+             so a colour change at that layer prints the inlay */
+          flushPending();
+          const fill=OCK.extrude({entities:ents,fillet:0,chamfer:0,frame:frameClone(frame)},depth,{flip:true});
+          noteTool(f,'merge',fill);
+          resultShapes.push(fill);
+        }
+      } else {
+        if(f.sep){
+          const shp=OCK.extrude({entities:ents,fillet:0,chamfer:0,frame:frameClone(frame)},depth,{});
+          noteTool(f,'merge',shp);
+          flushPending(); resultShapes.push(shp);
+        } else {
+          const ao=frameClone(frame); ao.o.addScaledVector(frame.n,-OVER);
+          const shp=OCK.extrude({entities:ents,fillet:0,chamfer:0,frame:ao},depth+OVER,{});
+          noteTool(f,'merge',shp);
+          if(resultShapes.length) pendOp('merge',shp,f);
+          else { flushPending(); resultShapes.push(shp); }
+        }
+      }
       return;
     }
     if(f.type==='gfbin'||f.type==='gfplate'){
@@ -5379,6 +5425,7 @@ const CSG = (function(){
     const sd=sketchData[editing.id];
     if(sd)drawEntityLoopsColored(sketchOverlay,editing,sd.frame);
     redrawHandles(); drawSketchSel();
+    syncZoomRange();   // dragging a point outward can grow the sketch past the cap
   }
   // (the old blue dot that trailed the pointer is gone — the tool badge and
   // the snap markers do that job now)
@@ -5431,7 +5478,16 @@ const CSG = (function(){
     // the rebuild blocks the main thread for most of a second — started after
     // animateToFrame it ate the whole flight and the view just snapped flat.
     rebuild(); redrawDraft(null);
-    animateToFrame(feature.frame || planeFrame(feature.plane), 18);
+    /* Entering a sketch that already has content — a re-edit, or a traced
+       outline at photo scale — the old constant 18 framed one corner of it.
+       Fly to the sketch's own fit distance instead; 18 stays the floor for
+       an empty sketch. Measured about the frame origin the flight aims at. */
+    const skFrame=feature.frame || planeFrame(feature.plane);
+    syncZoomRange();
+    let r0=18;
+    const sb0=sketchBox();
+    if(sb0){ sb0.expandByPoint(skFrame.o); r0=Math.min(controls.maxR,Math.max(18,fitDistance(sb0))); }
+    animateToFrame(skFrame, r0);
     $('dock').querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.tool==='line'));
   }
   function finishSketch(){
@@ -7200,6 +7256,176 @@ const CSG = (function(){
     insertFeature(f); startSketch(f);
   }
   let pendingFaceSketch=false;
+  /* ---- text placement: same arm-and-click as the face sketch ---- */
+  let pendingTextFace=false;
+  function textFrameFromHit(hit){
+    const fit=fitFace(hit.object.geometry,hit.faceIndex);
+    if(!fit||fit.kind!=='plane')return null;
+    const n=fit.d.clone().normalize();
+    const raw=hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
+    if(n.dot(raw)<0)n.negate();                 // out of the body, like the hit
+    /* reading direction: along +X on horizontal faces (plan convention),
+       horizontal with "up" upward on walls — the Angle field turns it anyway */
+    let u;
+    if(Math.abs(n.y)>=0.9){ u=new THREE.Vector3(1,0,0); }
+    else { u=new THREE.Vector3(0,1,0).cross(n).normalize(); }
+    const v=n.clone().cross(u).normalize();
+    u=v.clone().cross(n).normalize();           // re-square the triad (v×n = u)
+    const o=fit.p;                              // face centroid: text starts centred
+    return {o:[o.x,o.y,o.z],u:[u.x,u.y,u.z],v:[v.x,v.y,v.z],n:[n.x,n.y,n.z]};
+  }
+  function startTextOnFace(hit){
+    const frame=textFrameFromHit(hit);
+    if(!frame){ setHint('That face is curved — text needs a flat face'); return; }
+    const f=defaults('text'); f.frame=frame; f._isNew=true;
+    insertFeature(f); selectFeature(f.id); openProps(f);
+    setHint('Type your text in the panel — position and angle move it on the face');
+  }
+  /* ---- circles from edges ---------------------------------------------------
+     A tessellated circular edge is a run of tiny segments. Chain them by
+     endpoint adjacency and tangent continuity from the picked one (sharp
+     junctions on to other feature edges do not follow), then Kåsa-fit a
+     circle in the run's own plane. Serves the axis tool here and the
+     concentric mate in assembly mode. */
+  function chainSegRun(segs,seedIdx){
+    const eq=(p,q)=>Math.hypot(p[0]-q[0],p[1]-q[1],p[2]-q[2])<1e-4;
+    const dirOf=(a,b)=>{const d=[b[0]-a[0],b[1]-a[1],b[2]-a[2]];
+      const L=Math.hypot(d[0],d[1],d[2])||1;return [d[0]/L,d[1]/L,d[2]/L];};
+    const s0=segs[seedIdx];
+    const pts=[s0.a.slice(),s0.b.slice()];
+    const used=new Set([seedIdx]);
+    let closed=false, seedAt=0;                 // index of the seed's first point
+    const grow=(fromStart)=>{
+      for(let guard=0;guard<4096&&!closed;guard++){
+        const end=fromStart?pts[0]:pts[pts.length-1];
+        const prev=fromStart?pts[1]:pts[pts.length-2];
+        const din=dirOf(prev,end);
+        let best=null,bestDot=0.82;             // within ~35° of straight on
+        for(let i=0;i<segs.length;i++){
+          if(used.has(i))continue;
+          const s=segs[i];let q=null;
+          if(eq(s.a,end))q=s.b; else if(eq(s.b,end))q=s.a; else continue;
+          const fw=dirOf(end,q);
+          const dot=fw[0]*din[0]+fw[1]*din[1]+fw[2]*din[2];
+          if(dot>bestDot){bestDot=dot;best={i,q};}
+        }
+        if(!best)break;
+        used.add(best.i);
+        if(fromStart){pts.unshift(best.q.slice());seedAt++;} else pts.push(best.q.slice());
+        if(eq(pts[0],pts[pts.length-1])&&pts.length>4){closed=true;pts.pop();seedAt=Math.min(seedAt,pts.length-1);}
+      }
+    };
+    grow(false); grow(true);
+    return {pts,closed,seedAt};
+  }
+  /* The chain follows TANGENT continuity, so a filleted outline chains arcs
+     and straights into one long run. The circle is found by growing a window
+     out from the CLICKED segment while the points keep landing on one circle —
+     the tangent straights fail the residual test and stop the growth, which is
+     exactly the arc the user pointed at. */
+  function fitEdgeCircleAround(run){
+    const pts=run.pts, n=pts.length; if(n<4)return null;
+    const closed=run.closed, seedAt=Math.min(run.seedAt||0,n-1);
+    const idx=i=>closed?(((i%n)+n)%n):Math.max(0,Math.min(n-1,i));
+    const win=(lo,hi)=>{const o=[];for(let i=lo;i<=hi;i++)o.push(pts[idx(i)]);return o;};
+    /* The clicked segment can sit anywhere in its arc, so try every window
+       shift that still contains it, over a few sizes, and keep the fit with
+       the smallest RELATIVE residual. A window straddling a tangent junction
+       fits a huge wrong circle whose rms sneaks under the radius-scaled
+       tolerance — the pure-arc shift always beats it on rms/r. */
+    let best=null;
+    for(const w of [8,6,5,4]){
+      if(w>n)continue;
+      for(let k=0;k<w-1;k++){
+        const lo2=seedAt-k, hi2=lo2+w-1;
+        if(!closed&&(lo2<0||hi2>n-1))continue;
+        const f=fitEdgeCircle(win(lo2,hi2));
+        if(f&&(!best||f.rms/f.r<best.f.rms/best.f.r))best={f,lo:lo2,hi:hi2};
+      }
+    }
+    if(!best)return null;
+    let fit=best.f, lo=best.lo, hi=best.hi;
+    const resid=p=>{const P=new THREE.Vector3(p[0],p[1],p[2]).sub(fit.p);
+      const off=P.dot(fit.d);
+      const inpl=P.clone().addScaledVector(fit.d,-off);
+      return Math.hypot(inpl.length()-fit.r,off);};
+    const tol=()=>Math.max(0.02*fit.r,0.08);
+    let grew=true,guard=0;
+    while(grew&&guard++<2*n){
+      grew=false;
+      if(hi-lo+1<n&&(closed||hi<n-1)&&resid(pts[idx(hi+1)])<tol()){hi++;grew=true;}
+      if(hi-lo+1<n&&(closed||lo>0)&&resid(pts[idx(lo-1)])<tol()){lo--;grew=true;}
+      if(grew&&(hi-lo)%6===0){const f2=fitEdgeCircle(win(lo,hi));if(f2)fit=f2;}
+    }
+    const f3=fitEdgeCircle(win(lo,hi)); if(f3)fit=f3;
+    return fit;
+  }
+  function fitEdgeCircle(rawPts){
+    const n=rawPts.length; if(n<4)return null;
+    const P=rawPts.map(p=>new THREE.Vector3(p[0],p[1],p[2]));
+    const C=new THREE.Vector3(); for(const p of P)C.add(p); C.divideScalar(n);
+    const N=new THREE.Vector3();                        // Newell, chord-closed
+    for(let i=0;i<n;i++){const a=P[i],b=P[(i+1)%n];
+      N.x+=(a.y-b.y)*(a.z+b.z);N.y+=(a.z-b.z)*(a.x+b.x);N.z+=(a.x-b.x)*(a.y+b.y);}
+    if(N.lengthSq()<1e-12){
+      const a=P[0],m=P[(n/2)|0],b=P[n-1];
+      N.copy(m.clone().sub(a).cross(b.clone().sub(a)));
+      if(N.lengthSq()<1e-12)return null;
+    }
+    N.normalize();
+    const u=(Math.abs(N.y)<0.9?new THREE.Vector3(0,1,0):new THREE.Vector3(1,0,0)).cross(N).normalize();
+    const v=N.clone().cross(u).normalize();
+    let Sxx=0,Sxy=0,Syy=0,Sx=0,Sy=0,S=0,Sxz=0,Syz=0,Sz=0;
+    for(const p of P){const q=p.clone().sub(C);
+      const x=q.dot(u),y=q.dot(v),z=x*x+y*y;
+      Sxx+=x*x;Sxy+=x*y;Syy+=y*y;Sx+=x;Sy+=y;S+=1;Sxz+=x*z;Syz+=y*z;Sz+=z;}
+    const A3=[[2*Sxx,2*Sxy,Sx],[2*Sxy,2*Syy,Sy],[2*Sx,2*Sy,S]],B3=[Sxz,Syz,Sz];
+    const det3=m2=>m2[0][0]*(m2[1][1]*m2[2][2]-m2[1][2]*m2[2][1])
+                -m2[0][1]*(m2[1][0]*m2[2][2]-m2[1][2]*m2[2][0])
+                +m2[0][2]*(m2[1][0]*m2[2][1]-m2[1][1]*m2[2][0]);
+    const D=det3(A3); if(Math.abs(D)<1e-14)return null;
+    const col=(k,b)=>{const m2=A3.map(r=>r.slice());for(let i=0;i<3;i++)m2[i][k]=b[i];return det3(m2);};
+    const a2=col(0,B3)/D,b2=col(1,B3)/D,c2=col(2,B3)/D;
+    const r=Math.sqrt(Math.max(0,c2+a2*a2+b2*b2));
+    if(!(r>1e-4)||r>1e4)return null;
+    const centre=C.clone().addScaledVector(u,a2).addScaledVector(v,b2);
+    let rms=0,arc=0;
+    for(const p of P){const q=p.clone().sub(C);
+      rms+=Math.pow(Math.hypot(q.dot(u)-a2,q.dot(v)-b2)-r,2);}
+    for(let i=1;i<n;i++)arc+=P[i].distanceTo(P[i-1]);
+    rms=Math.sqrt(rms/n);
+    if(rms>Math.max(0.02*r,0.05))return null;           // not circular
+    if(arc/r<0.3)return null;                           // too short an arc to trust
+    return {p:centre,d:N,r,rms,span:arc/r};
+  }
+  /* the axis tool's pick: a circular EDGE run first, else a face — a
+     cylinder gives its axis, a flat circular face its centre and normal */
+  let pendingAxisPick=null;      // the daxis (draft) feature awaiting a pick
+  function consumeAxisPick(e){
+    const f=pendingAxisPick;
+    const done=(p,d,what)=>{
+      f.px=+p.x.toFixed(4);f.py=+p.y.toFixed(4);f.pz=+p.z.toFixed(4);
+      f.dx=+d.x.toFixed(6);f.dy=+d.y.toFixed(6);f.dz=+d.z.toFixed(6);
+      pendingAxisPick=null;
+      setHint('Axis placed through the '+what+' — Done keeps it');
+      rebuild();
+    };
+    const pe=pickEdge(e);
+    if(pe){
+      const run=chainSegRun(pickEdges,pe.idx);
+      const fit=fitEdgeCircleAround(run);
+      /* span, not run.closed: the chain loops the whole outline even when
+         the fitted portion is one corner arc */
+      if(fit)return done(fit.p,fit.d,fit.span>5.5?'circle centre':'arc centre');
+    }
+    const hit=pickBody(e);
+    if(hit&&hit.faceIndex!=null){
+      const fit=fitFace(hit.object.geometry,hit.faceIndex);
+      if(fit&&fit.kind==='cyl')return done(fit.p,fit.d,'cylinder axis');
+      if(fit&&fit.kind==='plane')return done(fit.p,fit.d,'face centre');
+    }
+    setHint('Nothing circular there — click a round edge, an arc, a hole wall or a circular face');
+  }
   function makeFaceSketch(hit){
     const n=hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
     const o=hit.point.clone().addScaledVector(n,0.001);
@@ -7236,6 +7462,10 @@ const CSG = (function(){
       divX:1,divY:1,scoop:0,solid:false,merge:true,suppressed:false};
     if(type==='gfplate')return {id:nextId(),type:'gfplate',name:'Baseplate'+cnt('gfplate'),
       nx:2,ny:2,floor:0,merge:true,suppressed:false};
+    if(type==='text')return {id:nextId(),type:'text',name:'Text'+cnt('text'),
+      frame:null,text:'TEXT',font:'sans',size:8,depth:1,
+      bold:false,italic:false,underline:false,
+      mode:'add',sep:false,du:0,dv:0,angle:0,suppressed:false};
     if(type==='sweep'||type==='swcut')return {id:nextId(),type:'sweep',
       name:(type==='sweep'?'Sweep':'SweepCut')+cnt('sweep'),
       sketchId:sid, pathId:prevSketchId(sid),
@@ -7248,6 +7478,12 @@ const CSG = (function(){
   }
   function cnt(t){return features.filter(f=>f.type===t).length+1;}
   function addFeature(type,sketchId){
+    if(type==='text'){
+      if(!resultShapes.length){setHint('Text needs a solid to sit on — extrude something first');return;}
+      pendingTextFace=true;
+      setHint('Click a flat face for the text');
+      return;
+    }
     if(type==='extrude'||type==='cut'||type==='revolve'||type==='rcut'||type==='sweep'||type==='swcut'){ if(!sketchId&&!lastSketchId()){setHint('Create a sketch first');return;} }
     const f=defaults(type); f._isNew=true;
     if(sketchId!=null&&'sketchId' in f)f.sketchId=sketchId;
@@ -7306,6 +7542,7 @@ const CSG = (function(){
     trace:_sw(`<rect x="3" y="4.5" width="18" height="15" rx="1.5" stroke="${_B}"/><circle cx="8" cy="9" r="1.6" fill="${_B}"/><path d="M4 17l4.5-4 3 2.5L16 11l4.5 4.5" stroke="${_B}"/><path d="M9.5 20.5q4-2.5 7-1t4-2" stroke="${_Y}" stroke-dasharray="2.6 1.6"/>`),
     gfbin:_sw(`<rect x="3" y="8" width="18" height="12" rx="2" stroke="${_B}"/><path d="M3 12h18M12 8v12" stroke="${_B}" opacity=".5"/><path d="M5.5 8V5.6q0-1.1 1.1-1.1h10.8q1.1 0 1.1 1.1V8" stroke="${_Y}"/>`),
     gfplate:_sw(`<rect x="2.6" y="6" width="18.8" height="12" rx="1.5" stroke="${_B}"/><rect x="5" y="8.4" width="6" height="7.2" rx="1.6" stroke="${_Y}"/><rect x="13" y="8.4" width="6" height="7.2" rx="1.6" stroke="${_Y}"/>`),
+    text:_sw(`<rect x="3" y="5" width="18" height="14" rx="2" stroke="${_B}" opacity=".55"/><path d="M8 9h8M12 9v7" stroke="${_Y}" stroke-width="2"/>`),
     sweep:_sw(`<path d="M3.5 19c0-7 5.5-8.5 8.5-8.5s8.5-1.5 8.5-8" stroke="${_Y}" stroke-dasharray="3.4 2"/><rect x="1.6" y="15.6" width="6.4" height="6.4" rx="1" stroke="${_B}"/><rect x="16.8" y="1.6" width="6.4" height="6.4" rx="1" stroke="${_B}" opacity=".55"/>`),
     swcut:_sw(`<path d="M3.5 19c0-7 5.5-8.5 8.5-8.5s8.5-1.5 8.5-8" stroke="${_R}" stroke-dasharray="3.4 2"/><rect x="1.6" y="15.6" width="6.4" height="6.4" rx="1" stroke="${_B}"/><path d="M17.2 2.2 22.8 7.8M22.8 2.2 17.2 7.8" stroke="${_R}"/>`),
     revolve:_sw(`<path d="M5 3v18" stroke="${_B}" stroke-dasharray="4.5 2 1.2 2"/><path d="M9 6.5c6 0 10 2.2 10 5.5s-4 5.5-10 5.5z" stroke="${_B}"/><path d="M8 3.5c5 .2 8.6 1 10.2 2.4M15.5 6.5l2.7-.6-.5-2.7" stroke="${_Y}"/>`),
@@ -7648,6 +7885,16 @@ const CSG = (function(){
     opts.forEach(o=>{const b=document.createElement('button');b.textContent=o.l;b.className=(o.v===val?'active':'');b.addEventListener('click',()=>{on(o.v);[...seg.children].forEach(c=>c.classList.remove('active'));b.classList.add('active');});seg.appendChild(b);});
     w.appendChild(seg);return w;
   }
+  function fieldText(label,val,placeholder,on){
+    const w=document.createElement('div');w.className='field';
+    w.innerHTML=`<span class="field-label">${label}</span>`;
+    const inp=document.createElement('input');inp.type='text';
+    inp.value=val==null?'':val; inp.placeholder=placeholder||'';
+    inp.style.width='100%';
+    inp.addEventListener('keydown',ev=>ev.stopPropagation());   // typing is not a shortcut
+    inp.addEventListener('input',()=>on(inp.value));
+    w.appendChild(inp);return w;
+  }
   function fieldCheck(label,val,on){
     const w=document.createElement('label');w.className='check'+(val?' on':'');
     w.innerHTML=`<span class="box"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 6l3 3 5-6"/></svg></span>${label}`;
@@ -7737,6 +7984,49 @@ const CSG = (function(){
         .concat(features.filter(x=>x.type==='daxis').map(a=>({l:a.name,v:'ax:'+a.id})));
       add(fieldSeg('Axis',axOpts,f.axis,v=>{f.axis=v;rerun();}));
       add(fieldNumber('Angle',f.angle,5,1,360,'deg',v=>{f.angle=Math.min(360,v);rerun();}));
+    } else if(f.type==='text'){
+      const tf=fieldText('Text',f.text,'what to write',v=>{f.text=v;rerun();});
+      add(tf);
+      setTimeout(()=>{const i=tf.querySelector('input');if(i&&f._isNew){i.focus();i.select();}f._isNew=false;},0);
+      add(fieldSeg('Font',Object.keys(TEXT_FONTS).map(k=>({l:TEXT_FONTS[k].label,v:k})),
+        f.font||'sans',v=>{f.font=v;rerun();}));
+      const styleRow=document.createElement('div');
+      styleRow.className='field';
+      styleRow.innerHTML='<span class="field-label">Style</span>';
+      const seg=document.createElement('div');seg.className='seg';
+      [['bold','B','bold'],['italic','I','italic'],['underline','U','underline']].forEach(([k,l,title])=>{
+        const b=document.createElement('button');
+        b.textContent=l;b.title=title;
+        if(k==='bold')b.style.fontWeight='700';
+        if(k==='italic')b.style.fontStyle='italic';
+        if(k==='underline')b.style.textDecoration='underline';
+        b.className=f[k]?'active':'';
+        b.addEventListener('click',()=>{f[k]=!f[k];b.classList.toggle('active',f[k]);rerun();});
+        seg.appendChild(b);
+      });
+      styleRow.appendChild(seg);add(styleRow);
+      add(fieldNumber('Letter height',f.size,1,1,200,'units',v=>{f.size=Math.max(0.5,v);rerun();}));
+      add(fieldSeg('The text is',[{l:'Raised (emboss)',v:'add'},{l:'Sunk (engrave)',v:'cut'}],
+        f.mode||'add',v=>{f.mode=v;rerun();openProps(propsFeat);}));
+      if((f.mode||'add')==='cut')
+        add(fieldSeg('Engraving',[{l:'Just cut',v:0},{l:'Cut + filler body',v:1}],
+          f.sep?1:0,v=>{f.sep=!!v;rerun();}));
+      else
+        add(fieldSeg('Body',[{l:'Part of the body',v:0},{l:'Separate body',v:1}],
+          f.sep?1:0,v=>{f.sep=!!v;rerun();}));
+      add(fieldNumber('Depth',f.depth,0.2,0.05,100,'units',v=>{f.depth=Math.max(0.05,v);rerun();}));
+      add(fieldNumber('Slide across',f.du||0,0.5,null,null,'units',v=>{f.du=v;rerun();}));
+      add(fieldNumber('Slide up / down',f.dv||0,0.5,null,null,'units',v=>{f.dv=v;rerun();}));
+      add(fieldNumber('Angle',f.angle||0,5,null,null,'°',v=>{f.angle=v;rerun();}));
+      const repick=document.createElement('button');
+      repick.className='btn-ghost';repick.style.cssText='margin:4px 0;font-size:12px';
+      repick.textContent='Move to a different face…';
+      repick.addEventListener('click',()=>{ pendingTextFace={forFeat:f};
+        setHint('Click the flat face the text should move to');});
+      add(repick);
+      const ntx=document.createElement('div');ntx.className='note';
+      ntx.textContent='A separate body keeps its own colour in the slicer — paint it there for two-colour text. Slide and angle move the text on its face any time.';
+      add(ntx);
     } else if(f.type==='gfbin'){
       add(fieldNumber('Width (42 mm units)',f.nx,1,1,8,'',v=>{f.nx=Math.max(1,Math.round(v));rerun();}));
       add(fieldNumber('Depth (42 mm units)',f.ny,1,1,8,'',v=>{f.ny=Math.max(1,Math.round(v));rerun();}));
@@ -7846,7 +8136,21 @@ const CSG = (function(){
         .concat(features.filter(x=>x.type==='dplane').map(x=>x.name))
         .map(n=>({l:n,v:n}));
       add(fieldSeg('Defined by',[{l:'Two planes',v:'planes'},{l:'Normal to a plane',v:'normal'},
-        {l:'Position + direction',v:'dir'}],f.method||'dir',v=>{f.method=v;rerun();openProps(f);}));
+        {l:'Position + direction',v:'dir'},{l:'Centre of a circle',v:'circ'}],
+        f.method||'dir',v=>{f.method=v;rerun();openProps(f);}));
+      if((f.method||'dir')==='circ'){
+        const pick=document.createElement('button');
+        pick.className='btn-primary';pick.style.cssText='margin:4px 0;font-size:12px';
+        pick.textContent=pendingAxisPick===f?'Click a circular face or edge…':'Pick a circular face or edge';
+        pick.addEventListener('click',()=>{ pendingAxisPick=f;
+          pick.textContent='Click a circular face or edge…';
+          setHint('Click a round edge, an arc, a hole wall or a circular face — the axis lands at its centre');});
+        add(pick);
+        const nc=document.createElement('div');nc.className='note';
+        nc.textContent=f.dx==null?'Nothing picked yet — the axis appears once you click something circular.'
+          :'Axis through ('+(+f.px).toFixed(1)+', '+(+f.py).toFixed(1)+', '+(+f.pz).toFixed(1)+'). Pick again to change it.';
+        add(nc);
+      }
       if((f.method||'dir')==='planes'){
         add(fieldSeg('First plane',planes,f.pa||'Top',v=>{f.pa=v;rerun();}));
         add(fieldSeg('Second plane',planes,f.pb||'Front',v=>{f.pb=v;rerun();}));
@@ -7857,7 +8161,7 @@ const CSG = (function(){
         add(fieldNumber('Through X',f.px,0.5,null,null,'units',v=>{f.px=v;rerun();}));
         add(fieldNumber('Through Y',f.py,0.5,null,null,'units',v=>{f.py=v;rerun();}));
         add(fieldNumber('Through Z',f.pz,0.5,null,null,'units',v=>{f.pz=v;rerun();}));
-      } else {
+      } else if((f.method||'dir')==='dir'){
         add(fieldSeg('Direction',[{l:'X',v:'X'},{l:'Y',v:'Y'},{l:'Z',v:'Z'}],f.dir,v=>{f.dir=v;rerun();}));
         add(fieldNumber('Position X',f.px,0.5,null,null,'units',v=>{f.px=v;rerun();}));
         add(fieldNumber('Position Y',f.py,0.5,null,null,'units',v=>{f.py=v;rerun();}));
@@ -8143,6 +8447,154 @@ const CSG = (function(){
     downloadBlob(new Blob([build3MF(srcGeoms)],{type:'model/3mf'}),'freyacad.3mf');
   }
 
+  /* ---- Text on a face -------------------------------------------------------
+     Letters come from the browser's own text renderer: the string is drawn on
+     an offscreen canvas in a font the machine already has (nothing downloads,
+     nothing slows the load), the alpha mask is contour-traced WITH holes (an
+     O is two loops), and the loops land in the picked face's frame as closed
+     polylines — from there OCK.extrude does what it does for any sketch. The
+     glyph curves become fine polylines; at print scale that is invisible, and
+     it is exactly how the photo tracer already ships shapes. */
+  const TEXT_FONTS={
+    sans:  {label:'Sans',   css:'Arial, Helvetica, sans-serif'},
+    serif: {label:'Serif',  css:'Georgia, "Times New Roman", serif'},
+    mono:  {label:'Mono',   css:'"Courier New", "Fira Code", monospace'},
+    round: {label:'Rounded',css:'"Comic Sans MS", "Trebuchet MS", sans-serif'},
+    narrow:{label:'Narrow', css:'"Arial Narrow", "Liberation Sans Narrow", sans-serif'}
+  };
+  const textLoopCache=new Map();     // feature id -> {key, ents}
+  function textRDP(pts,eps){
+    if(pts.length<3)return pts.slice();
+    const keep=new Uint8Array(pts.length); keep[0]=keep[pts.length-1]=1;
+    const st=[[0,pts.length-1]];
+    while(st.length){
+      const [a,b]=st.pop(); if(b-a<2)continue;
+      const A=pts[a],B=pts[b]; const vx=B[0]-A[0],vy=B[1]-A[1];
+      const L=Math.hypot(vx,vy)||1e-12;
+      let bi=-1,bd=0;
+      for(let i=a+1;i<b;i++){
+        const d=Math.abs((pts[i][0]-A[0])*vy-(pts[i][1]-A[1])*vx)/L;
+        if(d>bd){bd=d;bi=i;}
+      }
+      if(bd>eps){keep[bi]=1;st.push([a,bi],[bi,b]);}
+    }
+    return pts.filter((_,i)=>keep[i]);
+  }
+  /* every boundary of a binary mask: outer loops of each blob and the holes
+     inside them, via component labelling + Moore boundary tracing */
+  function maskLoops(mask,w,h){
+    const lab=new Int32Array(w*h); let nl=0;
+    const qx=new Int32Array(w*h), qy=new Int32Array(w*h);
+    const flood=(sx,sy,val,tgt)=>{     // 4-connected flood of tgt-valued pixels
+      let head=0,tail=0; qx[tail]=sx;qy[tail]=sy;tail++;
+      lab[sy*w+sx]=val;
+      while(head<tail){
+        const x=qx[head],y=qy[head];head++;
+        const tryP=(nx,ny)=>{ if(nx<0||ny<0||nx>=w||ny>=h)return;
+          const i=ny*w+nx;
+          if(lab[i]===0&&mask[i]===tgt){lab[i]=val;qx[tail]=nx;qy[tail]=ny;tail++;} };
+        tryP(x+1,y);tryP(x-1,y);tryP(x,y+1);tryP(x,y-1);
+      }
+    };
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++)
+      if(mask[y*w+x]===1&&lab[y*w+x]===0){nl++;flood(x,y,nl,1);}
+    // background reachable from the border is -1; enclosed background = holes
+    for(let x=0;x<w;x++){ if(mask[x]===0&&lab[x]===0)flood(x,0,-1,0);
+      const b=(h-1)*w+x; if(mask[b]===0&&lab[b]===0)flood(x,h-1,-1,0); }
+    for(let y=0;y<h;y++){ const l=y*w, r=y*w+w-1;
+      if(mask[l]===0&&lab[l]===0)flood(0,y,-1,0);
+      if(mask[r]===0&&lab[r]===0)flood(w-1,y,-1,0); }
+    let nh=0; const holeOwner=[];
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+      const i=y*w+x;
+      if(mask[i]===0&&lab[i]===0){ nh++; flood(x,y,nl+nh,0);
+        // the blob wrapping this hole sits just above its topmost pixel
+        holeOwner[nl+nh]=lab[(y-1)*w+x]; }
+    }
+    /* Moore boundary trace of one labelled region, 8-connected, clockwise */
+    const trace=(val)=>{
+      let sx=-1,sy=-1;
+      for(let i=0;i<w*h&&sx<0;i++)if(lab[i]===val){sx=i%w;sy=(i/w)|0;}
+      if(sx<0)return null;
+      const DX=[1,1,0,-1,-1,-1,0,1], DY=[0,1,1,1,0,-1,-1,-1];
+      const inside=(x,y)=>x>=0&&y>=0&&x<w&&y<h&&lab[y*w+x]===val;
+      const out=[[sx,sy]];
+      let cx2=sx,cy2=sy,dir=6;                  // came from above
+      for(let guard=0;guard<w*h*4;guard++){
+        let k=0,found=-1;
+        for(;k<8;k++){ const d=(dir+6+k)%8;     // start looking back-left of travel
+          if(inside(cx2+DX[d],cy2+DY[d])){found=d;break;} }
+        if(found<0)break;                       // a single pixel
+        cx2+=DX[found];cy2+=DY[found];dir=found;
+        if(cx2===sx&&cy2===sy)break;
+        out.push([cx2,cy2]);
+      }
+      return out;
+    };
+    const loops=[];
+    for(let v=1;v<=nl;v++){ const t=trace(v); if(t&&t.length>2)loops.push({pts:t,hole:false,owner:v}); }
+    for(let v=nl+1;v<=nl+nh;v++){ const t=trace(v); if(t&&t.length>2)loops.push({pts:t,hole:true,owner:holeOwner[v]}); }
+    return loops;
+  }
+  /* the string as closed loops in sketch millimetres, centred on (du,dv),
+     rotated by angle — the same {type:'poly',closed:true} entities a traced
+     photo inserts, so regions() and extrude need nothing new */
+  function textLoops(f){
+    const label=String(f.text==null?'':f.text);
+    if(!label.trim())throw new Error('type some text in the panel');
+    const key=JSON.stringify([label,f.font,f.size,!!f.bold,!!f.italic,!!f.underline,f.du,f.dv,f.angle]);
+    const hit=textLoopCache.get(f.id);
+    if(hit&&hit.key===key)return hit.ents;
+    const size=Math.max(1,+f.size||8);
+    const fam=(TEXT_FONTS[f.font]||TEXT_FONTS.sans).css;
+    // resolution: enough pixels for crisp letters, capped so a long line of
+    // text cannot balloon the mask
+    const mc=document.createElement('canvas'); const mg=mc.getContext('2d');
+    const style=(f.italic?'italic ':'')+(f.bold?'bold ':'');
+    mg.font=style+'100px '+fam;
+    const wEm=Math.max(1,mg.measureText(label).width)/100;   // width in em
+    const RES=Math.max(2,Math.min(6,900/(wEm*size)));        // px per mm
+    const px=size*RES;                                       // font px
+    const padX=Math.ceil(px*0.25), padY=Math.ceil(px*0.45);
+    mc.width=Math.ceil(wEm*px)+padX*2;
+    mc.height=Math.ceil(px*1.3)+padY*2+(f.underline?Math.ceil(px*0.22):0);
+    const g2=mc.getContext('2d');
+    g2.font=style+px+'px '+fam;
+    g2.textBaseline='alphabetic';
+    const baseY=padY+px;                                     // baseline row
+    g2.fillStyle='#fff';
+    g2.fillText(label,padX,baseY);
+    if(f.underline){
+      const tw=g2.measureText(label).width;
+      g2.fillRect(padX,baseY+px*0.10,tw,Math.max(2,px*0.07));
+    }
+    const id2=g2.getImageData(0,0,mc.width,mc.height);
+    const mask=new Uint8Array(mc.width*mc.height);
+    for(let i=0;i<mask.length;i++)mask[i]=id2.data[i*4+3]>127?1:0;
+    const loops=maskLoops(mask,mc.width,mc.height);
+    if(!loops.length)throw new Error('nothing to draw — that text rendered empty');
+    // px -> mm, y flip, centre the ink, rotate, offset
+    let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+    for(const L of loops)for(const p of L.pts){
+      if(p[0]<x0)x0=p[0];if(p[0]>x1)x1=p[0];if(p[1]<y0)y0=p[1];if(p[1]>y1)y1=p[1];}
+    const cx3=(x0+x1)/2, cy3=(y0+y1)/2;
+    const ca=Math.cos((f.angle||0)*Math.PI/180), sa=Math.sin((f.angle||0)*Math.PI/180);
+    const ents=[];
+    for(const L of loops){
+      const thin=textRDP(L.pts,Math.max(0.8,RES*0.12));
+      if(thin.length<3)continue;
+      const pts=thin.map(p=>{
+        const mx=(p[0]-cx3)/RES, my=(cy3-p[1])/RES;         // mm, y up
+        return {x:+((mx*ca-my*sa)+(f.du||0)).toFixed(4),
+                y:+((mx*sa+my*ca)+(f.dv||0)).toFixed(4)};
+      });
+      ents.push({type:'poly',closed:true,pts});
+    }
+    if(!ents.length)throw new Error('the text is too small to trace — make it larger');
+    textLoopCache.set(f.id,{key,ents});
+    return ents;
+  }
+
   /* ---- Trace a photo --------------------------------------------------------
      /grid's scan pipeline (vision.js — shared, lazy-loaded from /grid/js/) in
      freyacad's sketch mode: photo in, segmentation, crack-following contour,
@@ -8182,49 +8634,69 @@ const CSG = (function(){
   function openTraceDialog(){
     if(mode!=='sketch'||!editing){ setHint('Open a sketch first — the outline lands in it'); return; }
     const ov=document.createElement('div');
-    ov.style.cssText='position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center';
-    ov.innerHTML=`<div style="background:var(--panel);border:1px solid var(--g-blue);border-radius:12px;
-        padding:16px 18px;width:min(580px,94vw);max-height:94vh;overflow:auto;box-shadow:0 24px 60px -12px rgba(0,0,0,.9)">
-      <h3 style="margin:0 0 4px;font-size:15px">Trace a photo</h3>
-      <p style="margin:0 0 8px;font-size:11.5px;color:var(--muted)">Shoot square-on. For true scale, <b>Measure a line</b>: mark two ends of something you know the size of — a ruler in shot is perfect. If the automatic trace misses, teach it the colours; then grab the yellow line anywhere and drag to reshape it.</p>
-      <div style="display:flex;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
-        <button id="tr-pick" class="btn-primary">Choose photo…</button>
-        <button id="tr-cscale" class="btn-ghost" style="font-size:11.5px">Measure a line</button>
-        <label id="tr-side-l" style="font-size:12px;color:var(--muted)">Longest side
-          <input id="tr-mm" type="number" value="100" min="1" step="1"
-            style="width:64px;margin-left:6px"> mm</label>
-        <label id="tr-line-l" style="font-size:12px;color:var(--muted);display:none">that line is
-          <input id="tr-lmm" type="number" value="25" min="0.1" step="0.5"
-            style="width:56px;margin-left:6px"> mm
-          <button id="tr-lclear" class="btn-ghost" style="font-size:11px;padding:1px 7px;margin-left:2px">✕</button></label>
-        <label style="font-size:12px;color:var(--muted)"><input id="tr-inv" type="checkbox" style="margin-right:4px">dark background</label>
+    ov.style.cssText='position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.55)';
+    /* full-page on purpose (owner request): tracing is precision work and the
+       photo deserves every pixel. The toolbar is grouped in workflow order —
+       photo, teach the trace, fix the line, real size, cut-outs — instead of
+       the three arbitrary rows it grew as tools were ported one by one. */
+    const GRP='display:flex;flex-direction:column;gap:5px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;min-width:0';
+    const CAP='font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-2);white-space:nowrap';
+    const ROW='display:flex;gap:6px;align-items:center;flex-wrap:wrap';
+    ov.innerHTML=`<div style="background:var(--panel);width:100%;height:100%;display:flex;flex-direction:column;
+        padding:12px 16px;box-sizing:border-box">
+      <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+        <h3 style="margin:0;font-size:15px">Trace a photo</h3>
+        <p style="margin:0;font-size:11.5px;color:var(--muted);flex:1;min-width:240px">Shoot square-on. If the automatic trace misses, teach it the colours; grab the yellow line anywhere to reshape it; <b>Measure a line</b> on something of known size makes the outline true scale.</p>
       </div>
-      <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-        <button id="tr-ctool" class="btn-ghost" style="font-size:11.5px">Pick object colour</button>
-        <button id="tr-cbg" class="btn-ghost" style="font-size:11.5px">Pick background</button>
-        <span id="tr-sw" style="display:flex;gap:3px;align-items:center"></span>
-        <button id="tr-cclear" class="btn-ghost" style="font-size:11.5px;display:none">clear colours</button>
-        <span style="flex:1"></span>
-        <label style="font-size:11.5px;color:var(--muted)">Brush
-          <input id="tr-brush" type="range" min="12" max="70" value="30" style="width:64px;vertical-align:middle"></label>
-        <button id="tr-undo" class="btn-ghost" style="font-size:11.5px" disabled>Undo</button>
-        <button id="tr-reset" class="btn-ghost" style="font-size:11.5px" disabled>Reset line</button>
+      <div style="display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;margin:8px 0">
+        <div style="${GRP}"><span style="${CAP}">1 · Photo</span>
+          <div style="${ROW}">
+            <button id="tr-pick" class="btn-primary">Choose photo…</button>
+            <label style="font-size:11.5px;color:var(--muted);white-space:nowrap"><input id="tr-inv" type="checkbox" style="margin-right:4px">dark background</label>
+          </div></div>
+        <div style="${GRP}"><span style="${CAP}">2 · Help the trace</span>
+          <div style="${ROW}">
+            <button id="tr-ctool" class="btn-ghost" style="font-size:11.5px">Pick object colour</button>
+            <button id="tr-cbg" class="btn-ghost" style="font-size:11.5px">Pick background</button>
+            <span id="tr-sw" style="display:flex;gap:3px;align-items:center"></span>
+            <button id="tr-cclear" class="btn-ghost" style="font-size:11.5px;display:none">clear colours</button>
+            <span style="font-size:10.5px;color:var(--muted-2);white-space:nowrap">drag empty photo = search area</span>
+            <button id="tr-roiclear" class="btn-ghost" style="font-size:11.5px;display:none">clear search</button>
+          </div></div>
+        <div style="${GRP};flex:1;min-width:300px"><span style="${CAP}">3 · Fix the line</span>
+          <div style="${ROW}">
+            <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:6px;flex:1;min-width:210px">Brush size
+              <input id="tr-brush" type="range" min="5" max="80" value="30" style="flex:1;min-width:150px;vertical-align:middle"></label>
+            <button id="tr-undo" class="btn-ghost" style="font-size:11.5px" disabled>Undo</button>
+            <button id="tr-reset" class="btn-ghost" style="font-size:11.5px" disabled>Reset line</button>
+            <button id="tr-straight" class="btn-ghost" style="font-size:11.5px">Straighten</button>
+          </div></div>
+        <div style="${GRP}"><span style="${CAP}">4 · Real size</span>
+          <div style="${ROW}">
+            <button id="tr-cscale" class="btn-ghost" style="font-size:11.5px">Measure a line</button>
+            <label id="tr-side-l" style="font-size:12px;color:var(--muted);white-space:nowrap">Longest side
+              <input id="tr-mm" type="number" value="100" min="1" step="1"
+                style="width:60px;margin-left:6px"> mm</label>
+            <label id="tr-line-l" style="font-size:12px;color:var(--muted);display:none;white-space:nowrap">that line is
+              <input id="tr-lmm" type="number" value="25" min="0.1" step="0.5"
+                style="width:56px;margin-left:6px"> mm
+              <button id="tr-lclear" class="btn-ghost" style="font-size:11px;padding:1px 7px;margin-left:2px">✕</button></label>
+          </div></div>
+        <div style="${GRP}"><span style="${CAP}">5 · Cut-outs</span>
+          <div style="${ROW}">
+            <button id="tr-fing" class="btn-ghost" style="font-size:11.5px">Add finger hole</button>
+            <label style="font-size:11.5px;color:var(--muted);white-space:nowrap">r
+              <input id="tr-fr" type="number" value="9" min="1" step="1" style="width:50px;margin-left:4px"> mm</label>
+          </div></div>
       </div>
-      <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-        <button id="tr-fing" class="btn-ghost" style="font-size:11.5px">Add finger hole</button>
-        <label style="font-size:11.5px;color:var(--muted)">r
-          <input id="tr-fr" type="number" value="9" min="1" step="1" style="width:54px;margin-left:4px"> mm</label>
-        <button id="tr-straight" class="btn-ghost" style="font-size:11.5px">Straighten</button>
-        <span style="flex:1"></span>
-        <span style="font-size:11px;color:var(--muted-2)">drag empty photo = search area</span>
-        <button id="tr-roiclear" class="btn-ghost" style="font-size:11.5px;display:none">clear search</button>
+      <div id="tr-wrap" style="flex:1;min-height:0">
+        <canvas id="tr-cv" width="544" height="320" style="position:static;width:100%;height:100%;display:block;background:var(--panel-2,#161b22);border:1px solid var(--line);border-radius:8px;touch-action:none;box-sizing:border-box"></canvas>
       </div>
-      <canvas id="tr-cv" width="544" height="320" style="position:static;width:100%;background:var(--panel-2,#161b22);border:1px solid var(--line);border-radius:8px;touch-action:none"></canvas>
       <!-- position:static: the app-wide canvas{position:absolute;inset:0} rule
            (for the viewport) otherwise stretches this preview over the whole
            screen — an opaque sheet hiding the dialog. Same trap as #navcube. -->
-      <div style="font-size:11.5px;color:var(--muted);margin:8px 0"><span id="tr-status">No photo yet.</span><span id="tr-osize" style="color:var(--text)"></span></div>
-      <div style="display:flex;gap:8px;justify-content:flex-end">
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <div style="font-size:11.5px;color:var(--muted);flex:1;min-width:0"><span id="tr-status">No photo yet.</span><span id="tr-osize" style="color:var(--text)"></span></div>
         <button id="tr-cancel" class="btn-ghost">Cancel</button>
         <button id="tr-insert" class="btn-primary" disabled>Insert outline</button>
       </div></div>`;
@@ -8406,6 +8878,17 @@ const CSG = (function(){
           +(fingers.length?' · '+fingers.length+' finger hole'+(fingers.length>1?'s':''):'');
       } else $q('tr-osize').textContent='';
     };
+    /* the canvas is only a viewport (all state is in image px, K() rescales),
+       so sizing its backing store to the element is free — evPos divides by
+       the element rect, so input stays exact at any size */
+    const wrap=$q('tr-wrap');
+    const fitCanvas=()=>{
+      const w=Math.max(320,wrap.clientWidth|0), h=Math.max(240,wrap.clientHeight|0);
+      if(cv.width!==w||cv.height!==h){ cv.width=w; cv.height=h; }
+      paint();
+    };
+    window.addEventListener('resize',fitCanvas);
+    fitCanvas();
     function traceNow(){
       if(!img)return;
       try{
@@ -8620,7 +9103,7 @@ const CSG = (function(){
         traceNow();
       }catch(err){ status(err.message||String(err)); }
     });
-    const close=()=>ov.remove();
+    const close=()=>{ window.removeEventListener('resize',fitCanvas); ov.remove(); };
     $q('tr-cancel').addEventListener('click',close);
     ov.addEventListener('pointerdown',e=>{ if(e.target===ov)close(); });
     $q('tr-insert').addEventListener('click',()=>{
@@ -8949,7 +9432,9 @@ const CSG = (function(){
         // preview the end the click would take — the pick is the hard part of
         // a mate, so never make the user guess what the cursor is over
         const f=mateEndAt(e), want=wantKind(mateSel.kind);
-        const key=f?(f.datum?'d:'+f.datum:f.mesh.id+':'+f.seed):null;
+        const key=f?(f.datum?'d:'+f.datum
+          :f.edgeRing?('e:'+f.mesh.id+':'+f.p.x.toFixed(2)+','+f.p.y.toFixed(2)+','+f.p.z.toFixed(2)+':'+f.r.toFixed(2))
+          :f.mesh.id+':'+f.seed):null;
         if(key!==mateSel.hover){
           mateSel.hover=key;
           while(mateHi.length>(mateSel.a?1:0)){ const m=mateHi.pop();
@@ -9131,6 +9616,27 @@ const CSG = (function(){
       const hit=pickBody(e); if(hit&&hit.face)makeFaceSketch(hit); else setHint('No face there — click on a solid');
       return;
     }
+    if(pendingTextFace){
+      if(e.button!==0)return;
+      const hit=pickBody(e);
+      if(hit&&hit.faceIndex!=null){
+        const tgt=pendingTextFace&&pendingTextFace.forFeat;
+        pendingTextFace=false;
+        if(tgt){                             // moving existing text to a new face
+          const frame=textFrameFromHit(hit);
+          if(!frame){setHint('That face is curved — text needs a flat face');return;}
+          tgt.frame=frame; tgt.du=0; tgt.dv=0; rebuild();
+          setHint('Text moved — slide and angle place it exactly');
+        } else startTextOnFace(hit);
+      }
+      else setHint('No face there — click a flat face of the solid');
+      return;
+    }
+    if(pendingAxisPick){
+      if(e.button!==0)return;
+      consumeAxisPick(e);
+      return;
+    }
     if(mode==='sketch'&&editing){ if(e.button===0){const p=pointerToSketch(e);if(p)sketchClick(applyDrawSnap(p));} return; }
     if(mode==='model'&&e.button===0){
       if(datumGroup.visible){
@@ -9189,6 +9695,11 @@ const CSG = (function(){
     if(mode==='sketch') {
         openSketchMenu(e.clientX, e.clientY, pointerToSketch(e));
         return;
+    }
+    if(pendingTextFace||pendingAxisPick||pendingFaceSketch){
+      pendingTextFace=false; pendingAxisPick=null; pendingFaceSketch=false;
+      setHint('Face pick cancelled');
+      return;
     }
     const e2=pickEdge(e);
     if(e2||selectedEdges.length){ if(e2&&!selectedEdges.some(s=>s.idx===e2.rec.idx))toggleEdge(e2.rec); openEdgeMenu(e.clientX,e.clientY); }
@@ -9334,6 +9845,7 @@ const CSG = (function(){
     f_swcut  :{ic:'swcut',  label:'Swept cut',   fn:()=>addFeature('swcut'),  need:'sketch'},
     f_gfbin  :{ic:'gfbin',  label:'Gridfinity bin',      fn:()=>addFeature('gfbin')},
     f_gfplate:{ic:'gfplate',label:'Gridfinity baseplate',fn:()=>addFeature('gfplate')},
+    f_text   :{ic:'text',   label:'Text on a face',      fn:()=>addFeature('text'),need:'solid'},
     f_fillet :{ic:'fillet', label:'Fillet',      fn:()=>addFeature('fillet'), need:'solid'},
     f_chamfer:{ic:'chamfer',label:'Chamfer',     fn:()=>addFeature('chamfer'),need:'solid'},
     t_mirror :{ic:'mirror', label:'Mirror',      fn:()=>addFeature('mirror'), need:'solid'},
@@ -9345,7 +9857,7 @@ const CSG = (function(){
   const DEFAULT_MODEL_LAYOUT=[
     {name:'View',     ids:['normal','iso','fit','proj']},
     {name:'Sketch',   ids:['sk_top','sk_front','sk_right','sk_face']},
-    {name:'Features', ids:['f_extrude','f_cut','f_revolve','f_rcut','f_sweep','f_swcut','f_gfbin','f_gfplate','f_fillet','f_chamfer','t_mirror','t_lpat','t_cpat']},
+    {name:'Features', ids:['f_extrude','f_cut','f_revolve','f_rcut','f_sweep','f_swcut','f_gfbin','f_gfplate','f_text','f_fillet','f_chamfer','t_mirror','t_lpat','t_cpat']},
     {name:'Reference',ids:['r_plane','r_axis']}
   ];
   function openModelMenu(x,y){
@@ -9355,6 +9867,20 @@ const CSG = (function(){
     if(sf&&sf.type==='sketch'){
       items.push({sect:sf.name});
       items.push({ic:'edit',label:'Edit sketch',fn:()=>editSketch(sf)});
+    }
+    /* right-clicked on a flat face: the face is as good as selected — text
+       and a face sketch can start there with no extra pick */
+    const hitF=(()=>{ if(!hasSolid)return null;
+      try{ const h=pickBody({clientX:x,clientY:y});
+        if(h&&h.faceIndex!=null){
+          const fit=fitFace(h.object.geometry,h.faceIndex);
+          if(fit&&fit.kind==='plane')return h;
+        } }catch(_){ }
+      return null; })();
+    if(hitF){
+      items.push({sect:'This face'});
+      items.push({ic:'text',label:'Text on this face',fn:()=>startTextOnFace(hitF)});
+      items.push({ic:'face-sketch',label:'Sketch on this face',fn:()=>makeFaceSketch(hitF)});
     }
     for(const sec of MENUS.model.layout){
       const live=sec.ids.filter(id=>MCMD[id]);
@@ -10111,6 +10637,34 @@ const CSG = (function(){
       p:fit.p.clone().applyMatrix4(m.matrixWorld),
       d:fit.d.clone().transformDirection(m.matrixWorld).normalize()};
   }
+  /* A circular EDGE (or an arc of one) is as good a concentric end as a
+     cylindrical face: chain the tessellated segment run under the cursor and
+     Kåsa-fit its circle — centre, axis, radius. The mate solver only ever
+     reads p/d/r, so an edge end drops straight in. */
+  function edgeCircAt(e){
+    const lines=[];
+    asmMeshes.flat().forEach(m=>{ m.updateMatrixWorld(true);
+      m.children.forEach(c=>{ if(c.isLineSegments)lines.push(c); }); });
+    if(!lines.length)return null;
+    const r=canvas.getBoundingClientRect();ndc.x=((e.clientX-r.left)/r.width)*2-1;ndc.y=-((e.clientY-r.top)/r.height)*2+1;
+    raycaster.setFromCamera(ndc,camera);
+    raycaster.params.Line.threshold=0.18*Math.max(1,controls.sph.radius/24);
+    const hit=raycaster.intersectObjects(lines,false)[0];
+    if(!hit||hit.index==null)return null;
+    const o=hit.object, pos=o.geometry.attributes.position, M=o.matrixWorld;
+    const segs=[]; const t1=new THREE.Vector3(), t2=new THREE.Vector3();
+    for(let i=0;i+1<pos.count;i+=2){
+      t1.set(pos.getX(i),pos.getY(i),pos.getZ(i)).applyMatrix4(M);
+      t2.set(pos.getX(i+1),pos.getY(i+1),pos.getZ(i+1)).applyMatrix4(M);
+      segs.push({a:[t1.x,t1.y,t1.z],b:[t2.x,t2.y,t2.z]});
+    }
+    const run=chainSegRun(segs,Math.floor(hit.index/2));
+    const fit=fitEdgeCircleAround(run);
+    if(!fit)return null;
+    const host=o.parent;
+    return {kind:'cyl', r:fit.r, mesh:host, seed:-1, compId:host.userData.compId,
+            dist:hit.distance, p:fit.p, d:fit.d, edgeRing:true};
+  }
   /* The origin planes and axes are pickable ends too. They read as a face with
      no component: an origin plane is a flat face at the origin, an origin axis
      is a round face of no radius. Nothing else in the mate code has to know. */
@@ -10132,9 +10686,13 @@ const CSG = (function(){
      whole scene, so "a part always beats a plane" would put the Right plane
      out of reach the moment anything sat on it. */
   function mateEndAt(e){
-    const f=faceAt(e), g=datumAt(e);
-    if(f&&g)return (g.dist<f.dist-1e-6)?g:f;
-    return f||g;
+    const f=faceAt(e), g=datumAt(e), c=edgeCircAt(e);
+    /* an edge lies ON its faces, so their distances tie — when the cursor is
+       close enough to hit the edge at all, the edge is what was meant */
+    let best=f;
+    if(g&&(!best||g.dist<best.dist-1e-6))best=g;
+    if(c&&(!best||c.dist<=best.dist+0.12*Math.max(1,controls.sph.radius/24)))best=c;
+    return best;
   }
   /* ---- mates ---------------------------------------------------------------
      Pick a face on each part and the mate is solved from those two faces, not
@@ -10148,6 +10706,15 @@ const CSG = (function(){
   function faceHilite(f,color){
     const mat=c=>new THREE.MeshBasicMaterial({color:c,transparent:true,opacity:0.5,
       side:THREE.DoubleSide,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-4,polygonOffsetUnits:-4});
+    if(f.edgeRing){                             // a circular edge: light the ring
+      const tube=Math.max(0.06,Math.min(0.35,f.r*0.06));
+      const mm=new THREE.Mesh(new THREE.TorusGeometry(f.r,tube,10,64),mat(color));
+      mm.material.opacity=0.85; mm.material.depthTest=false;
+      mm.position.copy(f.p);
+      mm.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),f.d);
+      scene.add(mm); mateHi.push(mm);
+      return;
+    }
     if(f.datum){
       let mm;
       if(DATUM[f.datum]){                       // an origin plane: light the panel
@@ -10176,7 +10743,7 @@ const CSG = (function(){
     clearMateHi(); mateSel={kind,a:null,hover:null};
     canvas.style.cursor='crosshair'; updateDatumVis();
     setHint(kind==='concentric'
-      ? 'Concentric: click a round face on the part to move, then the round face or origin axis it should share an axis with (Esc cancels)'
+      ? 'Concentric: click a round face, a circular edge or an arc on the part to move, then the round thing or origin axis it should share an axis with (Esc cancels)'
       : 'Coincident: click a flat face on the part to move, then the flat face or origin plane it should sit against (Esc cancels)');
     refreshAsmUI();
   }
@@ -10192,7 +10759,7 @@ const CSG = (function(){
     const f=mateEndAt(e);
     const need=wantKind(mateSel.kind);
     if(!f)return setHint(need==='cyl'
-      ? 'Nothing there — click a round face, or one of the origin axes'
+      ? 'Nothing there — click a round face, a circular edge or an arc, or one of the origin axes'
       : 'Nothing there — click a flat face, or one of the origin planes');
     if(f.kind!==need)return setHint(need==='cyl'
       ? 'That is not a round face — pick a hole, a boss, or an origin axis'
@@ -12110,6 +12677,14 @@ const CSG = (function(){
     const fov=perspCam.fov*Math.PI/180;   // ortho derives its box from the same fov
     return (sz/2)/Math.tan(fov/2)*1.15+0.5;
   }
+  /* While sketching, the thing being framed is the SKETCH — which can be far
+     bigger than any solid yet built (a traced outline arrives at photo scale
+     with the part still empty). The envelope and Fit must measure it too. */
+  function sketchBox(){
+    if(mode!=='sketch'||!editing)return null;
+    const b=new THREE.Box3().setFromObject(sketchOverlay);
+    return b.isEmpty()?null:b;
+  }
   /* The zoom envelope follows the model: pull back far enough to see the whole
      thing plus a little context, and no further. maxR used to be an absolute
      300 from the 15 mm-part era — the wheel AND fitAll both clamp to it, so a
@@ -12117,6 +12692,8 @@ const CSG = (function(){
      component change, and before every fit. */
   function syncZoomRange(){
     let box=partBox();
+    const sb=sketchBox();
+    if(sb){ if(box)box.union(sb); else box=sb; }
     if(!box&&datumGroup.visible)box=new THREE.Box3().setFromObject(datumGroup);
     const fit=box?fitDistance(box):40;
     controls.maxR=Math.min(5000,Math.max(80,fit*1.6));
@@ -12125,6 +12702,8 @@ const CSG = (function(){
   function fitAll(){
     syncZoomRange();
     let box=partBox();
+    const sb=sketchBox();
+    if(sb){ if(box)box.union(sb); else box=sb; }
     if(!box){ if(datumGroup.visible){ box=new THREE.Box3().setFromObject(datumGroup); } else return; }
     const c=box.getCenter(new THREE.Vector3());
     controls.target.copy(c);
@@ -12324,6 +12903,8 @@ const CSG = (function(){
     sheetSVGText, removeDrawView, rebuildDrawViews, sheetSize, addDrawView, buildView,
     get draw(){ return draw; }, renderSheet, addAllCentreMarks, toSheet, fitScale, loadDemo,
     startMate, cancelMate, fitFace, faceRegion, applyMate, applyCompTransform,
+    faceAt, datumAt, edgeCircAt, mateEndAt, chainSegRun, fitEdgeCircle, fitEdgeCircleAround,
+    pickEdge, get pendingAxisPick(){ return pendingAxisPick; }, sketchBox,
     get mateSel(){ return mateSel; }, perimeterHit, datumAt, mateEndAt, updateDatumVis,
     isSpline, splinePath, splinePts, splineTangent, splineHandles, splineInsertPoint,
     splineDeletePoint, splineResetHandles, splineUnder, openSketchMenu,
