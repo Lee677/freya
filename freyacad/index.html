@@ -1684,6 +1684,45 @@ const CSG = (function(){
     if(e.type==='polygon')return 4;             // centre + radius + rotation
     return 0;
   }
+  /* ---- the structural interface constraint logic speaks through ----------
+     Constraint algorithms never ask "is this a polygon?". They ask three
+     questions about STRUCTURE, answered here once per entity type — so a
+     future slot or ellipse joins every tool by declaring itself, and the
+     tools behave the same for every shape.
+     - entSpin(e): the entity's single rotation variable, when its segment
+       directions are bound to one (a regular polygon's rot). Aligning such
+       a segment solves this variable; nothing else about the shape moves.
+     - coupledEnt(e): does writing one point reshape the others? Derived
+       from the numbers, not the name: fewer stored variables than
+       2×points means the points are not independent coordinates. A
+       coincident between a coupled shape and a plain point anchors the
+       shape and moves the point.
+     - entSeg(sk,ent,seg): a segment's two endpoints for ANY entity that
+       has segments — a chain's stored points (live, writable), or a
+       coupled shape's derived corners (read-only; its spin does the
+       moving). */
+  function entSpin(e){
+    if(e&&e.type==='polygon')return {
+      get:()=>e.rot, set:v=>{e.rot=v;},
+      segDir:seg=>e.rot+(seg+0.5)/e.sides*Math.PI*2+Math.PI/2};
+    return null;
+  }
+  function coupledEnt(e){ return !!e&&entVarCount(e)<2*entPoints(e).length; }
+  function entSeg(sk,ent,seg){
+    const e=sk.entities[ent]; if(!e)return null;
+    if(e.type==='poly'){
+      const n=e.pts.length, a=e.pts[seg], b=e.pts[(seg+1)%n];
+      return (a&&b)?{a,b,e,spin:null}:null;
+    }
+    const sp=entSpin(e);
+    if(sp){
+      const cor=entPoints(e).slice(1);          // corners follow the centre
+      if(!cor.length)return null;
+      const a=cor[seg%cor.length], b=cor[(seg+1)%cor.length];
+      return {a,b,e,spin:sp};
+    }
+    return null;
+  }
   // dimensions bearing on this entity; each removes one DOF
   function dimsOn(sk,i){
     let n=0;
@@ -5086,7 +5125,12 @@ const CSG = (function(){
     if(t!=='horiz'&&t!=='vert'&&t!=='paral'&&t!=='equal')return false;
     const d={entIdx:sketchSel.entIdx,kind:'seg',seg:sketchSel.seg};
     if(t==='horiz'||t==='vert'){
-      if(guardDims(()=>{applyHVConstraint(d,t);storeHV(editing,d,t);return true;},
+      // the same one path as the click tool: align, store, settle coincidences
+      if(guardDims(()=>{
+           if(!segAlign(editing,d.entIdx,d.seg,t))return false;
+           storeHV(editing,d,t);
+           relaxDims(editing,3);
+           return true;},
            t==='horiz'?'Horizontal':'Vertical'))
         setHint(t==='horiz'?'Line constrained horizontal — delete its badge to free it'
                            :'Line constrained vertical — delete its badge to free it');
@@ -5819,16 +5863,18 @@ const CSG = (function(){
       drawSnapMark(); return;
     } else if(tool==='horiz' || tool==='vert'){
       const d=dimHit(p);
-      const pgE=(d&&d.kind==='pedge')?editing.entities[d.entIdx]:null;
-      if(d && (d.kind==='seg'||(pgE&&pgE.type==='polygon'))){
+      /* one path for every entity with segments: segAlign spins a coupled
+         shape or swings a free line, whichever the entity's structure says */
+      if(d && (d.kind==='seg'||d.kind==='pedge')){
+        const spun=!!entSpin(editing.entities[d.entIdx]);
         if(guardDims(()=>{
-             if(pgE)applyHVPolygonEdge(pgE,d.seg,tool); else applyHVConstraint(d,tool);
+             if(!segAlign(editing,d.entIdx,d.seg,tool))return false;
              storeHV(editing,d,tool);
              relaxDims(editing,3);   // stored coincidences follow the swing at once
              return true;},
              tool==='horiz'?'Horizontal':'Vertical'))
-          setHint(pgE?(tool==='horiz'?'Polygon edge laid flat — delete its badge to free the spin'
-                                     :'Polygon edge stood upright — delete its badge to free the spin')
+          setHint(spun?(tool==='horiz'?'Edge laid flat — delete its badge to free the spin'
+                                      :'Edge stood upright — delete its badge to free the spin')
                  :tool==='horiz'?'Line constrained horizontal — delete its badge to free it'
                                 :'Line constrained vertical — delete its badge to free it'); }
       else setHint('Click a line segment or a polygon edge');
@@ -6102,31 +6148,41 @@ const CSG = (function(){
     const ha=held(s.a), hb=held(s.b);
     return ha!==hb ? (ha?s.a:s.b) : null;
   }
-  function applyHVConstraint(d, kind){
-    const s=polySeg(d); if(!s) return;
-    const keep=heldEnd(d,s);
-    if(keep){
-      const mv=(keep===s.a)?s.b:s.a, L=Math.hypot(mv.x-keep.x,mv.y-keep.y);
-      if(kind==='horiz'){ const sgn=mv.x>=keep.x?1:-1; mv.x=keep.x+sgn*L; mv.y=keep.y; }
-      else              { const sgn=mv.y>=keep.y?1:-1; mv.y=keep.y+sgn*L; mv.x=keep.x; }
-      return;
+  /* ONE horizontal/vertical solver for every entity, through entSeg. A
+     segment whose direction is bound to a spin variable solves that one
+     variable — the centre and size stay put, and the nearer of the two
+     axis alignments wins so the shape barely moves (two corners vertically
+     above each other IS the edge between them made vertical). A free
+     segment swings flat about its held end — or its midpoint when neither
+     or both ends are anchored — keeping its length, so a length dimension
+     on it is never quietly rewritten. `hold` pins a specific end (the
+     dragged one, during enforcement); leave it undefined to let the
+     anchor reading decide. */
+  function segAlign(sk,ent,seg,kind,hold){
+    const S=entSeg(sk,ent,seg); if(!S)return false;
+    if(S.spin){
+      const phi=S.spin.segDir(seg), want=kind==='vert'?Math.PI/2:0;
+      let d=(want-phi)%Math.PI;
+      if(d>Math.PI/2)d-=Math.PI; if(d<-Math.PI/2)d+=Math.PI;
+      S.spin.set(S.spin.get()+d);
+      return true;
     }
-    const mx=(s.a.x+s.b.x)/2, my=(s.a.y+s.b.y)/2, L=Math.hypot(s.b.x-s.a.x,s.b.y-s.a.y)/2;
-    // keep the end that's further along the constrained axis on the same side
-    if(kind==='horiz'){ const sgn=s.b.x>=s.a.x?1:-1; s.a.x=mx-sgn*L; s.b.x=mx+sgn*L; s.a.y=my; s.b.y=my; }
-    else              { const sgn=s.b.y>=s.a.y?1:-1; s.a.y=my-sgn*L; s.b.y=my+sgn*L; s.a.x=mx; s.b.x=mx; }
-  }
-  /* A polygon edge stood upright or laid flat solves ROT alone — the centre
-     and size stay put, and the nearer of the two axis alignments wins so the
-     shape barely moves. Two corners vertically above each other IS the edge
-     between them made vertical, which is how the tool reads a polygon. */
-  function applyHVPolygonEdge(e,seg,kind){
-    const n=e.sides;
-    const phi=e.rot+(seg+0.5)/n*Math.PI*2+Math.PI/2;      // the edge's direction
-    const want=kind==='vert'?Math.PI/2:0;
-    let d=(want-phi)%Math.PI;
-    if(d>Math.PI/2)d-=Math.PI; if(d<-Math.PI/2)d+=Math.PI;
-    e.rot+=d;
+    const s=S, horiz=kind==='horiz';
+    if(hold===undefined)hold=heldEnd({entIdx:ent},s);
+    if(hold&&hold!==s.a&&hold!==s.b)hold=null;
+    if(hold){
+      const mv=(hold===s.a)?s.b:s.a, L=Math.hypot(mv.x-hold.x,mv.y-hold.y);
+      if(horiz){ const sg=mv.x>=hold.x?1:-1; mv.x=hold.x+sg*L; mv.y=hold.y; }
+      else     { const sg=mv.y>=hold.y?1:-1; mv.y=hold.y+sg*L; mv.x=hold.x; }
+    } else {
+      const mx=(s.a.x+s.b.x)/2, my=(s.a.y+s.b.y)/2;
+      const H=Math.hypot(s.b.x-s.a.x,s.b.y-s.a.y)/2;
+      if(horiz){ const sg=s.b.x>=s.a.x?1:-1;
+        s.a.x=mx-sg*H; s.b.x=mx+sg*H; s.a.y=my; s.b.y=my; }
+      else     { const sg=s.b.y>=s.a.y?1:-1;
+        s.a.y=my-sg*H; s.b.y=my+sg*H; s.a.x=mx; s.b.x=mx; }
+    }
+    return true;
   }
   function applyParallel(refD, tgtD){
     const r=polySeg(refD), t=polySeg(tgtD); if(!r||!t) return;
@@ -6849,11 +6905,11 @@ const CSG = (function(){
     }
     let src=ra,dst=rb;                        // second-picked point moves...
     if(!liveRef(sk,dst)){ if(!liveRef(sk,src))return false; const t=src;src=dst;dst=t; }
-    /* ...unless one side is a POLYGON corner or centre: writing a corner
-       reshapes the whole polygon, so the shape anchors and the plain point
-       jumps to it — which is also what "lock it to" reads as */
-    const isPg=r=>{const e2=sk.entities[r.ent];return !!e2&&e2.type==='polygon';};
-    if(isPg(dst)&&!isPg(src)&&liveRef(sk,src)){ const t=src;src=dst;dst=t; }
+    /* ...unless one side belongs to a COUPLED shape (writing one of its
+       points reshapes the rest — see coupledEnt): the shape anchors and the
+       plain point jumps to it, which is also what "lock it to" reads as */
+    const stiff=r=>coupledEnt(sk.entities[r.ent]);
+    if(stiff(dst)&&!stiff(src)&&liveRef(sk,src)){ const t=src;src=dst;dst=t; }
     const S=resolvePt(sk,src), D=resolvePt(sk,dst); if(!S||!D)return false;
     D.x=S.x; D.y=S.y;
     const key=r=>r.ent+'.'+r.idx, cons=consOf(sk);
@@ -6902,29 +6958,13 @@ const CSG = (function(){
         continue;
       }
       if(c.kind==='horiz'||c.kind==='vert'){
-        const pe=sk.entities[c.ent];
-        if(pe&&pe.type==='polygon'){ applyHVPolygonEdge(pe,c.seg||0,c.kind); continue; }
-        const s=segPts(sk,{ent:c.ent,seg:c.seg}); if(!s)continue;
-        /* Swing the line flat about the held end, keeping its length. Setting
-           one coordinate equal to the other's projects the line onto the axis
-           and shortens it — which quietly rewrote any length dimension on it,
-           every relaxation pass. */
-        const horiz=c.kind==='horiz';
-        let hold=null;
-        if(dragged&&dragged.ei===c.ent&&(dragged.pt===s.a||dragged.pt===s.b))hold=dragged.pt;
-        else hold=heldEnd({entIdx:c.ent},s);
-        if(hold){
-          const mv=(hold===s.a)?s.b:s.a, L=Math.hypot(mv.x-hold.x,mv.y-hold.y);
-          if(horiz){ const sg=mv.x>=hold.x?1:-1; mv.x=hold.x+sg*L; mv.y=hold.y; }
-          else     { const sg=mv.y>=hold.y?1:-1; mv.y=hold.y+sg*L; mv.x=hold.x; }
-        } else {
-          const mx=(s.a.x+s.b.x)/2, my=(s.a.y+s.b.y)/2;
-          const H=Math.hypot(s.b.x-s.a.x,s.b.y-s.a.y)/2;
-          if(horiz){ const sg=s.b.x>=s.a.x?1:-1;
-            s.a.x=mx-sg*H; s.b.x=mx+sg*H; s.a.y=my; s.b.y=my; }
-          else     { const sg=s.b.y>=s.a.y?1:-1;
-            s.a.y=my-sg*H; s.b.y=my+sg*H; s.a.x=mx; s.b.x=mx; }
-        }
+        /* segAlign swings a free line about the dragged end when the hand
+           is on it (the held-end reading otherwise), and spins a coupled
+           shape — one enforcement path for every entity */
+        let hold;
+        const s=segPts(sk,{ent:c.ent,seg:c.seg});
+        if(dragged&&dragged.ei===c.ent&&s&&(dragged.pt===s.a||dragged.pt===s.b))hold=dragged.pt;
+        segAlign(sk,c.ent,c.seg||0,c.kind,hold);
       } else if(c.kind==='ontrace'){
         // hold the point on the plane: project onto the trace, so a drag can
         // slide it along the plane but never off it
@@ -6934,18 +6974,18 @@ const CSG = (function(){
         const F=traceFoot(L,Q); Q.x=F.x; Q.y=F.y;
       } else if(c.kind==='coinc'){
         // origin is ground; otherwise the dragged (or only-live) side leads,
-        // and a POLYGON side leads a plain point — one corner write reshapes
-        // the whole polygon, so the point is the one that follows
+        // and a COUPLED shape's point leads a plain one — writing it would
+        // reshape the whole entity, so the plain point is the follower
         let src=c.a,dst=c.b;
-        const isPg=r=>{const e2=r&&r.ent>=0?sk.entities[r.ent]:null;return !!e2&&e2.type==='polygon';};
+        const stiff=r=>!!(r&&r.ent>=0)&&coupledEnt(sk.entities[r.ent]);
         if(c.b.ent===-1||!liveRef(sk,c.b)){ src=c.b; dst=c.a; }
         else if(dragged&&liveRef(sk,c.b)&&liveRef(sk,c.a)){
           const e=sk.entities[c.b.ent];
           const pi=e&&e.type==='poly'?e.pts.indexOf(dragged.pt):-1;
           if(dragged.ei===c.b.ent&&(e.type!=='poly'||pi===c.b.idx)){ src=c.b; dst=c.a; }
-          else if(dragged.ei!==c.a.ent&&isPg(c.b)&&!isPg(c.a)){ src=c.b; dst=c.a; }
+          else if(dragged.ei!==c.a.ent&&stiff(c.b)&&!stiff(c.a)){ src=c.b; dst=c.a; }
         }
-        else if(isPg(c.b)&&!isPg(c.a)&&liveRef(sk,c.a)){ src=c.b; dst=c.a; }
+        else if(stiff(c.b)&&!stiff(c.a)&&liveRef(sk,c.a)){ src=c.b; dst=c.a; }
         if(!liveRef(sk,dst))continue;
         const S=resolvePt(sk,src), D=resolvePt(sk,dst); if(!S||!D)continue;
         D.x=S.x; D.y=S.y;
@@ -6958,9 +6998,8 @@ const CSG = (function(){
     let n=0;
     for(const c of (sk.cons||[])){
       if((c.kind==='horiz'||c.kind==='vert')&&c.ent===i){
-        const pe=sk.entities[i];
-        if(pe&&pe.type==='polygon')n++;                    // the spin is spent
-        else { const s=segPts(sk,{ent:i,seg:c.seg}); if(s)n++; }
+        // one direction spent — a spin or a swing, whatever entSeg resolves
+        if(entSeg(sk,i,c.seg||0))n++;
       }
       // parallel/equal each cost the following line one freedom
       else if((c.kind==='paral'||c.kind==='equal')&&c.b&&c.b.ent===i){
@@ -7284,16 +7323,12 @@ const CSG = (function(){
           const P=resolvePt(editing,c.ref);
           if(P)ap={x:P.x+0.7,y:P.y+0.7};
         } else {
-          // H/V carry {ent,seg}; parallel/equal badge the following line
+          // H/V carry {ent,seg}; parallel/equal badge the following line.
+          // entSeg resolves the midpoint for every entity — a chain's stored
+          // points or a coupled shape's derived corners alike.
           const ref=(c.kind==='paral'||c.kind==='equal')?{ent:c.b.ent,seg:c.b.seg}:{ent:c.ent,seg:c.seg};
-          const pe=editing.entities[ref.ent];
-          if(pe&&pe.type==='polygon'&&(c.kind==='horiz'||c.kind==='vert')){
-            const cor=polyCorners(pe), a2=cor[ref.seg%cor.length], b2=cor[(ref.seg+1)%cor.length];
-            ap={x:(a2.x+b2.x)/2+0.7,y:(a2.y+b2.y)/2+0.7};
-          } else {
-            const s=segPts(editing,ref);
-            if(s)ap={x:(s.a.x+s.b.x)/2+0.7,y:(s.a.y+s.b.y)/2+0.7};
-          }
+          const s=entSeg(editing,ref.ent,ref.seg||0);
+          if(s)ap={x:(s.a.x+s.b.x)/2+0.7,y:(s.a.y+s.b.y)/2+0.7};
         }
         if(!ap){ o.el.style.display='none'; continue; }
         const spc=screenOf(ap);
@@ -13717,6 +13752,7 @@ const CSG = (function(){
     get appearance(){ return appearance; }, set appearance(v){ appearance=normApp(v); },
     bumpAppearance, applyAppearance, setRenderedView, faceSig, sigMatch,
     get renderedView(){ return renderedView; },
+    entSpin, coupledEnt, entSeg, segAlign,
     dimHit, dimResolve, dimApply, polyCorners, cornerAt, applyCorner,
     get cornerSel(){ return cornerSel; }, set cornerSel(v){ cornerSel=v; },
     ensureSketchProps, setCornerTreatment, setCornerSize,
