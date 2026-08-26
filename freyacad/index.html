@@ -7731,6 +7731,8 @@ const CSG = (function(){
     step:_sw(`<ellipse cx="12" cy="6.5" rx="7" ry="2.7" stroke="${_B}"/><path d="M5 6.5v11M19 6.5v11" stroke="${_B}"/><path d="M5 17.5c0 1.5 3.1 2.7 7 2.7s7-1.2 7-2.7" stroke="${_B}"/>`),
     save:_sw(`<path d="M12 3v10M8.5 9.5 12 13l3.5-3.5" stroke="${_Y}"/><path d="M4 14.5V20h16v-5.5" stroke="${_B}"/>`),
     export:_sw(`<path d="M12 13V3M8.5 6.5 12 3l3.5 3.5" stroke="${_Y}"/><path d="M4 14.5V20h16v-5.5" stroke="${_B}"/>`),
+    conc:_sw(`<circle cx="12" cy="12" r="8" stroke="${_B}"/><circle cx="12" cy="12" r="3.6" stroke="${_Y}"/>`),
+    anchor:_sw(`<circle cx="12" cy="5" r="2" stroke="${_B}"/><path d="M12 7v13.5M8.5 9.5h7" stroke="${_B}"/><path d="M4.5 14c0 4.2 3.4 6.5 7.5 6.5s7.5-2.3 7.5-6.5" stroke="${_Y}"/><path d="M4.5 14l-2 2M4.5 14l2.7 1M19.5 14l2 2M19.5 14l-2.7 1" stroke="${_Y}"/>`),
     open:_sw(`<path d="M3 19V5.5h6.2l2 2H21V19z" stroke="${_B}"/>`),
     newpart:_sw(`<path d="M10 3.5l5.5 3.2v6.4L10 16.3l-5.5-3.2V6.7z" stroke="${_B}"/><path d="M10 9.9l5.5-3.2M10 9.9 4.5 6.7M10 9.9v6.4" stroke="${_B}" opacity=".65"/><path d="M18.5 14.5v6M15.5 17.5h6" stroke="${_G}" stroke-width="2.1"/>`),
     asm:_sw(`<path d="M8 3l4.5 2.6v5.2L8 13.4 3.5 10.8V5.6z" stroke="${_B}"/><path d="M8 8.2l4.5-2.6M8 8.2 3.5 5.6M8 8.2v5.2" stroke="${_B}" opacity=".55"/><path d="M14 10l4.5 2.6v5.2L14 20.4l-4.5-2.6v-5.2z" stroke="${_B}"/><path d="M14 15.2l4.5-2.6M14 15.2l-4.5-2.6M14 15.2v5.2" stroke="${_B}" opacity=".55"/><path d="M19.5 2.5v5M17 5h5" stroke="${_G}" stroke-width="2.1"/>`),
@@ -10946,7 +10948,12 @@ const CSG = (function(){
      whole scene, so "a part always beats a plane" would put the Right plane
      out of reach the moment anything sat on it. */
   function mateEndAt(e){
-    const f=faceAt(e), g=datumAt(e), c=edgeCircAt(e);
+    /* only reach for a circular EDGE when the mate can actually use one —
+       a coincident pick near a rim (every flat face of a bolt or a nut is a
+       narrow ring with a rim right there) must still take the FACE, or the
+       pick reads "not a flat face" for a face that plainly is */
+    const wantCyl=!mateSel||wantKind(mateSel.kind)==='cyl';
+    const f=faceAt(e), g=datumAt(e), c=wantCyl?edgeCircAt(e):null;
     /* an edge lies ON its faces, so their distances tie — when the cursor is
        close enough to hit the edge at all, the edge is what was meant */
     let best=f;
@@ -11228,25 +11235,24 @@ const CSG = (function(){
     endMatePick();
     const an=ca?ca.name:datumName(fa.datum), bn=cb?cb.name:datumName(fb.datum);
     setHint(kind==='concentric'
-      ? an+' is concentric with '+bn+(fb.datum?'':' (Ø'+(2*fb.r).toFixed(2)+')')+' — the mate holds from now on'
+      ? an+' is concentric with '+bn+(fb.datum?'':' (Ø'+(2*fb.r).toFixed(2)+')')+' — drag it along the axis to place it, or add a coincident mate to seat it'
       : an+' sits flush against '+bn+' — the mate holds from now on');
     refreshAsmUI();
   }
   const ACMD={
     insert  :{ic:'open', label:'Insert part file…',fn:()=>$('file-insert').click()},
-    demo    :{ic:'iso',  label:'Insert pillow-block demo',fn:()=>addComponent(DEMO_PART,'pillow-block')},
-    pos     :{ic:'edit', label:'Position…',   fn:()=>{const c=selComp();if(c)openCompProps(c);}},
-    fix     :{ic:'suppress',label:'Fix / unfix',fn:()=>{const c=selComp();
+    pos     :{ic:'move', label:'Position…',   fn:()=>{const c=selComp();if(c)openCompProps(c);}},
+    fix     :{ic:'anchor',label:'Fix / unfix',fn:()=>{const c=selComp();
                 if(c){c.fixed=!c.fixed;setHint(c.name+(c.fixed?' fixed':' free'));
                   // freeing a part can let a mate that had nowhere to give settle
                   if(!c.fixed&&asm.mates.length)reportSolve(solveMates({}));
                   refreshAsmTree();}}},
     remove  :{ic:'del',  label:'Remove',      fn:()=>{const c=selComp();if(c)removeComponent(c);}},
-    m_conc  :{ic:'coinc',  label:'Concentric — pick two round faces',fn:()=>startMate('concentric')},
-    m_face  :{ic:'dplane', label:'Coincident — pick two flat faces', fn:()=>startMate('coincident')}
+    m_conc  :{ic:'conc',   label:'Concentric',fn:()=>startMate('concentric')},
+    m_face  :{ic:'dplane', label:'Coincident',fn:()=>startMate('coincident')}
   };
   const DEFAULT_ASM_LAYOUT=[
-    {name:'Assembly',  ids:['insert','demo']},
+    {name:'Assembly',  ids:['insert']},
     {name:'Component', ids:['pos','fix','remove']},
     {name:'Mates',     ids:['m_conc','m_face']}
   ];
@@ -11261,7 +11267,7 @@ const CSG = (function(){
       items.push({sect:sec.name});
       for(const id of live){ const c=ACMD[id];
         // mates start with a face pick, so they need parts — not a selection
-        const free=(id==='insert'||id==='demo'||id==='m_conc'||id==='m_face');
+        const free=(id==='insert'||id==='m_conc'||id==='m_face');
         items.push({ic:c.ic,label:c.label,fn:c.fn,
           disabled:!free&&!comp&&!selComp()}); }
     }
@@ -12612,7 +12618,7 @@ const CSG = (function(){
   try{ helpOn = localStorage.getItem('fcad-help')!=='0'; }catch(_){}
   function helpContext(){
     if(docMode==='asm'){
-      if(!asm.components.length) return {title:'Assembly', body:'<b>Insert part</b> adds a saved .sketchcad file, or <b>right-click</b> to insert the pillow-block demo. The first part comes in fixed in place.'};
+      if(!asm.components.length) return {title:'Assembly', body:'<b>Insert part</b> adds a saved .sketchcad file. The first part comes in fixed in place.'};
       return {title:'Assembly · '+asm.components.length+' component'+(asm.components.length>1?'s':''), body:'<b>Drag</b> a part to move it (<b>Shift</b> = vertical). <b>Double-click</b> one for exact position and rotation. Right-click a part to fix or remove it. Save writes an .asmcad file; STL and STEP export every part in place.'};
     }
     if(mode==='sketch'){
