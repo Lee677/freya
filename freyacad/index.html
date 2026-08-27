@@ -146,6 +146,12 @@ if(!window.THREE){
      does: the spacer is at 0 and Print/Export loses letters). It keeps its
      full 26px whenever there is room, and never shrinks past 6. */
   .tb-gap{width:26px;flex:0 1 auto;min-width:6px}
+  /* The labelled bar outgrows a window below ~1500px — Print/Export was the
+     casualty, clipped at the right edge on a 1400px screen. Under that width
+     the toolbar's icon buttons drop their labels automatically: the same look
+     the Aa button chooses, applied only where the space isn't there. Buttons
+     whose text IS their face (Open, Save, Print/Export…) are untouched. */
+  @media (max-width:1500px){ .toolbar button .lbl{display:none} }
   .tb-group{display:flex;align-items:center;gap:7px}
   
   button{font-family:var(--sans);font-size:11.5px;color:var(--text);background:var(--panel-2);
@@ -11565,9 +11571,9 @@ const CSG = (function(){
     r_axis   :{ic:'daxis',  label:'Add axis', fn:()=>addFeature('daxis')}
   };
   const DEFAULT_MODEL_LAYOUT=[
-    {name:'View',     ids:['normal','iso','fit','proj','v_render','v_light']},
+    {name:'View',     ids:['normal','iso','fit','proj','v_light']},
     {name:'Features', ids:['sketch','f_extrude','f_cut','f_revolve','f_rcut','f_sweep','f_swcut','f_loft','f_loftcut','f_gfbin','f_gfplate','f_text','f_fillet','f_chamfer','t_mirror','t_lpat','t_cpat']},
-    {name:'Appearance',ids:['a_pcolor','a_bcolor','a_fcolor']},
+    {name:'Appearance',ids:['v_render','a_pcolor','a_bcolor','a_fcolor']},
     {name:'Reference',ids:['r_plane','r_axis']}
   ];
   function openModelMenu(x,y){
@@ -11725,6 +11731,28 @@ const CSG = (function(){
       const vi=m.layout.findIndex(x=>x.name==='View');
       m.layout.splice(vi>=0?vi+1:0,0,{name:'Appearance',ids:[]});
       migrated=true;
+    }
+    /* One-off (Aug 2026): Rendered view moved from View into Appearance — it
+       changes how the model is painted, not where the camera sits. A stored
+       layout follows, from wherever the user had it; one they hid stays
+       hidden. */
+    if(saved){
+      let pulled=false;
+      for(const sec of m.layout){
+        if(sec.name==='Appearance')continue;
+        const i=sec.ids.indexOf('v_render');
+        if(i>=0){ sec.ids.splice(i,1); pulled=true; }
+      }
+      if(pulled){
+        let ap=m.layout.find(x=>x.name==='Appearance');
+        if(!ap){
+          const vi=m.layout.findIndex(x=>x.name==='View');
+          ap={name:'Appearance',ids:[]};
+          m.layout.splice(vi>=0?vi+1:0,0,ap);
+        }
+        if(ap.ids.indexOf('v_render')<0)ap.ids.unshift('v_render');
+        migrated=true;
+      }
     }
     const adopted=adoptNewCommands(m,savedHidden);
     markHidden(m);
