@@ -5428,30 +5428,157 @@ const CSG = (function(){
   }
 
   /* ============================ REBUILD ============================ */
+  /* A frame from a point and a normal, with the same in-plane axes a face
+     sketch picks — so a datum plane built on a face lines its U and V up with
+     a sketch drawn straight onto that face. */
+  function frameFromNormal(o,n){
+    const N=n.clone().normalize();
+    const u=(Math.abs(N.y)<0.9?new THREE.Vector3(0,1,0):new THREE.Vector3(1,0,0))
+      .cross(N).normalize();
+    return {o:o.clone(),u,v:N.clone().cross(u).normalize(),n:N};
+  }
+  /* Where a datum plane STARTS from, before its own tilt and offset.
+       'Top'|'Front'|'Right'  an origin plane — the default, and what every
+                              record written before offsets existed carries;
+       'dp:<id>' (or a plain plane name, which is what a hand-written file is
+                              likely to hold)  another datum plane, resolved in
+                              full, so offsets chain;
+       baseKind:'face'        a face of the model, re-found this rebuild by its
+                              signature (see resolveFaceBase).
+
+     `seen` is the set of plane ids already on the resolution stack. A base
+     that leads back to a plane still being resolved is a loop, and without
+     this it recursed until the tab died. */
+  const dplaneFaceFrames=new Map();     // dplane id -> its face frame, refilled each rebuild
+  function dplaneBaseFrame(pf,seen){
+    if(pf.baseKind==='face'){
+      let fr=dplaneFaceFrames.get(pf.id);
+      /* A plane may be based on one that sits BELOW it in the tree, and that
+         one has not run yet this rebuild. Resolve it on demand rather than
+         calling a face that is perfectly present missing — and let its own
+         error through, which says what is actually wrong. */
+      if(!fr&&pf.faceSig){ resolveFaceBase(pf); fr=dplaneFaceFrames.get(pf.id); }
+      if(!fr) throw new Error(pf.faceSig
+        ? 'its reference face is no longer on the model'
+        : 'no reference face picked yet — press Pick a face in its panel');
+      return frameClone(fr);
+    }
+    const nm=pf.base||'Top';
+    if(DATUM[nm]) return frameClone(DATUM[nm]);
+    const bp=features.find(x=>x.type==='dplane'&&(('dp:'+x.id)===nm||x.name===nm));
+    if(!bp) throw new Error('its base plane is gone');
+    const st=seen||new Set();
+    if(st.has(pf.id))
+      throw new Error('its base planes run in a circle — a plane cannot be built on itself');
+    st.add(pf.id);
+    return planeFrame({kind:'dplane',refId:bp.id},st);
+  }
   /* Resolve any plane spec to a live frame. Handles datum planes, offset
      datum-plane features, and face frames (which may be plain JSON after a
-     project load — reconstruct real Vector3s). */
-  function planeFrame(plane){
+     project load — reconstruct real Vector3s).
+
+     A datum-plane feature reads top to bottom the way its panel does: BASE,
+     then TILT, then OFFSET. Tilt first and offset second, along the tilted
+     normal, so the distance you type is measured square to the plane you end
+     up with rather than to the base. The tilt rotates u/v/n but leaves the
+     origin alone, which is what keeps an angle-only plane — every plane made
+     before this — passing through the base's origin exactly as it did. */
+  function planeFrame(plane,seen){
     if(plane.kind==='datum') return frameClone(DATUM[plane.name]);
     if(plane.kind==='dplane'){
-      const pf=features.find(x=>x.id===plane.refId&&x.type==='dplane');
+      /* The panel edits a DRAFT copy and only assigns it on Done, so a lookup
+         by id alone shows the saved values and the plane sits still while you
+         drag its angle. The draft stands in for itself, exactly as
+         drawRefGeometry and the checkpoint keys already do. */
+      const pf=(propsFeat&&draftFeat&&draftFeat.type==='dplane'&&propsFeat.id===plane.refId)
+        ? draftFeat
+        : features.find(x=>x.id===plane.refId&&x.type==='dplane');
       if(!pf) throw new Error('its datum plane was deleted');
       if(pf.suppressed) throw new Error('its datum plane is suppressed');
-      const fr=frameClone(DATUM[pf.base]);
-      /* Tilt the base plane about an axis by an angle. The axis is one of the
-         base plane's own two in-plane directions, so the result always still
-         passes through the base plane's origin line — an angled plane, not a
-         floating one. */
+      const fr=dplaneBaseFrame(pf,seen);
+      /* Tilt the base about an axis by an angle. The axis is one of the base's
+         own two in-plane directions, so the tilted plane still passes through
+         the base's origin line. */
       const ang=(pf.angle||0)*Math.PI/180;
       if(Math.abs(ang)>1e-9){
         const ax=(pf.about==='v')?fr.v.clone():fr.u.clone();
         const q=new THREE.Quaternion().setFromAxisAngle(ax.normalize(),ang);
         fr.u.applyQuaternion(q); fr.v.applyQuaternion(q); fr.n.applyQuaternion(q);
       }
+      /* And then float it clear along its own normal. No offset key at all
+         reads as zero, which is why every plane in every document saved before
+         this lands exactly where it always did. */
+      const off=(+pf.offset||0)*(pf.flip?-1:1);
+      if(off) fr.o.addScaledVector(fr.n,off);
       return fr;
     }
     const p=plane.frame, v3=a=>a.isVector3?a.clone():new THREE.Vector3(a.x,a.y,a.z);
     return {o:v3(p.o),u:v3(p.u),v:v3(p.v),n:v3(p.n)};
+  }
+  /* ---- a datum plane referenced to a FACE ---------------------------------
+     Faces carry no permanent name in the kernel, so the record keeps the same
+     kind of signature the surface colours keep — fitted kind, centroid,
+     direction, radius and area — and hunts for the face that still matches
+     after every rebuild. A face that changed shape stops matching, and the
+     plane then says so on the feature rather than jumping somewhere
+     plausible-looking.
+
+     Resolved WHERE THE PLANE SITS in the tree, against the body as it stands
+     underneath it, so a sketch on the plane sees this rebuild's face and not
+     the last one's. That costs one tessellation of the body at that point plus
+     a flush of the deferred boolean batch, which is why it only happens for a
+     plane that actually references a face. */
+  /* The plane's own match test. It is sigMatch's — same kind, same direction,
+     same area, and the face must not have moved SIDEWAYS — with exactly one
+     thing forgiven: a planar face may have slid ALONG ITS OWN NORMAL. That is
+     what the top of a block does when the block gets taller, and refusing it
+     would break the plainest reason to reference a face at all ("a plane 4 mm
+     above this face"): under sigMatch's full-centroid test the plane let go
+     the moment the block grew by more than ~0.1·√area.
+
+     Two deliberate differences from sigMatch, which stays exactly as the
+     surface colours left it:
+       * the direction test is SIGNED. A plane's fitted normal points out of
+         the solid, so signed is what tells the top of a block from its bottom
+         — and with the along-normal slide forgiven, |dot| would happily match
+         one to the other.
+       * round faces are refused outright. A plane needs a plane. */
+  function faceBaseMatch(sig,want){
+    if(!sig||!want||sig.k!=='plane'||want.k!=='plane')return false;
+    const d=new THREE.Vector3(want.d[0],want.d[1],want.d[2]);
+    if(d.lengthSq()<1e-12)return false; d.normalize();
+    if(sig.d[0]*d.x+sig.d[1]*d.y+sig.d[2]*d.z<0.985)return false;
+    const dp=new THREE.Vector3(sig.p[0]-want.p[0],sig.p[1]-want.p[1],sig.p[2]-want.p[2]);
+    dp.addScaledVector(d,-dp.dot(d));                 // only the sideways part counts
+    if(dp.length()>Math.max(0.6,0.1*Math.sqrt(Math.max(sig.a,want.a))))return false;
+    const ar=sig.a/Math.max(1e-9,want.a);
+    return ar>0.7&&ar<1.43;
+  }
+  function resolveFaceBase(pf){
+    dplaneFaceFrames.delete(pf.id);
+    const want=pf.faceSig;
+    if(!want) throw new Error('no reference face picked yet — press Pick a face in its panel');
+    flushPending();                    // the body has to be whole before it can be read
+    if(!resultShapes.length) throw new Error('no solid here to find its reference face on');
+    let best=null,bd=Infinity;
+    for(const s of resultShapes){
+      let g=null; try{ g=OCK.mesh(s); }catch(_){ continue; }
+      try{
+        for(const reg of regionsOf(g)){
+          const sig=faceSig(g,reg.seed);
+          if(!faceBaseMatch(sig,want))continue;
+          const fit=fitFace(g,reg.seed);
+          if(!fit||fit.kind!=='plane')continue;
+          /* several faces can match — parallel steps of the same size — so
+             the nearest centroid wins, exactly as a surface colour picks
+             between its own matches. */
+          const dp=Math.hypot(sig.p[0]-want.p[0],sig.p[1]-want.p[1],sig.p[2]-want.p[2]);
+          if(dp<bd){ bd=dp; best=frameFromNormal(fit.p,fit.d); }
+        }
+      } finally { try{ g.dispose(); }catch(_){} }
+    }
+    if(!best) throw new Error('its reference face is no longer on the model');
+    dplaneFaceFrames.set(pf.id,best);
   }
   const AXDIR={X:{x:1,y:0,z:0},Y:{x:0,y:1,z:0},Z:{x:0,y:0,z:1}};
   /* 'X'|'Y'|'Z' stays a world axis through the origin; 'ax:<id>' resolves an
@@ -5586,7 +5713,17 @@ const CSG = (function(){
       f.frame=frame; sketchData[f.id]={frame, sk:f};
       return;
     }
-    if(f.type==='dplane'||f.type==='daxis') return;   // reference geometry only
+    if(f.type==='dplane'){
+      /* A datum plane builds no geometry, but it can still be WRONG: a base
+         that leads back to itself, a base plane that was deleted, a reference
+         face the body no longer has. Resolving it HERE, in its own place in
+         the run, is what puts those on the feature as an error the tree can
+         show — instead of a plane that quietly draws nothing. */
+      if(f.baseKind==='face') resolveFaceBase(f);
+      planeFrame({kind:'dplane',refId:f.id});
+      return;
+    }
+    if(f.type==='daxis') return;                     // reference geometry only
     if(f.type==='import'){
       // the file's bytes live in the feature, so the recipe replays offline
       flushPending();          // a new body must not join a batch that predates it
@@ -6038,6 +6175,10 @@ const CSG = (function(){
     while(previewOverlay.children.length){const c=previewOverlay.children.pop();c.geometry.dispose();}
 
     resetPending(); resetFeatTools();
+    /* Face-referenced planes are re-found from scratch every full rebuild;
+       the overlay-only path deliberately keeps what it found last time,
+       because nothing about the model moved. */
+    dplaneFaceFrames.clear();
     for(let i=0; i<active.length; i++){
       let f = active[i];
       if (propsFeat && propsFeat.id === f.id && draftFeat) f = draftFeat;
@@ -8916,8 +9057,13 @@ const CSG = (function(){
     insertFeature(f); startSketch(f);
   }
   function addSketchOnDPlane(pf){
+    /* A plane can be errored — a base that was deleted, a reference face the
+       model no longer has — and there is nowhere to open a sketch. Say why
+       rather than throwing out of the menu handler. */
+    let fr; try{ fr=planeFrame({kind:'dplane',refId:pf.id}); }
+    catch(err){ setHint(pf.name+' cannot be built — '+((err&&err.message)||err)); return; }
     const f={id:nextId(),type:'sketch',name:'Sketch'+sketchCount(),plane:{kind:'dplane',refId:pf.id},entities:[],fillet:0,chamfer:0,suppressed:false,_isNew:true};
-    f.frame=planeFrame(f.plane);
+    f.frame=fr;
     insertFeature(f); startSketch(f);
   }
   let pendingFaceSketch=false;
@@ -8950,12 +9096,12 @@ const CSG = (function(){
   /* Any armed pick owns the next click, so selection must stand aside for it */
   function armedPick(){
     return !!(pendingSketchPick||pendingTextFace||pendingAxisPick||pendingFaceSketch
-             ||pendingBodyColor||pendingFaceColor);
+             ||pendingPlaneFace||pendingBodyColor||pendingFaceColor);
   }
   function cancelPicks(msg){
     const had=armedPick();
     pendingSketchPick=false; pendingTextFace=false; pendingAxisPick=null; pendingFaceSketch=false;
-    pendingBodyColor=false; pendingFaceColor=false;
+    pendingPlaneFace=null; pendingBodyColor=false; pendingFaceColor=false;
     hidePickCard(); updateDatumVis();
     if(had&&msg)setHint(msg);
     return had;
@@ -9274,6 +9420,7 @@ const CSG = (function(){
   /* the axis tool's pick: a circular EDGE run first, else a face — a
      cylinder gives its axis, a flat circular face its centre and normal */
   let pendingAxisPick=null;      // the daxis (draft) feature awaiting a pick
+  let pendingPlaneFace=null;     // the dplane (draft) feature awaiting a face
   function consumeAxisPick(e){
     const f=pendingAxisPick;
     const done=(p,d,what)=>{
@@ -9299,6 +9446,23 @@ const CSG = (function(){
       if(fit&&fit.kind==='plane')return done(fit.p,fit.d,'face centre');
     }
     setHint('Nothing with an axis there — click a round edge, an arc, a hole wall, or a round or revolved face');
+  }
+  /* the plane tool's pick: one FLAT face, taken through the same near-miss
+     forgiveness a face sketch gets, and stored as a signature rather than a
+     triangle id — see resolveFaceBase for how it is found again. */
+  function consumePlaneFacePick(e){
+    const f=pendingPlaneFace;
+    let fc=faceAtPointer(e);
+    if(!fc||!fc.fit||fc.fit.kind!=='plane') fc=rescuePlanarFace(e)||fc;
+    if(!fc||!fc.fit||fc.fit.kind!=='plane')
+      return setHint('A plane starts from a FLAT face — that one is curved');
+    const g=resultMeshes[fc.body]&&resultMeshes[fc.body].geometry;
+    const sig=g&&faceSig(g,fc.seed);
+    if(!sig) return setHint('Could not read that face');
+    pendingPlaneFace=null; hidePickCard();
+    f.baseKind='face'; f.faceSig=sig;
+    setHint('Plane started from that face — type a distance to float it clear');
+    if(propsFeat) openProps(propsFeat); else rebuild();
   }
   function makeFaceSketch(hit){
     const n=hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
@@ -9359,7 +9523,10 @@ const CSG = (function(){
       if(type!=='loftcut')f.merge=true;
       return f;
     }
-    if(type==='dplane')return {id:nextId(),type:'dplane',name:'Plane'+cnt('dplane'),base:'Top',about:'u',angle:30,suppressed:false};
+    /* base/about/angle are exactly the shape every earlier document carries;
+       offset, flip, baseKind and faceSig are the new half, and all four read
+       as "no offset, based on an origin plane" when they are absent. */
+    if(type==='dplane')return {id:nextId(),type:'dplane',name:'Plane'+cnt('dplane'),base:'Top',about:'u',angle:30,offset:0,flip:false,suppressed:false};
     if(type==='daxis')return {id:nextId(),type:'daxis',name:'Axis'+cnt('daxis'),method:'planes',pa:'Top',pb:'Front',dir:'Y',px:0,py:0,pz:0,suppressed:false};
     if(type==='mirror')return {id:nextId(),type:'mirror',name:'Mirror'+cnt('mirror'),plane:'Right',merge:true,suppressed:false};
     if(type==='lpattern')return {id:nextId(),type:'lpattern',name:'LPattern'+cnt('lpattern'),dir:'X',count:3,spacing:4,merge:false,suppressed:false};
@@ -9857,7 +10024,12 @@ const CSG = (function(){
   function selectFeature(id){
     selId=id;
     refreshTree();
-    drawSketchOverlays(features.slice(0,rollbackIndex));
+    const active=features.slice(0,rollbackIndex);
+    drawSketchOverlays(active);
+    /* Reference geometry is drawn selected-or-not, so selecting a plane or an
+       axis has to redraw it — otherwise the row highlights in the tree and the
+       thing itself stays blue until some unrelated edit rebuilds. */
+    drawRefGeometry(active);
   }
 
   function editSketch(f){
@@ -9867,7 +10039,11 @@ const CSG = (function(){
 
   /* ============================ PROPERTIES PANEL ============================ */
   let propsEl=null, propsFeat=null, draftFeat=null, draftOriginalState=null, propsComp=null;
-  function closeProps(){if(propsEl){propsEl.remove();propsEl=null;propsFeat=null;draftFeat=null;draftOriginalState=null;propsComp=null;if(typeof updateHelp==='function')updateHelp();}}
+  /* Closing the panel disarms its face pick too: the pick is held against the
+     DRAFT, and once the panel is gone that object is nobody's. */
+  function closeProps(){if(propsEl){propsEl.remove();propsEl=null;propsFeat=null;draftFeat=null;draftOriginalState=null;propsComp=null;
+    if(pendingPlaneFace){pendingPlaneFace=null;hidePickCard();}
+    if(typeof updateHelp==='function')updateHelp();}}
   
   function openProps(f){
     if(propsFeat && propsFeat.id !== f.id) closeProps();
@@ -10276,12 +10452,67 @@ const CSG = (function(){
       addScopePicker(add,f);
       if(!isScoped(f)) add(fieldCheck('Merge result',f.merge,v=>{f.merge=v;rerun();}));
     } else if(f.type==='dplane'){
-      add(fieldSeg('Base plane',[{l:'Top',v:'Top'},{l:'Front',v:'Front'},{l:'Right',v:'Right'}],f.base,v=>{f.base=v;rerun();}));
+      /* Read top to bottom, the panel is the maths: start from something, tilt
+         it, then float it clear. */
+      add(fieldSeg('Start from',[{l:'A plane',v:'plane'},{l:'A face',v:'face'}],
+        f.baseKind==='face'?'face':'plane',
+        v=>{ const wasFace=f.baseKind==='face';
+          f.baseKind=(v==='face')?'face':'plane';
+          /* Starting from a face nearly always means "parallel to it, this far
+             off", so the FIRST switch drops the 30° the tool opens with. The
+             tilt control is still right there, and coming back to a plane that
+             already has a face leaves whatever angle you set alone. */
+          if(f.baseKind==='face'&&!wasFace&&!f.faceSig) f.angle=0;
+          rerun(); openProps(f); }));
+      if(f.baseKind==='face'){
+        const pick=document.createElement('button');
+        pick.className='btn-primary';pick.style.cssText='margin:4px 0;font-size:12px';
+        pick.textContent=pendingPlaneFace===f?'Click a flat face…':'Pick a face';
+        pick.addEventListener('click',()=>{ pendingPlaneFace=f;
+          pick.textContent='Click a flat face…';
+          showPickCard('Click a flat face — the plane starts there and floats off along its normal');
+          setHint('Click a flat face for the plane to start from');});
+        add(pick);
+        const nc=document.createElement('div');nc.className='note';
+        nc.textContent=f.faceSig
+          ? 'Starts from the face centred on ('+f.faceSig.p.map(n=>(+n).toFixed(1)).join(', ')
+            +'). The face is found again by its shape after every rebuild; change that face '
+            +'enough and the plane says so rather than moving somewhere else. Pick again to change it.'
+          : 'No face picked yet — press the button and click a flat face of the model.';
+        add(nc);
+      } else {
+        /* Only planes this one cannot already be leaning on: offering a base
+           that leads back here would just build a loop for the resolver to
+           refuse. One visited set PER walk, not one shared across the filter —
+           a shared one remembers a plane it passed through on the way to
+           finding f, and then answers "no" when that plane is asked about
+           directly. */
+        const leansOnMe=(id,seen)=>{
+          if(id===f.id)return true;
+          const st=seen||new Set();
+          if(st.has(id))return false;          // a loop that does not run through f
+          st.add(id);
+          const p=features.find(x=>x.type==='dplane'&&x.id===id);
+          if(!p||p.baseKind==='face')return false;
+          const b=features.find(x=>x.type==='dplane'&&(('dp:'+x.id)===(p.base||'')||x.name===(p.base||'')));
+          return b?leansOnMe(b.id,st):false;
+        };
+        const baseOpts=[{l:'Top',v:'Top'},{l:'Front',v:'Front'},{l:'Right',v:'Right'}]
+          .concat(features.filter(x=>x.type==='dplane'&&!leansOnMe(x.id))
+            .map(x=>({l:x.name,v:'dp:'+x.id})));
+        add(fieldSeg('Base plane',baseOpts,f.base||'Top',v=>{f.base=v;rerun();}));
+      }
       add(fieldSeg('Tilt about',[{l:'Its U axis',v:'u'},{l:'Its V axis',v:'v'}],f.about||'u',
         v=>{f.about=v;rerun();}));
-      add(fieldNumber('Angle to the base plane',f.angle==null?30:f.angle,5,-180,180,'deg',
+      add(fieldNumber('Angle to the base',f.angle==null?30:f.angle,5,-180,180,'deg',
         v=>{f.angle=v;rerun();}));
-      const nt=document.createElement('div');nt.className='note';nt.textContent='Right-click the plane in the feature tree to start a sketch on it.';add(nt);
+      add(fieldNumber('Offset along its own normal',f.offset||0,1,null,null,'units',
+        v=>{f.offset=v;rerun();}));
+      add(fieldCheck('Reverse the offset direction',!!f.flip,v=>{f.flip=v;rerun();}));
+      const nt=document.createElement('div');nt.className='note';
+      nt.textContent='Tilted first, then moved along its own normal — so the distance is '
+        +'measured square to the plane you end up with, not to the base. '
+        +'Right-click the plane in the feature tree to start a sketch on it.';add(nt);
     } else if(f.type==='daxis'){
       const planes=['Top','Front','Right']
         .concat(features.filter(x=>x.type==='dplane').map(x=>x.name))
@@ -12302,6 +12533,11 @@ const CSG = (function(){
       consumeAxisPick(e);
       return;
     }
+    if(pendingPlaneFace){
+      if(e.button!==0)return;
+      consumePlaneFacePick(e);
+      return;
+    }
     if(mode==='sketch'&&editing){ if(e.button===0){const p=pointerToSketch(e);if(p)sketchClick(applyDrawSnap(p));} return; }
     if(mode==='model'&&e.button===0){
       if(datumGroup.visible){
@@ -12370,7 +12606,7 @@ const CSG = (function(){
         return;
     }
     if(pendingTextFace||pendingAxisPick||pendingFaceSketch||pendingSketchPick
-       ||pendingBodyColor||pendingFaceColor){
+       ||pendingPlaneFace||pendingBodyColor||pendingFaceColor){
       cancelPicks('Pick cancelled');
       return;
     }
@@ -13092,6 +13328,10 @@ const CSG = (function(){
     const sF=features,sR=rollbackIndex,sS=resultShapes,sPF=propsFeat,sDF=draftFeat;
     const sSD=Object.assign({},sketchData);
     const sPK=pendKind,sPO=pendOps,sFT=featTools;
+    /* Face-referenced planes resolve against whatever body is being built, and
+       feature ids are per-document — so this list's planes must not write over
+       the open part's, exactly as its sketchData must not. */
+    const sDFF=new Map(dplaneFaceFrames); dplaneFaceFrames.clear();
     features=list;rollbackIndex=list.length;resultShapes=[];propsFeat=null;draftFeat=null;
     Object.keys(sketchData).forEach(k=>delete sketchData[k]);
     const errs=[];
@@ -13110,6 +13350,7 @@ const CSG = (function(){
     } finally {
       features=sF;rollbackIndex=sR;resultShapes=sS;propsFeat=sPF;draftFeat=sDF;
       Object.keys(sketchData).forEach(k=>delete sketchData[k]);Object.assign(sketchData,sSD);
+      dplaneFaceFrames.clear(); for(const [k,v] of sDFF)dplaneFaceFrames.set(k,v);
       pendKind=sPK;pendOps=sPO;featTools=sFT;
       ckptOff--;
     }
@@ -15485,6 +15726,7 @@ const CSG = (function(){
     }
     if(pendingSketchPick) return {title:'Start a sketch', body:'Click a <b>flat face</b> of the model, or one of the <b>origin planes</b>, and the sketch opens there. <kbd>Esc</kbd> or right-click cancels.'};
     if(pendingFaceSketch) return {title:'Pick a face', body:'Click a <b>flat face</b> on the solid to place the new sketch there. Right-click to cancel.'};
+    if(pendingPlaneFace) return {title:'Pick a face', body:'Click a <b>flat face</b> on the solid. The plane starts there, and the <b>offset</b> in the panel floats it clear along that face’s normal. Right-click to cancel.'};
     if(draftFeat&&draftFeat.type==='fillet') return {title:draftFeat.kind==='chamfer'?'Chamfer':'Fillet', body:'Click <b>edges in the viewport</b> to add or remove them — the result previews live. Set the radius in the panel, then <b>Done</b>.'};
     if(propsFeat) return {title:'Feature properties', body:'Adjust the values — the model rebuilds live. <b>Done</b> keeps the change, <b>Cancel</b> rolls it back.'};
     if(!features.length) return {title:'Getting started', body:'<b>Left-click a plane</b> to start a sketch on it, or right-click anywhere for every command. The <b>Demo</b> menu loads a finished example — a bearing mount, a magic lamp or a print test boat.'};
@@ -15887,7 +16129,8 @@ const CSG = (function(){
     }
     if(e.key==='F1'){e.preventDefault();openManual();return;}
     if(e.key==='Escape'&&mateSel){e.preventDefault();cancelMate();return;}
-    if(e.key==='Escape'&&(pendingSketchPick||pendingTextFace||pendingAxisPick||pendingFaceSketch)){
+    if(e.key==='Escape'&&(pendingSketchPick||pendingTextFace||pendingAxisPick||pendingFaceSketch
+       ||pendingPlaneFace)){
       e.preventDefault();cancelPicks('Pick cancelled');return;}
     if(docMode==='draw'){
       // a sheet does not orbit, zoom or fit — those keys belong to the model
@@ -16080,6 +16323,8 @@ const CSG = (function(){
     startMate, cancelMate, fitFace, faceRegion, applyMate, applyCompTransform,
     faceAt, datumAt, edgeCircAt, mateEndAt, chainSegRun, fitEdgeCircle, fitEdgeCircleAround,
     pickEdge, get pendingAxisPick(){ return pendingAxisPick; }, sketchBox,
+    planeFrame, planeOf, addSketchOnDPlane,
+    get pendingPlaneFace(){ return pendingPlaneFace; },
     textAnchorWorld, textGripWorld, startSketchPick,
     get pendingSketchPick(){ return pendingSketchPick; },
     get mateSel(){ return mateSel; }, perimeterHit, datumAt, mateEndAt, updateDatumVis,
