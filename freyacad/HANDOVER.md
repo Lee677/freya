@@ -1311,3 +1311,21 @@ thing that moved anywhere is the model menu's entry count — 29→30 and 28→2
 facesel's two menu assertions — which is `v_light` arriving. Shots:
 `scratchpad/lamp/light-default.png`, `light-bright.png`, `light-moody.png`,
 `light-workshop.png`, `light-dialog.png`.
+
+## The Detail slider
+
+`meshDetail` (module scope, beside the lighting state) divides both of
+`OCK.mesh`'s deflections — linear and the 0.22 rad angular — so ×3 draws
+curved faces in ≈4° steps. ×1 is bit-identical to the pre-slider
+tessellation, which is why every mesh-derived pin (brepsel counts, chord
+counts, sig areas) holds: suites boot with clean storage and never move the
+slider. The slider lives at the bottom of the Lighting panel under a MODEL
+DETAIL heading, range ×1–×3 step 0.25, and deliberately cannot go below ×1:
+`resultGeoms` feeds Print/Export as well as the viewport, so a coarser
+setting would quietly degrade prints. It applies on `change`, not `input` —
+a rebuild takes seconds — with a hint while it runs; Reset in the panel
+also returns it to ×1 (its own handler, `resetLighting()` itself is
+untouched). Stored under its own `fcad-detail` key, removed at ×1 so an
+untouched session leaves no key; loaded at parse so the first build of a
+returning session is already fine. `__C.setMeshDetail` / `__C.meshDetail`
+drive it in tests; `$SP/newdemos/detail.js` is the probe.
