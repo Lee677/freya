@@ -2084,17 +2084,24 @@ const CSG = (function(){
       if(u&&u.kind!=='marker')return u; }
     return hits[0].object.userData.ltPick||null;
   }
-  /* Screen point -> a point on a virtual ball, in world space. Shoemake's
-     mapping: inside the ball it is the sphere itself, outside it flattens to
-     the silhouette, so the pointer never runs out of ball to hold on to. */
-  function lightBall(e){
-    const r=canvas.getBoundingClientRect();
-    const x=((e.clientX-r.left)/r.width)*2-1;
-    const y=-((e.clientY-r.top)/r.height)*2+1;
-    const d=x*x+y*y;
-    const v=(d<=1)?new THREE.Vector3(x,y,Math.sqrt(1-d))
-                  :new THREE.Vector3(x,y,0).normalize();
-    return v.applyQuaternion(camera.quaternion);   // camera space -> world
+  /* One step of the aim trackball: how far the pointer moved on screen turns
+     into how far the aim turns, and which way it moved turns into the axis.
+
+     The obvious mapping — screen point onto a virtual sphere — was tried
+     first and is WRONG here, because it saturates: past the sphere's own
+     silhouette there is no more ball to hold, so a long drag stops turning
+     and the aim sticks. This one has no edge to run off. The axis is the one
+     that carries the near side of the ball along the drag, which in camera
+     space is perpendicular to the movement and lying in the screen plane —
+     cross((0,0,1),(dx,-dy,0)) — and the angle is the path length, one full
+     turn per canvas height. Poles are not special to any of it: straight up
+     and straight down are two ordinary points on a great circle. */
+  function lightTurn(dx,dy,v){
+    const len=Math.hypot(dx,dy);
+    if(len<1e-9)return v;
+    const ax=new THREE.Vector3(dy,dx,0).normalize().applyQuaternion(camera.quaternion);
+    const ang=len/Math.max(1,canvas.clientHeight)*Math.PI*2;
+    return v.clone().applyAxisAngle(ax,ang).normalize();
   }
   /* How far along `ax` the pointer is. The drag plane is the one that
      CONTAINS the axis and faces the camera most squarely: take the camera's
@@ -2127,7 +2134,7 @@ const CSG = (function(){
     const rec=lightById(u.id);
     if(!rec){ lightDrag={kind:'tap'}; return true; }
     if(u.kind==='aim'){
-      lightDrag={kind:'aim',id:rec.id,ball:lightBall(e),dir:rec.dir.slice()};
+      lightDrag={kind:'aim',id:rec.id,px:e.clientX,py:e.clientY,dir:rec.dir.slice()};
       setHint('Aiming '+rec.name+' — the whole sphere, straight up and straight down included');
     }else{
       const ax=new THREE.Vector3(); ax.setComponent(u.axis,1);
@@ -2148,18 +2155,11 @@ const CSG = (function(){
       const p=lightDrag.pos0.clone().addScaledVector(lightDrag.ax,t-lightDrag.t0);
       updateLight(rec.id,{pos:[+p.x.toFixed(3),+p.y.toFixed(3),+p.z.toFixed(3)]},true);
     }else{
-      /* A trackball, not a point-on-a-sphere: the rotation FROM the last ball
-         point TO this one is applied to the aim as a quaternion and
-         accumulated. That is what makes every direction reachable — keep
-         dragging and the aim keeps turning, right round through the far side
-         — and what leaves no dead zone at the poles, because there are no
-         poles in it. Straight up and straight down are ordinary points on the
-         ball, and nothing about the maths knows they are special. */
-      const cur=lightBall(e);
-      const q=new THREE.Quaternion().setFromUnitVectors(lightDrag.ball,cur);
-      const d=new THREE.Vector3(lightDrag.dir[0],lightDrag.dir[1],lightDrag.dir[2])
-        .applyQuaternion(q).normalize();
-      lightDrag.ball=cur; lightDrag.dir=[d.x,d.y,d.z];
+      const dx=e.clientX-lightDrag.px, dy=e.clientY-lightDrag.py;
+      lightDrag.px=e.clientX; lightDrag.py=e.clientY;
+      const d=lightTurn(dx,dy,new THREE.Vector3(
+        lightDrag.dir[0],lightDrag.dir[1],lightDrag.dir[2]));
+      lightDrag.dir=[d.x,d.y,d.z];
       updateLight(rec.id,{dir:[+d.x.toFixed(6),+d.y.toFixed(6),+d.z.toFixed(6)]},true);
     }
     return true;
