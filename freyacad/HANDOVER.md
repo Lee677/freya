@@ -11,9 +11,11 @@ the user sees or does — a new tool, a shortcut, a menu entry, a changed defaul
 that gets lifted — updates the manual in the same commit. Also bump the "last revised"
 date in two places: `#stamp` near the top and the `<footer>`.
 
-The manual states its own limits (no constraint solver, no datum-plane dimensions, params
-outside undo). When one of those gets fixed, delete the note — a stale caveat is worse
-than none, because it teaches people to work around a problem that no longer exists.
+The manual states its own limits (no perpendicular/tangent/symmetric constraint tool, no
+datum-plane dimensions, params outside undo). When one of those gets fixed, delete the
+note — a stale caveat is worse than none, because it teaches people to work around a
+problem that no longer exists. The "no constraint solver" caveat went that way when
+phase 2 wired PlaneGCS up; do the same with the next one.
 
 Same applies to the repo: every change gets committed and pushed.
 
@@ -965,12 +967,15 @@ having a visible pane to paste into.
 
 ## Biggest thing still missing
 
-**A real constraint solver *for sketches*.** Dimensions are applied one at a time, so
-satisfying one can disturb another. `@salusoft89/planegcs` is FreeCAD's solver compiled to
-WASM and would slot in beside the existing OCCT/manifold WASM. Everything else on the list
-— datum-plane dimensions, parallel/perpendicular/equal — is easier and less valuable than
-this. Note the assembly mate solver (trap 17) does not help here: it projects rigid bodies
-in 3D, and sketch entities are neither rigid nor 3D.
+**A real constraint solver *for sketches*** was this entry for a long time. It is done:
+PlaneGCS is ported (`planegcs.js`) and wired into the DOF readout, dimension edits, drags
+and constraint entry — see "A real constraint solver: PlaneGCS, ported" and "The solver
+driving the sketcher (phase 2)" below. What is left of it is coverage rather than
+machinery: **arcs as constrainable geometry** (the port has no arc constraints; upstream's
+`ConstraintArcRules` and friends are the work), and **constraint tools the solver already
+understands but the dock does not offer** — perpendicular, tangent, symmetric, midpoint,
+collinear. Note the assembly mate solver (trap 17) is still a separate thing: it projects
+rigid bodies in 3D, and sketch entities are neither rigid nor 3D.
 
 Also open: dimensioning to the datum planes (length and angle to a plane trace; the origin
 already works), lines parallel to a datum plane, and property-panel edits inside undo.
@@ -1932,13 +1937,16 @@ extruded into a post).
   row count from the table, on the same principle the tallies were taken out of
   hand-editing for. The freyacad numbers are unchanged (42/4/30).
 
-## A real constraint solver: PlaneGCS, ported (phase 1, inert)
+## A real constraint solver: PlaneGCS, ported
 
 freyacad now carries a genuine 2D geometric constraint solver — the same one
-FreeCAD's Sketcher uses, PlaneGCS, ported from C++ to JavaScript. **Phase 1 is
-the numerical core and nothing else.** It is loaded by the page, it is tested,
-and no part of the sketcher calls it. Wiring it into drawing, dragging and the
-DOF chip is phase 2, and this section is written for whoever does that.
+FreeCAD's Sketcher uses, PlaneGCS, ported from C++ to JavaScript. **This section
+is the port and the adapter: the numerical core, the variable model, and what
+each sketch record turns into.** What the sketcher does with it — the DOF chip,
+dimension edits, drags, and refusing a constraint that cannot hold — is the
+section after this one. It was written when nothing called any of it yet, which
+is why it reads as a description of a part rather than of a feature; that is
+still the right way to read it.
 
 ### The files
 
@@ -2259,11 +2267,12 @@ else holding a live point keep working across a solve. A polygon's `rot` is
 written back unnormalised, so it can wander outside 0..2*pi over many solves;
 that is geometrically a no-op and `polyCorners` does not care.
 
-**`help.html` and `FEATURE-MATRIX.html` are deliberately untouched.** Nothing
-here is user-visible yet, and the manual's "no constraint solver" caveat is
-still true from where the user sits. The standing rule applies to the commit
-that makes it visible: whoever wires the first piece up deletes that caveat,
-documents what constraints now hold, and moves the matrix row.
+**`help.html` and `FEATURE-MATRIX.html` were deliberately untouched in phase 1**,
+because nothing was user-visible yet. Phase 2 made it visible and paid that
+debt: the manual's "no constraint solver" caveat is gone, "Constraints &
+degrees of freedom" describes what the chip now reads, "When a constraint can't
+hold" describes conflict versus redundancy, About credits PlaneGCS and its
+licence, and the matrix row is ✅.
 
 Suggested wiring order, easiest first: (1) replace the DOF chip's arithmetic
 with `diagnose().dof` — it is a strict improvement and touches nothing else;
@@ -2317,6 +2326,269 @@ solve.
   and restores the parameters, but if you interrupt it (you cannot, it is
   synchronous) or if a constraint's `evaluate()` writes somewhere unexpected,
   that is where to look.
-- **Nothing calls any of this yet, on purpose.** `git grep 'gcs\.' index.html`
-  should only find the adapter's own internals and the `__C` export until phase
-  2 starts.
+- **Nothing called any of this in phase 1, on purpose.** Phase 2 wired it; see
+  the next section for what now goes through it and what still does not.
+
+## The solver driving the sketcher (phase 2)
+
+The section above ends with "nothing calls any of this yet". Four things do
+now, and all four fall back to the code that was there before the solver
+existed if `planegcs.js` is missing — `gcsoff.js` proves that by blocking the
+script and running the sketcher without it.
+
+freyacad's own glue lives in `index.html` between `/* GCS-DRIVE-BEGIN */` and
+`/* GCS-DRIVE-END */`, immediately below the adapter. The adapter maps a sketch
+onto PlaneGCS; the glue is where the sketcher asks it questions. Same rule as
+before: nothing of freyacad's moves into `planegcs.js`, which phase 2 did not
+touch at all.
+
+Three suites, all in `runbattery.sh`:
+
+- **`newdemos/gcsglue.js`** — plain node, 37 checks, about a second. Lifts BOTH
+  marked blocks out of `index.html` and evaluates them with the real
+  `entPoints`/`entVarCount`/`entSeg`/`liveRef`/`dimKey`, so it tests the code
+  the browser runs. This is the one to extend while working; it catches the
+  reasoning, and the browser suite catches the wiring.
+- **`newdemos/gcsdrive.js`** — Playwright, 38 checks. Everything through the
+  real UI: the chip's own text, a dimension typed into its label, pointer
+  drags, tool clicks, and every sketch of both demos and
+  `models/magic-lamp.sketchcad` opened one after another.
+- **`newdemos/gcsoff.js`** — Playwright, 8 checks, with `planegcs.js` blocked
+  by a route before the page loads. Proves the fallbacks.
+
+`gcsdrive.js` calls `fitAll()` before it clicks anything, and checks
+`elementFromPoint` for every click it makes. Both are scar tissue: the dock
+floats over the top of the drawing area, and a click on an edge that happens to
+sit underneath it silently does nothing at all, which reads exactly like a
+broken feature.
+
+### 1. The DOF chip, and gold vs blue
+
+`gcsStateOf(sk)` runs `diagnose()` with `dependentParams: true` and returns
+`{ents:[{dof,defined}], dof, state, skipped, diag}`. `defineState` returns its
+`ents` array when it is there and the old arithmetic when it is not, so **the
+chip, the entity colours and `lockedEnts` all read the same number** — which
+was already the rule, now with a rank behind it instead of a tally.
+
+Per entity: PlaneGCS's dependent-parameter analysis says which parameters can
+still move, and an entity is fully defined exactly when none of its own can.
+That is the reading FreeCAD highlights with. It is per-entity *whether*, not
+per-entity *how many* — a coupled group's freedoms belong to the group — so
+`ents[i].dof` is "how many of my numbers are still free", which is what the
+chip's "3/7 still free" tail wants and nothing else uses.
+
+The chip has a third state now: `over-defined`, in red, naming the two records
+that fight. `#sk-anchor.bad` is its class.
+
+**Caching, because diagnose is not free.** The overlay redraws every frame of a
+drag; `diagnose` costs a QR and a re-solve. `gcsStateOf` caches on a signature
+of everything the answer depends on: entity kinds and sizes, every stored
+constraint, every dimension **including its value** (a conflict depends on the
+number, not just on the record), and the implied joints below. Moving a point
+changes none of those, so a drag is one diagnosis, not sixty. `gcsInvalidate()`
+drops it; a solve calls that itself.
+
+### The implied joints — read this before changing the DOF count
+
+The sketcher has always believed two things the sketch file does not say:
+points of different entities sitting on the same spot are joined
+(`collectJoins`, enforced for the whole of a drag), and a point on the origin
+is on the origin (`anchoredSet`). Old files — `models/magic-lamp.sketchcad`,
+every demo — store no constraints at all and rely entirely on this.
+
+`gcsImplied(sk)` produces those as `coinc` records and every call into the
+solver passes them as `extraCons`, so **what the chip counts is what a drag
+will hold**. Two rules keep it honest:
+
+- A **union-find** seeded with the stored coincidences emits one join per
+  merge. Three points on one spot are two joins, not three; a pair already
+  joined by a stored constraint gets none. Without that the diagnosis would
+  report our own bookkeeping as redundant, on every sketch.
+- A point named by a stored `ontrace` or `fix` is left alone for grounding —
+  "and it is on the origin" on top of "it is on the Front plane" would make the
+  user's own constraint read as redundant.
+
+**This changed how old sketches read, and it is the honest change.** The lamp's
+body profile used to show gold, fully defined, and refuse to be dragged: the
+old flood fill saw each two-point line pinned at both ends by neighbours that
+were themselves only pinned through it. Four lines joined corner to corner with
+nothing else said about them can still flex, and the rank says so — the lamp is
+52 degrees of freedom, blue, and every point of it drags again.
+
+### 2. A dimension edit solves the whole sketch
+
+`openDimInput`'s apply path stores the value and calls `gcsSettle(editing)`.
+`gcsSettle` snapshots the geometry, runs `gcs.solveSketch` with the implied
+joints, and — if the solve did not reach zero residual — **puts the geometry
+back exactly as it was** and returns false, at which point `dimApply` plus
+`relaxDims(3)` run, which is what always happened. When it does fall back it
+also says why, naming the conflicting records out of the failed context.
+
+`guardDims` settles the same way, so Horizontal, Vertical, Parallel and Equal
+now settle the whole sketch too, and the Coincident tool does it on its own path
+(it has never gone through `guardDims`). The one-shot move (`segAlign`, `applyParallel`,
+`applyEqual`) still runs first, deliberately: it picks the branch — which way
+the line flips to become horizontal, which orientation of parallel is nearer —
+and the solver then makes everything consistent from a configuration that is
+already close, which is what keeps the correction small.
+
+For an angle dimension the apply path sets `d.now` to what the label currently
+reads before solving and deletes it afterwards. It only matters in the
+adapter's fallback branch (parallel legs), and it is scratch: it must never end
+up in a saved sketch.
+
+### 3. Dragging
+
+Built once at grab time (`gcsDragStart`), pinned, and only the pin moves after
+that (`gcsDragTo` → `movePin` + `solve` + `apply`). Every frame solves from the
+geometry as it was at the grab, so where the sketch lands depends on where the
+cursor is and not on the path it took. Measured in the browser at 0.3 ms a
+frame on the lamp's body profile; `pinMode` stays on `auto`.
+
+Only plain point handles come this way — `kind` `'v'` (a chain point or a
+rectangle corner) and `'c'` (a circle or polygon centre). A polygon's corner
+handle and a circle's rim are size-and-spin gestures, not "put this point
+here", and they keep the direct path they always had; that is also what keeps
+`polycon`'s corner drag reading exactly as it did.
+
+At the drop, `gcsDragEnd` then one `gcsSettle`, which also takes in whatever
+the drop just snapped into place. The old promise — a drag never changes a
+dimension, or the whole drag is taken back — is still there behind it, as a
+net rather than as the mechanism.
+
+### 4. Conflict and redundancy, before the constraint is stored
+
+`gcsConCheck(sk, rec, what)` wraps `gcs.wouldOverConstrain`. Three answers, and
+they are **not** the same thing:
+
+- `conflict` → refused, with a message naming what it fights
+  (`gcsName` turns a tag into "the 20 mm length", "a horizontal", "a coincident
+  point").
+- `redundant` → **allowed**, with "was already true here — kept, and it costs
+  no freedom". A parallel that adds no rank is not an error and must never be
+  reported as one.
+- anything else, including `*-elsewhere` (the sketch was already in that state
+  before this constraint) → silent, because it is not this constraint's fault.
+
+Wired into: the Horizontal/Vertical tools (both the click path and the
+selection path), Parallel, Equal, Coincident, and a new dimension in
+`openDimInput` (where a conflict still offers "add it as driven" — the same
+dialog, now with the reason in it).
+
+**`gcsSkSans` is not optional.** H and V replace each other on a segment, and a
+newer parallel or equal replaces the older one on the same follower. Asking
+about the new constraint while the record it is about to replace is still in
+the list calls every deliberate change of mind a contradiction. The check runs
+against the sketch with that one record already dropped.
+
+**`gcsAskAfter` is not optional either, and it took a failing test to see why.**
+The question is not "can this constraint hold where the sketch is now" but "can
+it hold where the tool is about to put the sketch". Horizontal on a line that is
+currently upright and 10 long, asked from where the line is, comes back a
+conflict with its own length dimension: the solver eliminates the equality by
+merging the two y's onto one value, the line collapses to a point, and a
+distance of 10 from a point to itself is unsatisfiable. Asked from where
+segAlign is about to put it — flat, still 10 long — it is fine, which is also
+what the tool then does. So the check runs the one-shot move on the real
+geometry, asks, and puts the geometry back; the caller does the move again for
+real. Every constraint tool goes through it (`applyCoincident` does the same by
+hand: join, ask, and put the point back if the answer is no).
+
+### Two traps that are worth the words
+
+**An equality between two unknowns is eliminated by MERGING them**, onto the
+kept one's value — `initSolution`, and it is why a coincidence costs a variable
+instead of an equation. For a coincidence that is exactly right. For a
+`horizontal` or `vertical`, which compile to `Equal(y,y)` / `Equal(x,x)`, it is
+right only once the segment is already flat: merge the two x's of an upright
+line and it becomes a point, where `segAlign` would have swung it flat at its
+own length. Everything in the app aligns first, so the solver only ever meets
+them true — but `gcsFlatEnough(sk)` checks anyway, and `gcsSettle` and
+`gcsDragStart` stand down when it says no, leaving the relaxation to do the
+flattening it is good at. If you ever add a constraint that compiles to
+`Equal` between two unknowns, ask yourself the same question about it.
+
+**With no driving constraints at all, `diagnose()` returns before working out
+which parameters are free**, leaving `pDependentParameters` empty — and an
+empty list read literally says "every number is decided". That is a freshly
+drawn line: it would have shown gold, fully defined, and refused to be dragged.
+`gcsStateOf` checks `sys.emptyDiagnoseMatrix` and treats every parameter as
+free when it is set. `gcsglue.js` pins a lone line, circle and rectangle for
+exactly this reason.
+
+### Other things worth knowing
+
+- **`ctx.skipped` is surfaced.** A record naming geometry that is no longer
+  there shows on the chip as "· 1 not enforced", with what it was in the
+  tooltip. Implied joints are ours and are filtered out of that count.
+- **A snap the dragged point did not REACH is no longer treated as a snap.**
+  The old path always put the point exactly on whatever the cursor was hovering,
+  so the coincidence stored at the drop was true by construction. The solver puts
+  the point where the sketch allows, which can be short of it — so the release
+  checks the distance before storing anything, or it would be storing a rule the
+  sketch cannot keep.
+- **A solve that turns a circle inside out is treated as a failure.**
+  `gcs.apply` writes `Math.abs(r)`, so a radius that crossed zero would come
+  back as a mirrored solution rather than as an error. `gcsInsideOut(ctx)`
+  checks the parameter itself, on both the settle and the drag path.
+- **`__C.gcsStatus()`** returns what the chip is reading and where it came from
+  (`source: 'solver' | 'arithmetic'`), and **`__C.gcsStats`** counts diagnoses,
+  settles, drag frames and checks with the last timing of each. That is how the
+  suites prove the solver did the work rather than the fallback quietly doing
+  it, and where the in-browser performance numbers below come from.
+
+### Measured in the browser (Chromium, swiftshader, this container)
+
+Medians of seven, on the lamp's body profile — 12 entities, 39 points, 13
+implied joints, 52 degrees of freedom, which is a real sketch and not a toy:
+
+| what | when it runs | cost |
+|---|---|---|
+| `gcsStateOf` — `diagnose` + dependent params | a constraint or dimension changes | 1.2 ms |
+| the same, cache hit | every overlay redraw, every frame of a drag | 0.1 ms |
+| `gcsImplied` alone | inside each of the above | <0.05 ms |
+| `gcsSettle` | a dimension typed, a constraint added, a drag dropped | 1.3 ms |
+| `gcsConCheck` (`wouldOverConstrain`) | per constraint click | 0.9 ms |
+| drag frame — `movePin` + `solve` + `apply` | per pointermove | 0.3 ms, worst of 12 was 1.3 ms |
+
+On a four-entity sketch the diagnosis is 0.2–0.3 ms and a settle 1.8–3.0 ms. The
+first call in a page is several times the median — JIT, not arithmetic; the
+suites print the last of each in `perf`, so a regression of the order that
+matters would still show. These are swiftshader numbers; real hardware is
+faster.
+
+The node table in the section above still stands for the big cases, and those
+are the ones to watch: a hundred-entity sketch diagnoses in about 150 ms, which
+is why the cache exists and why `diagnose` runs on a structural change rather
+than on a redraw. Nothing here changed the solver's own cost — what the wiring
+adds is one `gcsImplied` per call, O(points²), which replaced an O(entities³)
+flood fill and is faster than what it replaced.
+
+### What is still weak
+
+- **Everything phase 1 listed is still true**: angles are the shakiest
+  translation, tangency picks its side at build time, LM and BFGS are lightly
+  tested. Nothing here touched the solver.
+- **A drag that starts on a polygon corner or a circle's rim does not solve.**
+  It moves `r` and `rot` directly and then relaxes, exactly as before. Pinning a
+  corner would be a different gesture (the centre would move), so this is a
+  decision, not an oversight — but it does mean a constraint on a polygon edge
+  is only enforced by the relaxation during such a drag.
+- **`gcsSettle` at the end of a drag rebuilds the system from scratch.** On a
+  hundred-entity sketch that is the cold-solve number, not the warm one.
+- **The chip asks for `dependentParams`, which doubles the diagnosis**, because
+  gold-vs-blue needs to know which numbers are still free and the DOF count does
+  not. If the chip is ever the thing that is too slow, the split is there to
+  take: `dof` alone is half the price.
+- **The conflict check runs a full build and diagnose per constraint click.**
+  1.2 ms on a small sketch; it will be the diagnose number on a big one.
+- **"Conflict" is the diagnosis's word, and the diagnosis re-solves to say it.**
+  That makes it trustworthy about the sketch it was handed and only about that
+  one: hand it a degenerate configuration and it will call something a conflict
+  that a person would call possible from somewhere else. `gcsAskAfter` exists
+  because of one such case. If a refusal ever looks wrong, ask what the geometry
+  was at the moment the question went in, before suspecting the rank.
+- **`relaxDims` is still the whole story for anything that is not one of the
+  four paths above** — corner treatments, mirror, trim, and the drag gestures
+  named above. The two mechanisms coexist deliberately; the fallback has to
+  keep working anyway, because the solver may be absent.

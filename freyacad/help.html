@@ -600,29 +600,42 @@ reference reading shown in parentheses, like <i>(12.5 mm)</i>. A driven dimensio
 the geometry and never moves it, costs no freedom in the count, and can be erased like
 any other. It's the honest way to keep a measurement visible on a sketch that's already
 fully in charge of itself.</p>
-<div class="note warn">
-  <span class="tag">Current limitation</span>
-  <p>Dimensions are applied <b>one at a time</b>, not solved together. Each one moves
-  geometry to satisfy itself, which can disturb a dimension you set earlier — add an angle
-  and a length you already fixed may shift. Work outward from the origin, dimension in the
-  order you'd actually build the shape, and check earlier values afterwards. A proper
-  constraint solver is the fix, and is the biggest single improvement still to come.</p>
+<div class="note">
+  <span class="tag">Dimensions drive the geometry</span>
+  <p>Type a number and the <em>whole sketch</em> is solved to it at once — every other
+  dimension and every constraint at the same time, moving the geometry as little as they
+  allow. A length you set earlier does not shift to make room for the one you just typed;
+  the free geometry moves instead. If nothing can satisfy them all, the sketch says which
+  two numbers are fighting rather than quietly picking one.</p>
 </div>
 
 <h2 id="constrain">Constraints &amp; degrees of freedom</h2>
-<p>The chip in the top-left corner is doing real arithmetic, not guessing. Every entity
-carries a number of free values — a line has four (two endpoints, two coordinates each), a
-circle three, a rectangle four — and every dimension, snap or constraint removes one. What
-is left over is the <b>degrees of freedom</b>: the number of independent ways your sketch
-can still deform.</p>
-<p>When it hits zero the sketch is <b>fully defined</b>. That is the state you want before
-building on it, because nothing can shift underneath a feature later.</p>
+<p>The chip in the top-left corner is the sketch's own report on itself, and a real
+constraint solver is behind it. Every entity carries a number of free values — a line has
+four (two endpoints, two coordinates each), a circle three, a rectangle four — and every
+dimension and constraint takes some of them away. What is left is the <b>degrees of
+freedom</b>: the number of independent ways your sketch can still deform.</p>
+<p>It counts what your rules actually <em>decide</em>, not how many rules you wrote. Three
+parallels round a rectangle are three constraints but only two decisions — the third
+repeats what the first two already said — and the count knows the difference. That is why
+it can be trusted: it is the same arithmetic the solver does to move the geometry.</p>
+<p>The chip reads one of three ways:</p>
+<ul>
+  <li><b>◌ under-defined</b> — <i>N</i> degrees of freedom left, and how many entities
+      still have one. Perfectly usable; just not decided yet.</li>
+  <li><b>⚓ fully defined</b> — zero. Nothing can shift underneath a feature later, which
+      is the state you want before building on it.</li>
+  <li><b>⚠ over-defined</b> — two of your rules cannot both hold, and the chip names
+      them. Change or delete one of the pair.</li>
+</ul>
 <p><b>Only the origin and the datum planes count as ground.</b> A shape can have every
 side dimensioned and every corner constrained to its neighbours and still slide around
 the plane as a rigid unit — internal relationships alone never fully define anything.
-Until something chains the shape to the origin or a plane (a coincident point, a
-distance to a plane, an angle to a plane), the count floors at the freedoms the whole
-shape retains, and the chip stays honest about it.</p>
+Until something chains the shape to the origin or a plane (a coincident point, a distance
+to a plane, an angle to a plane), those last few freedoms stay in the count.</p>
+<p>Points sitting on the same spot, and points sitting on the origin, are counted as
+joined even in an old sketch that never stored a constraint saying so — because that is
+how they behave when you drag them.</p>
 
 <h3>The constraints</h3>
 <p>Polygons join in fully: a polygon <b>corner</b> is a point like any other — make a line
@@ -671,16 +684,38 @@ middle.</p>
 <p>These are cheap and worth using freely. A line pinned horizontal loses a degree of
 freedom that no dimension then has to spend.</p>
 
+<h3>When a constraint can't hold</h3>
+<p>Every new constraint is put to the solver before it is stored, and there are two
+different answers people usually lump together:</p>
+<ul>
+  <li><b>It contradicts something.</b> A parallel between a line you have made horizontal
+      and one you have made vertical cannot be true. freyacad <em>refuses</em> it and says
+      what it fights — "Parallel contradicts a horizontal and the 20&nbsp;mm length" —
+      so you know which badge to change. Nothing moves.</li>
+  <li><b>It was already true.</b> A parallel between two lines that a run of other
+      constraints has already made parallel adds nothing, but it is not wrong either. It
+      goes in, with a note saying it costs no freedom. Say it twice if it makes the
+      sketch easier to read.</li>
+</ul>
+<p>The same applies to a new dimension: one whose value contradicts the sketch is offered
+as a <b>driven</b> reference instead (see <a href="#dims">Dimensions</a>), because a
+measurement worth showing is not always a rule worth adding.</p>
+<p>If a constraint ends up naming geometry that no longer exists — you erased the line it
+held — the chip says "<i>1 not enforced</i>" rather than pretending it still applies.
+Hover it for what was lost.</p>
+
 <h3>Dragging respects your dimensions</h3>
 <p>Only the origin and the datum planes are truly fixed. Everything else is exactly as
 free as its constraints leave it, and dragging honours that:</p>
 <ul>
   <li><b>Undimensioned geometry</b> drags anywhere.</li>
-  <li><b>Dimensioned geometry still drags — but the numbers hold.</b> While you pull a
-      point, every dimension keeps re-imposing its value. A line with a length dimension
+  <li><b>Dimensioned geometry still drags — but the numbers hold.</b> The point you have
+      hold of is pinned to the cursor and the rest of the sketch rearranges around it,
+      with every dimension and constraint still true. A line with a length dimension
       swings about its far end at exactly that length; two lines with an angle between
-      them move and rotate <em>as a pair</em>, the angle intact. A drag can never
-      silently rewrite a value you typed.</li>
+      them move and rotate <em>as a pair</em>, the angle intact. Where the sketch cannot
+      reach the cursor, the point stops short of it rather than a number giving way. A
+      drag can never silently rewrite a value you typed.</li>
   <li><b>Fully defined geometry won't drag at all.</b> Once every freedom is spent
       against the origin and planes, there is nowhere left to go — the point flashes red
       and the only way to move it is to edit a dimension.</li>
@@ -1414,11 +1449,12 @@ three view keys — can all be changed under <b>Customise tools… → Keyboard<
 <h2 id="limits">Known limits</h2>
 <p>Stated plainly, so nothing surprises you mid-part:</p>
 <ul>
-  <li><b>No constraint solver in sketches yet.</b> Dimensions apply one at a time and can
-      disturb each other. See the note under <a href="#dims">Dimensions</a>. (Assembly mates
-      <em>are</em> solved together — that solver doesn't work on sketch geometry.)</li>
-  <li><b>No perpendicular constraint.</b> Horizontal, vertical, parallel, equal,
-      concentric and coincident are in; perpendicular isn't yet.</li>
+  <li><b>No perpendicular, tangent or symmetric constraint in the dock.</b> Horizontal,
+      vertical, parallel, equal, concentric and coincident are the ones you can draw with;
+      the solver underneath understands more than the tools currently offer.</li>
+  <li><b>Sketch arcs are not constrained geometry.</b> Corner fillets and splines are
+      drawn and dimensioned, but the solver treats a spline's control points as points
+      and does not hold the curve itself.</li>
   <li><b>STL imports are faceted.</b> A mesh has no true surfaces, so an imported STL
       can be viewed, placed and exported but not filleted or chamfered.</li>
   <li><b>Phones and tablets stay outside</b>, by design. freyacad drives with a mouse,
@@ -1444,9 +1480,12 @@ three view keys — can all be changed under <b>Customise tools… → Keyboard<
 <h2 id="about">About</h2>
 <p>freyacad is built on <b>Open CASCADE</b> — the same B-rep kernel behind FreeCAD —
 compiled to WebAssembly and running in the page. That's why STEP export is genuine solid
-geometry rather than a mesh dressed up as one. The interface is drawn with
-<b>three.js</b>. The whole application is a single HTML file with no build step and no
-framework.</p>
+geometry rather than a mesh dressed up as one. Sketches are solved by <b>PlaneGCS</b>,
+FreeCAD's own 2D constraint solver, ported to JavaScript and used under the LGPL — it
+sits beside the app as <code>planegcs.js</code>, with its licence in
+<code>LICENSE-planegcs.txt</code>, and you may replace it with your own build. The
+interface is drawn with <b>three.js</b>. The application itself is a single HTML file with
+no build step and no framework.</p>
 <p>Source, issues and history: <a href="https://github.com/Lee677/freya" target="_blank"
 rel="noopener">github.com/Lee677/freya</a></p>
 

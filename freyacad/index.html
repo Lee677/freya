@@ -629,6 +629,7 @@ if(!window.THREE){
     white-space:nowrap;margin-right:2px}
   #sk-anchor.ok{color:var(--g-green);border-color:rgba(52,168,83,.5);text-shadow:0 0 6px rgba(52,168,83,.5)}
   #sk-anchor.no{color:#8ab4f8;border-color:rgba(66,133,244,.45)}
+  #sk-anchor.bad{color:#f28b82;border-color:rgba(234,67,53,.55);text-shadow:0 0 6px rgba(234,67,53,.4)}
   /* which build is this tab actually running — ends every "did the refresh
      take?" debate in one glance */
   #build-tag{position:fixed;right:8px;bottom:4px;z-index:21;font-family:var(--mono);
@@ -3031,7 +3032,16 @@ const CSG = (function(){
     }
     return {pos:Math.min(2,traces.size+(near?1:0)), rot:rot};
   }
+  /* Degrees of freedom, per entity. The constraint solver answers this
+     properly — a rank, not a tally — so when it is there its reading is the
+     one every part of the app uses, and the arithmetic below is what happens
+     when planegcs.js is not. The two do disagree, and the solver is the one
+     telling the truth: four lines joined corner to corner with nothing else
+     said about them can still flex, however grounded the old flood fill
+     believed the ring to be. */
   function defineState(sk){
+    const g=gcsStateOf(sk);
+    if(g&&g.ents&&g.ents.length===(sk.entities||[]).length)return g.ents;
     const anc=anchoredSet(sk);          // once, not per entity — it's a flood fill
     return sk.entities.map(function(e,i){
       let dof=Math.max(0, entVarCount(e) - 2*pinsOn(sk,i,anc) - dimsOn(sk,i)
@@ -3060,9 +3070,42 @@ const CSG = (function(){
     const el=$('sk-anchor');if(!el)return;
     if(mode!=='sketch'||!sk){el.style.display='none';return;}
     el.style.display='inline-flex';
-    const st=defineState(sk),total=st.length;
-    if(!total){el.className='';el.textContent='sketch empty — start at the origin marker';return;}
+    const total=(sk.entities||[]).length;
+    if(!total){el.className='';el.title='';
+      el.textContent='sketch empty — start at the origin marker';return;}
+    const g=gcsStateOf(sk);
+    if(g){
+      /* A record the solver could not honour is worse than no record at all if
+         nobody says so, so it rides on the chip and in its tooltip. */
+      const tail=g.skipped.length?(' · '+g.skipped.length+' not enforced'):'';
+      const tip=[];
+      if(g.skipped.length)tip.push('Not enforced: '+g.skipped.map(function(x){
+        return x.kind; }).join(', ')+' — the geometry it named has changed.');
+      if(g.diag&&g.diag.redundant&&g.diag.redundant.length)
+        tip.push('Says nothing new (harmless): '+gcsNameList(sk,g.diag.redundant).join(', ')+'.');
+      if(g.diag&&g.diag.warnings&&g.diag.warnings.length)tip.push(g.diag.warnings.join(' '));
+      el.title=tip.join('\n');
+      if(g.state==='conflicting'){
+        const foes=gcsNameList(sk,g.diag.conflicting);
+        el.className='bad';
+        el.textContent='⚠ over-defined — '+(foes.length?foes.slice(0,2).join(' and ')+' fight'
+                                                       :'two constraints fight')+tail;
+        return;
+      }
+      if(g.dof<0){ el.className='bad';
+        el.textContent='⚠ over-defined — '+(-g.dof)+' constraint'+(g.dof<-1?'s':'')+' too many'+tail;
+        return; }
+      if(g.dof===0){ el.className='ok';
+        el.textContent='⚓ fully defined — 0 degrees of freedom'+tail; return; }
+      const loose=g.ents.filter(s=>s.dof>0).length;
+      el.className='no';
+      el.textContent='◌ under-defined — '+g.dof+' degree'+(g.dof>1?'s':'')+' of freedom'+
+        ' · '+loose+'/'+total+' still free'+tail;
+      return;
+    }
+    const st=defineState(sk);
     const dof=st.reduce((a,s)=>a+s.dof,0);
+    el.title='';
     if(dof<=0){el.className='ok';el.textContent='⚓ fully defined — 0 degrees of freedom';return;}
     const loose=st.filter(s=>s.dof>0).length;
     el.className='no';
@@ -6732,14 +6775,22 @@ const CSG = (function(){
     if(t!=='horiz'&&t!=='vert'&&t!=='paral'&&t!=='equal')return false;
     const d={entIdx:sketchSel.entIdx,kind:'seg',seg:sketchSel.seg};
     if(t==='horiz'||t==='vert'){
-      // the same one path as the click tool: align, store, settle coincidences
+      // the same one path as the click tool: ask, align, store, settle
+      const chk=gcsAskAfter(editing,
+                    function(){ return segAlign(editing,d.entIdx,d.seg,t); },
+                    {kind:t,ent:d.entIdx,seg:d.seg},
+                    t==='horiz'?'Horizontal':'Vertical',
+                    function(c){ return (c.kind==='horiz'||c.kind==='vert')&&
+                                        c.ent===d.entIdx&&c.seg===d.seg; });
+      if(chk.refuse){ setHint(chk.message); return true; }
       if(guardDims(()=>{
            if(!segAlign(editing,d.entIdx,d.seg,t))return false;
            storeHV(editing,d,t);
            relaxDims(editing,3);
            return true;},
            t==='horiz'?'Horizontal':'Vertical'))
-        setHint(t==='horiz'?'Line constrained horizontal — delete its badge to free it'
+        setHint(chk.verdict==='redundant'?chk.message
+               :t==='horiz'?'Line constrained horizontal — delete its badge to free it'
                            :'Line constrained vertical — delete its badge to free it');
       return true;
     }
@@ -6779,11 +6830,16 @@ const CSG = (function(){
   function guardDims(fn,what){
     if(!editing)return false;
     const has=editing.dims&&editing.dims.length;
-    if(!has){ const r0=fn(); relaxDims(editing,400); rebuild(); return r0; }
+    /* Settling is the solver's job when there is one: every constraint and
+       every dimension at once, minimum-norm, so nothing leaps. relaxDims is
+       what happens without it — and what happens when the solver cannot
+       satisfy what it was given, in which case it has already put the
+       geometry back exactly as it found it. */
+    if(!has){ const r0=fn(); if(!gcsSettle(editing))relaxDims(editing,400); rebuild(); return r0; }
     ensureDimValues(editing);
     const pre=maxDimErr(editing), snap=snapState();
     const r=fn();
-    relaxDims(editing,400);
+    if(!gcsSettle(editing))relaxDims(editing,400);
     if(maxDimErr(editing)>pre+1e-3){
       applyState(snap); refreshUndoUI();
       setHint((what||'That')+' would change a dimension — the sketch would be over-defined. '+
@@ -7476,13 +7532,24 @@ const CSG = (function(){
          shape or swings a free line, whichever the entity's structure says */
       if(d && (d.kind==='seg'||d.kind==='pedge')){
         const spun=!!entSpin(editing.entities[d.entIdx]);
+        /* Ask the solver before storing anything. A CONTRADICTION is refused
+           and named; a constraint that merely repeats what the sketch already
+           says is not a failure — it goes in, and says so. */
+        const chk=gcsAskAfter(editing,
+                      function(){ return segAlign(editing,d.entIdx,d.seg,tool); },
+                      {kind:tool,ent:d.entIdx,seg:d.seg},
+                      tool==='horiz'?'Horizontal':'Vertical',
+                      function(c){ return (c.kind==='horiz'||c.kind==='vert')&&
+                                          c.ent===d.entIdx&&c.seg===d.seg; });
+        if(chk.refuse){ setHint(chk.message); drawSnapMark(); return; }
         if(guardDims(()=>{
              if(!segAlign(editing,d.entIdx,d.seg,tool))return false;
              storeHV(editing,d,tool);
              relaxDims(editing,3);   // stored coincidences follow the swing at once
              return true;},
              tool==='horiz'?'Horizontal':'Vertical'))
-          setHint(spun?(tool==='horiz'?'Edge laid flat — delete its badge to free the spin'
+          setHint(chk.verdict==='redundant'?chk.message
+                 :spun?(tool==='horiz'?'Edge laid flat — delete its badge to free the spin'
                                       :'Edge stood upright — delete its badge to free the spin')
                  :tool==='horiz'?'Line constrained horizontal — delete its badge to free it'
                                 :'Line constrained vertical — delete its badge to free it'); }
@@ -7492,16 +7559,30 @@ const CSG = (function(){
       if(d && d.kind==='seg'){
         if(!paralRef){ paralRef=d; redrawDraft(null); setHint('Now click the line to make parallel'); }
         else { const rf=paralRef; paralRef=null;
+               const chk=gcsAskAfter(editing,function(){ applyParallel(rf,d); },
+                                     {kind:'paral',a:{ent:rf.entIdx,seg:rf.seg},
+                                      b:{ent:d.entIdx,seg:d.seg}},'Parallel',
+                                     function(c){ return c.kind==='paral'&&c.b&&
+                                       c.b.ent===d.entIdx&&c.b.seg===d.seg; });
+               if(chk.refuse){ setHint(chk.message); drawSnapMark(); return; }
                if(guardDims(()=>{applyParallel(rf,d);storeSegPair('paral',rf,d);return true;},'Parallel'))
-                 setHint('Lines constrained parallel — delete the ∥ badge to free them'); }
+                 setHint(chk.verdict==='redundant'?chk.message
+                   :'Lines constrained parallel — delete the ∥ badge to free them'); }
       } else setHint('Click a reference line segment first');
     } else if(tool==='equal'){
       const d=dimHit(p);
       if(d && d.kind==='seg'){
         if(!equalRef){ equalRef=d; redrawDraft(null); setHint('Now click the line to match its length'); }
         else { const rf=equalRef; equalRef=null;
+               const chk=gcsAskAfter(editing,function(){ applyEqual(rf,d); },
+                                     {kind:'equal',a:{ent:rf.entIdx,seg:rf.seg},
+                                      b:{ent:d.entIdx,seg:d.seg}},'Equal length',
+                                     function(c){ return c.kind==='equal'&&c.b&&
+                                       c.b.ent===d.entIdx&&c.b.seg===d.seg; });
+               if(chk.refuse){ setHint(chk.message); drawSnapMark(); return; }
                if(guardDims(()=>{applyEqual(rf,d);storeSegPair('equal',rf,d);return true;},'Equal length'))
-                 setHint('Lines constrained equal — delete the = badge to free them'); }
+                 setHint(chk.verdict==='redundant'?chk.message
+                   :'Lines constrained equal — delete the = badge to free them'); }
       } else setHint('Click a reference line segment first');
     } else if(tool==='mirror'){
       const d=dimHit(p);
@@ -7549,11 +7630,14 @@ const CSG = (function(){
         if(!coincRef){ coincRef=pr; setHint('Now click the point to lock it to'); }
         else {
           const rz=sameRef(coincRef,pr)?'same':applyCoincident(coincRef,pr);
-          setHint(rz===true ? 'Points locked together — delete the badge to separate them'
+          setHint(rz===true ? (coincWhy||'Points locked together — delete the badge to separate them')
             : rz==='adjacent' ? 'Those are the two ends of one line — joining them would erase it'
+            : rz==='conflict' ? (coincWhy||'Those points cannot both be where the sketch says')
             : rz==='same' ? 'Pick a different second point'
             : 'Neither of those points can move — pick a movable one');
-          coincRef=null; relaxDims(editing,3); rebuild();
+          coincRef=null;
+          if(rz===true&&!gcsSettle(editing))relaxDims(editing,3);
+          rebuild();
         }
       } else setHint('Click a line end, a circle or polygon, or the origin');
     } else if(tool==='erase'){
@@ -8371,15 +8455,21 @@ const CSG = (function(){
     for(const i of ents){ if(!st[i]||!st[i].defined)return false; }
     return true;
   }
-  function ensureDimStored(d){
-    editing.dims = editing.dims || [];
-    const have=editing.dims.find(x=>dimKey(x)===dimKey(d));
-    if(have) return have;
-    const s = d.kind==='ptrace'
+  /* The shape a dimension takes once stored. Split out of ensureDimStored so
+     the solver can be asked "what if this were added?" about a dimension that
+     is not in the sketch yet — the question has to be asked BEFORE it is. */
+  function dimRecord(d){
+    return d.kind==='ptrace'
         ? {kind:'ptrace', ref:Object.assign({},d.ref), trace:d.trace, off:d.off}
       : (d.kind==='p2p'||d.kind==='angle')
         ? {kind:d.kind, a:Object.assign({},d.a), b:Object.assign({},d.b), off:d.off}
         : {entIdx:d.entIdx, kind:d.kind, seg:d.seg, off:d.off};
+  }
+  function ensureDimStored(d){
+    editing.dims = editing.dims || [];
+    const have=editing.dims.find(x=>dimKey(x)===dimKey(d));
+    if(have) return have;
+    const s=dimRecord(d);
     editing.dims.push(s);
     return s;
   }
@@ -8498,6 +8588,7 @@ const CSG = (function(){
     if(e.type==='rect') return h.pt===e.a?{ent:h.ei,idx:0}:h.pt===e.b?{ent:h.ei,idx:2}:null;
     return null;
   }
+  let coincWhy=null;              // why the last coincidence was refused, or noted
   function applyCoincident(ra,rb){
     const sk=editing;
     /* Two ends of the SAME segment would collapse it to a dot — the line reads
@@ -8520,7 +8611,15 @@ const CSG = (function(){
     const stiff=r=>coupledEnt(sk.entities[r.ent]);
     if(stiff(dst)&&!stiff(src)&&liveRef(sk,src)){ const t=src;src=dst;dst=t; }
     const S=resolvePt(sk,src), D=resolvePt(sk,dst); if(!S||!D)return false;
+    /* Join them, then ask — the same order every other constraint tool uses, and
+       the only one that asks the question the sketch will actually be in. If the
+       answer is no, the point goes back where it was and nothing is stored. */
+    const snap=gcsGeomSnap(sk);
     D.x=S.x; D.y=S.y;
+    const chk=gcsConCheck(sk,{kind:'coinc',a:{ent:src.ent,idx:src.idx},
+                              b:{ent:dst.ent,idx:dst.idx}},'Coincident');
+    if(chk.refuse){ gcsGeomRestore(sk,snap); coincWhy=chk.message; return 'conflict'; }
+    coincWhy=(chk.verdict==='redundant')?chk.message:null;
     const key=r=>r.ent+'.'+r.idx, cons=consOf(sk);
     // two centres brought together is a concentric — badge it as one, so the
     // relationship stays visible and deletable even though the tool is gone
@@ -8813,13 +8912,22 @@ const CSG = (function(){
     const apply=()=>{ if(done)return; done=true; let v=parseFloat(inp.value);
       closeDimInput(); pendingDim=null;
       if(!isNaN(v)&&v>0){ v=Math.round(v*1e4)/1e4;      // 4 dp is the cap
-        /* a NEW dimension on already-defined geometry can only conflict —
-           warn, and offer it as driven (reads the sketch, never drives it) */
+        const val=cur.angular?v:fromDisp(v);
+        /* A NEW dimension is put to the solver before it is stored. It refuses
+           only a genuine CONTRADICTION — a second, different length on the same
+           edge — and names what the new number fights. A dimension that merely
+           repeats what the sketch already says is redundant, not wrong, and is
+           allowed through with a word about it. Without planegcs.js the old
+           proxy stands: everything it measures is already fully defined. */
         const isNew=!(editing.dims||[]).some(x=>dimKey(x)===dimKey(d));
-        if(isNew&&wouldOverconstrain(editing,d)){
+        const chk=isNew?gcsConCheck(editing,Object.assign(dimRecord(d),{v:val,
+                          now:(cur.angular?cur.value:undefined)}),'That value'):null;
+        if(isNew&&(chk&&chk.verdict?chk.refuse:wouldOverconstrain(editing,d))){
           askDialog('This would over-define the sketch',
-            'What this dimension measures is already fully defined — a second driving '+
-            'dimension would fight the ones in charge. Add it as a driven reference instead?',
+            (chk&&chk.refuse?'That value contradicts '+chk.who+' — the two cannot both hold. '
+              :'What this dimension measures is already fully defined — a second driving '+
+               'dimension would fight the ones in charge. ')+
+            'Add it as a driven reference instead?',
             [{label:'Add as driven',primary:true,fn:()=>{
                 pushUndo('driven dimension');
                 const s=ensureDimStored(d); s.driven=true; s.v=null;
@@ -8829,14 +8937,24 @@ const CSG = (function(){
           drawDimGeometry(); return;
         }
         pushUndo('dimension');
-        const val=cur.angular?v:fromDisp(v);
-        ensureDimStored(d).v=val;                       // the value dragging must preserve
-        dimApply(editing,d,val);
-        /* then settle the whole system: typing one number must not quietly
-           break another dim or turn an H/V-constrained line (that was the
-           "it says H but it's not horizontal" bug — nothing re-flattened
-           after a dimension edit) */
-        relaxDims(editing,3);
+        const s=ensureDimStored(d); s.v=val;            // the value dragging must preserve
+        /* Then solve the WHOLE sketch to it: every other dimension and every
+           constraint at once, moving as little as they allow. Typing a number
+           and watching the model follow is the whole point of a dimension.
+           d.now tells the angle translation which side the label reads from
+           when the geometry cannot say (parallel legs); it is scratch, not
+           something the sketch should carry. */
+        if(cur.angular&&cur.value!=null)s.now=cur.value;
+        const solved=gcsSettle(editing);
+        delete s.now;
+        if(!solved){
+          /* No solver, or it could not satisfy everything: the old path, which
+             moves one point and then relaxes the rest towards their values. */
+          dimApply(editing,d,val);
+          relaxDims(editing,3);
+          const foes=gcsFailNames(editing);
+          if(foes)setHint('Moved as far as it could — '+foes+' cannot both hold');
+        } else if(chk&&chk.verdict==='redundant')setHint(chk.message);
         rebuild(); } };
     inp.addEventListener('keydown',ev=>{ if(ev.key==='Enter'){ev.preventDefault();apply();}
       else if(ev.key==='Escape'){ev.preventDefault();done=true;closeDimInput();
@@ -12230,6 +12348,12 @@ const CSG = (function(){
             ensureDimValues(editing);   // capture targets before anything moves
             dragJoins=collectJoins(editing);   // loose joints ride along with the hand
             dragPreErr=maxDimErr(editing);     // so the release check judges the delta
+            /* Build the constraint system once, here, with this point pinned:
+               from now until the release only the pin moves. Returns false for
+               the gestures that are not "put this point here" — a polygon's
+               corner, a rim — and for a sketch with no solver, and those keep
+               the relaxation they always had. */
+            gcsDragStart(h);
             controls._s=0;              // this gesture is a point drag, not an orbit
             redrawHandles(); }
           else if(!e.shiftKey&&!dimNearHit(p)){
@@ -12305,9 +12429,17 @@ const CSG = (function(){
         relaxDims(editing,400,dragVtx); liveSketchRedraw(); return;
       }
       const snap=dragSnap(p,dragVtx);
-      if(snap){ dragVtx.pt.x=snap.x; dragVtx.pt.y=snap.y; dragSnapPt=snap; }
-      else    { dragVtx.pt.x=p.x;   dragVtx.pt.y=p.y;   dragSnapPt=null; }
-      relaxDims(editing,4,dragVtx);           // dims hold their values mid-drag
+      const tx=snap?snap.x:p.x, ty=snap?snap.y:p.y;
+      dragSnapPt=snap||null;
+      /* The solver puts the point where the cursor asks and everything else
+         where the rules allow — so the point can land short of the cursor when
+         a dimension says it must, which is exactly right. Where there is no
+         solver, the point goes where the hand goes and the dimensions are
+         relaxed back towards their values afterwards. */
+      if(!gcsDragTo(tx,ty)){
+        dragVtx.pt.x=tx; dragVtx.pt.y=ty;
+        relaxDims(editing,4,dragVtx);         // dims hold their values mid-drag
+      }
       liveSketchRedraw();
       return;
     }
@@ -12417,6 +12549,15 @@ const CSG = (function(){
       return;
     }
     if(dragVtx){
+      /* A snap the point did not actually REACH is not a snap. The solver puts
+         the dragged point where the sketch allows, which can be short of what
+         the cursor was hovering — storing a coincidence with something the
+         point is not on would be storing a rule the sketch cannot keep. The
+         old path always landed the point exactly on the snap, so this could
+         not arise; it can now. */
+      if(dragSnapPt&&dragVtx.pt&&
+         Math.hypot(dragVtx.pt.x-dragSnapPt.x,dragVtx.pt.y-dragSnapPt.y)>1e-6)
+        dragSnapPt=null;
       // already snapped during the move; just commit + rebuild. Say which of the
       // four it caught — "joined" would be a lie about the origin or a trace.
       if(dragSnapPt){
@@ -12448,8 +12589,11 @@ const CSG = (function(){
       /* Settle hard before judging: closed loops converge slowly (each pass
          walks the ring once), and the early-out makes spare passes free for
          everything that settles fast. Being stingy here made the integrity
-         check revert legitimate drags the relaxation just hadn't finished. */
-      relaxDims(editing,400,dragVtx);
+         check revert legitimate drags the relaxation just hadn't finished.
+         The solver settles in one solve instead — including whatever the drop
+         just snapped into place, which is a constraint the drag never had. */
+      gcsDragEnd();
+      if(!gcsSettle(editing))relaxDims(editing,400,dragVtx);
       /* The hard promise: a drag never changes a dimension. If relaxation
          could not keep every number (beyond whatever disagreement existed
          before the grab), the whole drag is taken back. */
@@ -16257,10 +16401,12 @@ const CSG = (function(){
     renderer.render(scene,camera);})();
 
 /* GCS-ADAPTER-BEGIN */
-  /* ================= CONSTRAINT SOLVER ADAPTER (inert in phase 1) =========
+  /* ================= CONSTRAINT SOLVER ADAPTER ============================
      freyacad's own code; the solver itself is planegcs.js, a port of
-     FreeCAD's PlaneGCS carrying its own LGPL notice. Nothing in the sketcher
-     calls any of this yet — it is reachable only through __C.gcs.
+     FreeCAD's PlaneGCS carrying its own LGPL notice. This block is the mapping
+     — a sketch in, a system of equations out. What the sketcher DOES with it
+     is the block below (GCS-DRIVE), and everything here is also reachable
+     from the console through __C.gcs.
 
      THE VARIABLE MODEL. A sketch becomes a flat vector of parameters. Every
      entity contributes exactly entVarCount(e) of them, in entity order, and
@@ -16874,6 +17020,361 @@ const CSG = (function(){
   /* ================= end constraint solver adapter ======================= */
 /* GCS-ADAPTER-END */
 
+/* GCS-DRIVE-BEGIN */
+  /* ============ THE SOLVER, DRIVING THE SKETCHER ==========================
+     The adapter above turns a sketch into a PlaneGCS system. This is where
+     the sketcher actually asks it things:
+
+       · the degrees-of-freedom chip and the gold/blue reading come from
+         diagnose(), not from the old per-entity arithmetic;
+       · typing a dimension re-solves the whole sketch, so every other
+         dimension and constraint still holds afterwards;
+       · dragging a point solves with that point pinned to the cursor, so the
+         rest of the sketch rearranges around it;
+       · a new constraint is asked about BEFORE it is stored, and one that
+         contradicts what is already there is refused by name.
+
+     Every one of them falls back to the old code when planegcs.js is not
+     there (gcs.available is false) — delete the file and the sketcher works
+     exactly as it did before any of this existed. */
+  function gcsOn(){ try{ return !!gcsAPI.available; }catch(_){ return false; } }
+  /* What the solver is actually costing, in this tab, on this sketch. Kept
+     because the only performance numbers worth anything are the ones measured
+     where the code runs, and because a test can prove the solver drove a drag
+     rather than the fallback quietly doing it. */
+  const gcsStats={diagnoses:0, diagnoseMs:0, settles:0, settleMs:0, settleFails:0,
+                  dragFrames:0, dragMs:0, dragFails:0, checks:0, checkMs:0};
+  function gcsNow(){ return (typeof performance!=='undefined')?performance.now():Date.now(); }
+
+  /* ---- what the sketch means, on top of what it stores -------------------
+     Points of different entities sitting on the same spot, and points sitting
+     on the origin, are joints in the user's eyes even when no constraint was
+     ever stored — old files, mostly. anchoredSet and collectJoins have always
+     read them that way and a drag has always enforced them, so the solver is
+     told about them too: what the chip counts is then what a drag will hold.
+
+     One join per merge and never a second one saying the same thing. A
+     cluster of three coincident points is TWO joins, not three, and a pair
+     already joined by a stored constraint gets none at all — otherwise the
+     diagnosis would quite rightly report our own bookkeeping as redundant. */
+  function gcsImplied(sk){
+    if(!sk||!sk.entities)return [];
+    const parent=new Map();
+    const seen=k=>{ if(!parent.has(k))parent.set(k,k); return k; };
+    const find=k=>{ seen(k); let r=k; while(parent.get(r)!==r)r=parent.get(r);
+                    while(parent.get(k)!==r){ const n=parent.get(k); parent.set(k,r); k=n; }
+                    return r; };
+    const uni=(a,b)=>{ const ra=find(a), rb=find(b); if(ra===rb)return false;
+                       parent.set(rb,ra); return true; };
+    const key=r=>r.ent+'.'+r.idx, ORIGIN='-1.0';
+    seen(ORIGIN);
+    /* Points a stored constraint already speaks about are left alone where it
+       could double up: a point held on a plane and sitting on the origin does
+       not need us to say "and it is on the origin", which would make the
+       user's own constraint read as redundant. */
+    const spoken=new Set();
+    for(const c of (sk.cons||[])){
+      if((c.kind==='coinc'||c.kind==='conc'||c.kind==='concentric')&&c.a&&c.b)uni(key(c.a),key(c.b));
+      else if(c.kind==='ontrace'&&c.ref)spoken.add(key(c.ref));
+      else if((c.kind==='fix'||c.kind==='anchor')&&(c.ref||c.a))spoken.add(key(c.ref||c.a));
+    }
+    const EPS=1e-4, refs=[], out=[];
+    sk.entities.forEach((e,ei)=>{
+      entPoints(e).forEach((q,qi)=>{
+        if(liveRef(sk,{ent:ei,idx:qi}))refs.push({ent:ei,idx:qi,x:q.x,y:q.y}); });
+    });
+    // the origin first, so a point on it reads as ground rather than as a
+    // sideways joint to whatever else happens to be there
+    for(const r of refs){
+      if(Math.hypot(r.x,r.y)>=EPS||spoken.has(key(r)))continue;
+      if(uni(ORIGIN,key(r)))out.push({kind:'coinc',a:{ent:-1,idx:0},b:{ent:r.ent,idx:r.idx}});
+    }
+    for(let i=0;i<refs.length;i++)for(let j=i+1;j<refs.length;j++){
+      if(refs[i].ent===refs[j].ent)continue;
+      if(Math.hypot(refs[i].x-refs[j].x,refs[i].y-refs[j].y)>=EPS)continue;
+      if(uni(key(refs[i]),key(refs[j])))
+        out.push({kind:'coinc',a:{ent:refs[i].ent,idx:refs[i].idx},
+                               b:{ent:refs[j].ent,idx:refs[j].idx}});
+    }
+    return out;
+  }
+
+  /* ---- the diagnosis, cached on what it depends on -----------------------
+     diagnose() costs a QR of the whole Jacobian and a re-solve to tell a
+     repeated constraint from a contradictory one — a tenth of a second on a
+     hundred entities. The overlay redraws every frame of a drag, so it runs
+     only when the STRUCTURE changes: which entities exist, which constraints
+     and dimensions are stored, what the dimensions read, and which joints the
+     geometry implies. Moving a point changes none of those. */
+  function gcsRefSig(r){
+    return r?((r.ent!=null?r.ent:'t')+'/'+(r.idx!=null?r.idx:'')+'/'+
+              (r.seg!=null?r.seg:'')+(r.trace||'')):'-';
+  }
+  function gcsSig(sk,imp){
+    const a=[sk.id!=null?sk.id:'?'];
+    (sk.entities||[]).forEach(function(e){
+      a.push(e.type==='poly'?('P'+((e.pts||[]).length)+(e.closed?'c':''))
+        :e.type==='polygon'?('G'+Math.max(3,e.sides|0))
+        :e.type==='rect'?'R':e.type==='circle'?'C':'?'); });
+    a.push('|');
+    (sk.cons||[]).concat(imp||[]).forEach(function(c){
+      a.push(c.kind+gcsRefSig(c.a)+gcsRefSig(c.b)+gcsRefSig(c.ref)+gcsRefSig(c.about)+
+             (c.trace||'')+(c.ent!=null?('e'+c.ent+'s'+(c.seg||0)):'')); });
+    a.push('|');
+    (sk.dims||[]).forEach(function(d){
+      a.push(dimKey(d)+'='+(d.driven?'ref':(d.v==null?'-':d.v))); });
+    return a.join(',');
+  }
+  let gcsCacheSig=null, gcsCacheVal=null;
+  function gcsInvalidate(){ gcsCacheSig=null; gcsCacheVal=null; }
+  /* {ents:[{dof,defined}], dof, state, skipped, diag} — or null when there is
+     no solver, in which case every caller falls back to its old arithmetic.
+     Per-entity: PlaneGCS's dependent-parameter analysis says which numbers
+     can still move, so an entity is fully defined exactly when none of its
+     own can. That is the same reading FreeCAD highlights with. */
+  function gcsStateOf(sk){
+    if(!gcsOn()||!sk||!sk.entities||!sk.entities.length)return null;
+    let imp=null, sig=null;
+    try{ imp=gcsImplied(sk); sig=gcsSig(sk,imp); }catch(_){ return null; }
+    if(sig===gcsCacheSig&&gcsCacheVal)return gcsCacheVal.fail?null:gcsCacheVal;
+    let val={fail:true};
+    const t0=gcsNow();
+    try{
+      const ctx=gcsAPI.build(sk,{extraCons:imp});
+      if(ctx){
+        const d=gcsAPI.diagnose(ctx,{dependentParams:true});
+        gcsStats.diagnoses++; gcsStats.diagnoseMs=gcsNow()-t0;
+        /* Which numbers can still move. PlaneGCS answers that with its
+           dependent-parameter analysis — except when there is nothing to
+           analyse: with no driving constraints at all it returns before
+           running it, leaving the list empty, and an empty list would read as
+           "every number is decided" when in fact none of them is. A freshly
+           drawn line is exactly that sketch, so it is worth the extra word. */
+        const free=new Set(ctx.sys.pDependentParameters||[]);
+        const noneDecided=!!ctx.sys.emptyDiagnoseMatrix;
+        const ents=ctx.ents.map(function(rec){
+          let n=0;
+          for(let i=rec.base;i<rec.base+rec.count;i++)
+            if(noneDecided||free.has(ctx.params[i]))n++;
+          return {dof:n, defined:n===0};
+        });
+        /* Records the adapter could not honour — a stale segment index, a
+           plane that is no longer there. A constraint that silently does
+           nothing is worse than one that says it cannot, so these reach the
+           chip. Implied joints live past the end of the sketch's own arrays
+           and are ours to worry about, not the user's. */
+        const nC=(sk.cons||[]).length, nD=(sk.dims||[]).length;
+        const skipped=(ctx.skipped||[]).filter(function(s){
+          return s.src==='cons'?s.index<nC:s.index<nD; });
+        val={ents:ents, dof:d.dof, state:d.state, diag:d, skipped:skipped,
+             implied:(imp||[]).length, ms:d.ms};
+      }
+    }catch(_){ val={fail:true}; }
+    gcsCacheSig=sig; gcsCacheVal=val;
+    return val.fail?null:val;
+  }
+  // a constraint or dimension, named the way the person who added it would
+  function gcsName(sk,info){
+    if(!info)return 'a constraint';
+    if(info.src==='dims'){
+      const d=(sk.dims||[])[info.index];
+      if(!d)return 'a dimension';
+      if(d.kind==='angle')return 'the '+(+(d.v||0).toFixed(2))+'° angle';
+      if(d.kind==='dia'||d.kind==='pdia')return 'the Ø'+(+toDisp(d.v||0).toFixed(2))+' '+lenLabel();
+      return 'the '+(+toDisp(d.v||0).toFixed(2))+' '+lenLabel()+' '+
+        (d.kind==='width'?'width':d.kind==='height'?'height':'length');
+    }
+    const c=(sk.cons||[])[info.index];
+    if(!c)return 'a joint the sketch already has';        // one of ours, implied
+    const N={horiz:'a horizontal',vert:'a vertical',paral:'a parallel',perp:'a perpendicular',
+             equal:'an equal length',coinc:'a coincident point',conc:'a concentric',
+             concentric:'a concentric',ontrace:'a point held on a plane',
+             tangent:'a tangent',symm:'a symmetry',fix:'a fixed point'};
+    return N[c.kind]||('a '+c.kind);
+  }
+  function gcsNameList(sk,list,skipTag){
+    const out=[];
+    (list||[]).forEach(function(x){
+      if(skipTag!=null&&x.tag===skipTag)return;
+      const n=gcsName(sk,x); if(out.indexOf(n)<0)out.push(n); });
+    return out;
+  }
+
+  /* ---- solve the whole sketch -------------------------------------------
+     Returns false — having put the geometry back EXACTLY as it was — when
+     there is no solver or it cannot satisfy what it was given, so the caller
+     can fall back to the old one-at-a-time relaxation. The solve is
+     minimum-norm, so an under-defined sketch moves as little as the rules
+     allow: nothing leaps across the screen because a constraint was added. */
+  function gcsGeomSnap(sk){
+    return (sk.entities||[]).map(function(e){
+      if(e.type==='poly')return (e.pts||[]).map(function(q){ return [q.x,q.y]; });
+      if(e.type==='rect')return [e.a.x,e.a.y,e.b.x,e.b.y];
+      if(e.type==='circle')return [e.c.x,e.c.y,e.r];
+      if(e.type==='polygon')return [e.c.x,e.c.y,e.r,e.rot];
+      return null; });
+  }
+  function gcsGeomRestore(sk,snap){
+    (sk.entities||[]).forEach(function(e,i){
+      const s=snap[i]; if(!s)return;
+      if(e.type==='poly')(e.pts||[]).forEach(function(q,k){
+        if(s[k]){ q.x=s[k][0]; q.y=s[k][1]; } });
+      else if(e.type==='rect'){ e.a.x=s[0]; e.a.y=s[1]; e.b.x=s[2]; e.b.y=s[3]; }
+      else if(e.type==='circle'){ e.c.x=s[0]; e.c.y=s[1]; e.r=s[2]; }
+      else if(e.type==='polygon'){ e.c.x=s[0]; e.c.y=s[1]; e.r=s[2]; e.rot=s[3]; }
+    });
+  }
+  /* Nothing in the solver stops a radius going NEGATIVE under a violent step:
+     gcs.apply writes its absolute value, which turns a circle inside out and
+     puts its centre in the wrong place rather than reporting a problem. It is
+     always a wrong answer, never an intended one, so a solve that produced one
+     is treated as a failure and the old path gets its turn. */
+  function gcsInsideOut(ctx){
+    if(!ctx||!ctx.ents)return false;
+    for(const rec of ctx.ents)
+      if(rec.r&&rec.r.v<0)return true;
+    return false;
+  }
+  /* A horizontal or vertical constraint compiles to Equal(y,y) / Equal(x,x),
+     and initSolution eliminates an equality between two unknowns by MERGING
+     the two parameters onto the kept one's value. For a coincidence that is
+     exactly right — it is what applyCoincident does. For a segment that is not
+     flat YET it is not: merging its two x's collapses it to a point instead of
+     swinging it flat at its own length. Every path here aligns first (segAlign,
+     applyParallel, applyCoincident, and the relaxation), so the solver only
+     ever meets them already true. If one is not — a hand-edited file, a record
+     that outlived the geometry it named — the relaxation is the right tool and
+     the solve stands down rather than collapsing the line. */
+  function gcsFlatEnough(sk){
+    for(const c of (sk.cons||[])){
+      if(c.kind!=='horiz'&&c.kind!=='vert')continue;
+      let S=null;
+      try{ S=entSeg(sk,c.ent,c.seg||0); }catch(_){ }
+      if(!S||!S.a||!S.b)continue;
+      const off=(c.kind==='horiz')?Math.abs(S.a.y-S.b.y):Math.abs(S.a.x-S.b.x);
+      if(off>1e-7)return false;
+    }
+    return true;
+  }
+  let gcsLastFail=null;                 // the diagnosis behind the last refusal
+  function gcsSettle(sk,opts){
+    gcsLastFail=null;
+    if(!gcsOn()||!sk||!sk.entities||!sk.entities.length)return false;
+    if(!gcsFlatEnough(sk))return false;
+    const snap=gcsGeomSnap(sk), t0=gcsNow();
+    let res=null;
+    try{ res=gcsAPI.solveSketch(sk,Object.assign({extraCons:gcsImplied(sk)},opts||{})); }
+    catch(_){ res=null; }
+    gcsStats.settles++; gcsStats.settleMs=gcsNow()-t0;
+    if(res&&res.ok&&!gcsInsideOut(res.ctx)){ gcsInvalidate(); return true; }
+    gcsStats.settleFails++;
+    gcsGeomRestore(sk,snap);
+    gcsLastFail=res||null;
+    return false;
+  }
+  // why the last settle refused, named — '' when there is nothing to say
+  function gcsFailNames(sk){
+    try{
+      if(!gcsLastFail||!gcsLastFail.ctx)return '';
+      const d=gcsAPI.diagnose(gcsLastFail.ctx,{});
+      const names=gcsNameList(sk,d.conflicting);
+      return names.length?names.slice(0,2).join(' and '):'';
+    }catch(_){ return ''; }
+  }
+
+  /* ---- would this new constraint break the sketch? -----------------------
+     The sketch as it will be once the record this one REPLACES is gone. H and
+     V replace each other on a segment, and a newer parallel or equal replaces
+     the older one on the same follower — asking about the new constraint while
+     the old one is still in the list would call every deliberate change of
+     mind a contradiction. */
+  function gcsSkSans(sk,pred){
+    if(!sk||!sk.cons||!sk.cons.some(pred))return sk;
+    return Object.assign({},sk,{cons:sk.cons.filter(function(c){ return !pred(c); })});
+  }
+  /* Ask about a constraint from the configuration the tool is ABOUT to put the
+     sketch in, not the one it is in now. Horizontal on a line that is currently
+     upright means "swing it flat and keep it there"; asking while it is still
+     upright asks whether it can be both at once, and the answer to that is a
+     contradiction the user never expressed. The one-shot move runs on the real
+     geometry (segAlign and friends write through references), the question is
+     asked, and the geometry goes back — the caller then does the move again for
+     real, through guardDims, exactly as it always did. */
+  function gcsAskAfter(sk,move,rec,what,pred){
+    if(!gcsOn()||!sk)return {refuse:false};
+    const snap=gcsGeomSnap(sk);
+    let chk={refuse:false};
+    try{ if(move()!==false)chk=gcsConCheck(pred?gcsSkSans(sk,pred):sk,rec,what); }
+    catch(_){ chk={refuse:false}; }
+    gcsGeomRestore(sk,snap);
+    return chk;
+  }
+  /* Asked before a constraint is committed. Three answers matter and they are
+     NOT the same thing: it conflicts (two different rules, unsatisfiable —
+     refuse and name what it fights), it is redundant but consistent (the sketch
+     already said this; harmless, so let it through and say so), or it is fine
+     and nothing needs saying. */
+  function gcsConCheck(sk,rec,what){
+    if(!gcsOn()||!sk)return {refuse:false};
+    let w=null;
+    const t0=gcsNow();
+    try{ w=gcsAPI.wouldOverConstrain(sk,rec,{extraCons:gcsImplied(sk)}); }catch(_){ return {refuse:false}; }
+    gcsStats.checks++; gcsStats.checkMs=gcsNow()-t0;
+    if(!w||!w.verdict||w.skipped)return {refuse:false};
+    if(w.verdict==='conflict'){
+      const foes=gcsNameList(sk,w.diagnosis&&w.diagnosis.conflicting,w.tag);
+      const who=foes.length?foes.slice(0,2).join(' and '):'what the sketch already says';
+      return {refuse:true, verdict:'conflict', foes:foes, who:who,
+        message:(what||'That constraint')+' contradicts '+who+' — change or delete that first'};
+    }
+    if(w.verdict==='redundant')
+      return {refuse:false, verdict:'redundant',
+        message:(what||'That constraint')+' was already true here — kept, and it costs no freedom'};
+    return {refuse:false, verdict:w.verdict};
+  }
+
+  /* ---- dragging ---------------------------------------------------------
+     The dragged point is pinned to the cursor with a lower-priority
+     constraint, so the sketch's own rules are satisfied first and the pin
+     gets whatever freedom is left: a dimensioned edge does not stretch to
+     follow the hand, it swings. The system is built once at grab time and
+     only the pin moves per frame, and every solve starts from the geometry as
+     it was at the grab — so where the sketch lands depends on where the
+     cursor IS, never on the path it took to get there.
+     Only plain point handles come this way. A polygon's corner handle and a
+     circle's rim are size-and-spin gestures, not "put this point here", and
+     they keep the direct path they always had. */
+  let gcsDrag=null;
+  function gcsDragStart(h){
+    gcsDrag=null;
+    if(!gcsOn()||!editing||!h)return false;
+    if(h.kind!=='v'&&h.kind!=='c')return false;
+    if(!gcsFlatEnough(editing))return false;
+    const ref=refOfHandle(h); if(!ref)return false;
+    try{
+      const ctx=gcsAPI.build(editing,{extraCons:gcsImplied(editing)});
+      if(!ctx)return false;
+      gcsAPI.pin(ctx,[{ent:ref.ent,idx:ref.idx,x:h.pt.x,y:h.pt.y}]);
+      if(!ctx.pins.length)return false;
+      gcsDrag={ctx:ctx,ref:ref};
+      return true;
+    }catch(_){ gcsDrag=null; return false; }
+  }
+  function gcsDragTo(x,y){
+    if(!gcsDrag)return false;
+    const t0=gcsNow();
+    try{
+      if(!gcsAPI.movePin(gcsDrag.ctx,0,x,y))return false;
+      const r=gcsAPI.solve(gcsDrag.ctx,{});
+      if(!r||!r.converged||gcsInsideOut(gcsDrag.ctx)){ gcsStats.dragFails++; return false; }
+      gcsAPI.apply(gcsDrag.ctx);
+      gcsStats.dragFrames++; gcsStats.dragMs=gcsNow()-t0;
+      return true;
+    }catch(_){ gcsStats.dragFails++; return false; }
+  }
+  function gcsDragEnd(){ const had=!!gcsDrag; gcsDrag=null; if(had)gcsInvalidate(); return had; }
+/* GCS-DRIVE-END */
+
   // Test hook: the app state is otherwise unreachable from the console, which
   // makes features like fillet impossible to verify headlessly.
   window.__C = {
@@ -16933,6 +17434,24 @@ const CSG = (function(){
     lightGizBuild, lightRows, lightCover,
     entSpin, coupledEnt, entSeg, segAlign,
     gcs: gcsAPI,
+    /* What the degrees-of-freedom chip is reading, and where it came from —
+       so a test can check the readout end to end rather than the arithmetic
+       behind it. */
+    gcsStatus(){
+      const sk=editing, g=sk?gcsStateOf(sk):null, el=$('sk-anchor');
+      return {available:gcsOn(),
+        chip:el?{text:el.textContent, cls:el.className, title:el.title,
+                 shown:el.style.display!=='none'}:null,
+        source:g?'solver':'arithmetic',
+        dof:g?g.dof:null, state:g?g.state:null, ms:g?g.ms:null,
+        ents:g?g.ents:(sk?defineState(sk):null),
+        implied:g?g.implied:null, skipped:g?g.skipped:null,
+        conflicting:g?gcsNameList(sk,g.diag.conflicting):null,
+        redundant:g?gcsNameList(sk,g.diag.redundant):null,
+        warnings:g?(g.diag.warnings||[]):null};
+    },
+    gcsSettle, gcsImplied, gcsConCheck, gcsInvalidate,
+    get gcsStats(){ return Object.assign({},gcsStats); },
     libPut, libGet, libList, libDelete, openLibrary, saveProject,
     dimHit, dimResolve, dimApply, polyCorners, cornerAt, applyCorner,
     get cornerSel(){ return cornerSel; }, set cornerSel(v){ cornerSel=v; },
