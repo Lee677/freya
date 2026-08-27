@@ -356,6 +356,15 @@ if(!window.THREE){
   input[type=number]:disabled{opacity:0.5}
   .num-unit{display:flex;align-items:center;gap:7px}
   .num-unit span{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .props select{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:6px;
+    color:var(--text);font-family:var(--mono);font-size:12.5px;padding:6px 8px;outline:none;cursor:pointer}
+  .props select:focus{border-color:var(--g-blue);box-shadow:0 0 8px rgba(66,133,244,0.3)}
+  /* An ordered list of picks: the row number carries the order, and the three
+     square buttons beside it are the only way to change it. */
+  .ord{display:flex;flex-direction:column;gap:6px}
+  .ord-row{display:flex;align-items:center;gap:6px}
+  .ord-n{font-family:var(--mono);font-size:11px;color:var(--muted);width:15px;flex:0 0 auto;text-align:right}
+  .ord-row button{padding:5px 7px;flex:0 0 auto;font-family:var(--mono);font-size:11px;line-height:1}
   .check{display:flex;align-items:center;gap:9px;cursor:pointer;font-size:12.5px;color:var(--text)}
   .check .box{width:16px;height:16px;border:1px solid var(--line);border-radius:4px;display:grid;place-items:center;flex:0 0 auto;transition:all 0.2s}
   .check.on .box{background:rgba(52,168,83,.2);border-color:var(--g-green);box-shadow:0 0 8px rgba(52,168,83,0.3)}
@@ -777,6 +786,8 @@ if(!window.THREE){
     <button data-add="rcut" data-ic="rcut">Revolve cut</button>
     <button data-add="sweep" data-ic="sweep">Swept boss</button>
     <button data-add="swcut" data-ic="swcut">Swept cut</button>
+    <button data-add="loft" data-ic="loft">Lofted boss</button>
+    <button data-add="loftcut" data-ic="loftcut">Lofted cut</button>
     <button data-add="gfbin" data-ic="gfbin">Gridfinity bin</button>
     <button data-add="gfplate" data-ic="gfplate">Gridfinity baseplate</button>
     <button data-add="fillet" data-ic="fillet">Fillet</button>
@@ -3001,6 +3012,67 @@ const CSG = (function(){
     if(!solids.length) throw new Error('no contour selected');
     return OCK.unionOne(solids);
   };
+  /* ---- loft ------------------------------------------------------------
+     A skin through a run of profiles, in the order given.
+     BRepOffsetAPI_ThruSections built as a solid caps the two ends with planar
+     faces, so what comes back is closed and can be fused or cut like any other
+     tool. `ruled` gives straight sides section to section; smooth (the default)
+     fits one B-spline surface down the whole run, which is what makes three
+     circles read as a neck rather than as two cones stacked.
+
+     ONE CONTOUR PER SECTION, and deliberately so: a loft pairs its sections up
+     by wire, and a sketch with two loops gives no answer to "which one pairs
+     with which". The biggest region of each sketch is the section, holes and
+     further regions are left out, and the panel says so. Two loops that both
+     want lofting are two lofts.
+
+     WINDING is OCCT's, and that was measured rather than assumed. Every outer
+     wire this app builds runs CCW about its OWN sketch normal, so a section
+     drawn on a plane that faces BACK down the run arrives wound the opposite
+     way to its neighbours — which is what folds a square-to-circle loft into
+     the bowtie the feature is famous for. ThruSections still gets it right:
+     the compatibility pass reverses such a wire before pairing anything up.
+     Seventeen configurations were built with a winding correction in place and
+     again with it taken out — square to circle, square to square, circle to
+     circle, a flipped middle section of three, sections on tilted planes along
+     a rising curve, ruled and smooth — and every volume agreed to the last
+     digit. The correction is not here because it never once changed an answer.
+
+     That same compatibility pass is what lets a four-edge square meet a
+     one-edge circle at all: it splits both to a common edge count and picks a
+     shared origin. It is on by default and must stay on. */
+  OCK.loft = function(sections, opt){
+    const oc = OC(); opt = opt || {};
+    if(!sections || sections.length < 2) throw new Error('a loft needs at least two profiles');
+    const wires = sections.map((sk, i)=>{
+      let regs;
+      try{ regs = OCK.regions(sk, 0); }
+      catch(_){ regs = []; }
+      if(!regs.length)
+        throw new Error('profile '+(i+1)+' has no closed contour — every loft section has to be a closed shape');
+      return regs[0].outer.mk(false);          // biggest region: one contour per section
+    });
+    let mk;
+    try{
+      mk = new oc.BRepOffsetAPI_ThruSections(true, !!opt.ruled, 1e-6);
+      for(const w of wires) mk.AddWire(w);
+      mk.Build(new oc.Message_ProgressRange_1());
+    }catch(err){
+      throw new Error('the loft failed in the kernel — sections that cross each other, '+
+        'or one that doubles back on the run, are the usual cause'+
+        (err && err.message ? ' ('+err.message+')' : ''));
+    }
+    if(!mk.IsDone())
+      throw new Error('the loft failed — check the profiles are in the order the shape runs, '+
+        'and that no two of them sit on the same plane');
+    const shp = mk.Shape();
+    /* Same lesson as the sweep: IsDone says yes on a shape with no volume.
+       Two identical sections on the SAME plane skin to nothing at all and
+       reach the tree as a feature that silently does nothing. Measure it. */
+    if(solidVolume(oc, shp) <= 1e-9)
+      throw new Error('the loft came out empty — two sections on the same plane have nothing to skin between');
+    return shp;
+  };
   OCK.commonAll = function(shape, tools){
     if(!tools.length) return shape;
     const oc = OC();
@@ -4241,7 +4313,7 @@ const CSG = (function(){
   /* Only a feature that contributes a shape can be copied. The fillet is the
      interesting exclusion: it rounds edges of the body rather than adding
      anything, so there is no tool to hand a pattern. */
-  const SCOPEABLE={extrude:1,cut:1,revolve:1,sweep:1,gfbin:1,gfplate:1,import:1,mirror:1,lpattern:1,cpattern:1};
+  const SCOPEABLE={extrude:1,cut:1,revolve:1,sweep:1,loft:1,loftcut:1,gfbin:1,gfplate:1,import:1,mirror:1,lpattern:1,cpattern:1};
   const isScoped=f=>Array.isArray(f.scope)&&f.scope.length>0;
   function scopeCands(f){
     const i=features.findIndex(x=>x.id===f.id);
@@ -4343,6 +4415,30 @@ const CSG = (function(){
       const shp=OCK.sweep(prof,path,{contours:f.contours});
       noteTool(f,f.operation==='cut'?'cut':'merge',shp);
       if(f.operation==='cut'){
+        if(!resultShapes.length)throw new Error('nothing to cut');
+        pendOp('cut',shp,f);
+      }
+      else if(f.merge && resultShapes.length) pendOp('merge',shp,f);
+      else { flushPending(); resultShapes.push(shp); }
+      return;
+    }
+    /* The profile list is ORDERED and the order is the shape: the skin runs
+       through the sections as the panel lists them, so moving one up or down
+       is a different solid, not a tidier recipe. */
+    if(f.type==='loft'||f.type==='loftcut'){
+      const ids=Array.isArray(f.profiles)?f.profiles:[];
+      if(ids.length<2)throw new Error('a loft needs at least two profiles — add them in the panel');
+      const secs=ids.map((id,i)=>{
+        if(id==null)throw new Error('profile '+(i+1)+' has not been picked yet');
+        if(i&&ids[i-1]===id)throw new Error('profiles '+i+' and '+(i+1)+' are the same sketch — a loft has to move between two of them');
+        const sd=sketchData[id];
+        if(!sd)throw new Error('the sketch for profile '+(i+1)+' is missing — deleted, or suppressed');
+        return {entities:sd.sk.entities,fillet:sd.sk.fillet,chamfer:sd.sk.chamfer,
+                corners:sd.sk.corners,frame:sd.frame};
+      });
+      const shp=OCK.loft(secs,{ruled:!!f.ruled});
+      noteTool(f,f.type==='loftcut'?'cut':'merge',shp);
+      if(f.type==='loftcut'){
         if(!resultShapes.length)throw new Error('nothing to cut');
         pendOp('cut',shp,f);
       }
@@ -8000,6 +8096,9 @@ const CSG = (function(){
     const i=ids.indexOf(id);
     return i>0?ids[i-1]:(ids.length&&ids[0]!==id?ids[0]:null);
   }
+  /* The tools that cannot start without a sketch to work from. One list, so
+     the Add menu greys the same entries the command itself refuses. */
+  const NEEDS_SKETCH={extrude:1,cut:1,revolve:1,rcut:1,sweep:1,swcut:1,loft:1,loftcut:1};
   function defaults(type){
     const sid=lastSketchId();
     if(type==='extrude')return {id:nextId(),type:'extrude',name:'Extrude'+cnt('extrude'),sketchId:sid,depth:3,symmetric:false,flip:false,merge:true,suppressed:false};
@@ -8024,6 +8123,18 @@ const CSG = (function(){
       name:(type==='sweep'?'Sweep':'SweepCut')+cnt('sweep'),
       sketchId:sid, pathId:prevSketchId(sid),
       operation:(type==='swcut'?'cut':'add'), merge:true, suppressed:false};
+    /* Two profiles to start with, in the order they were drawn — the earlier
+       sketch first, because a loft is nearly always built bottom upwards. One
+       sketch on its own gives a one-row list and an honest error until a
+       second is picked. */
+    if(type==='loft'||type==='loftcut'){
+      const prev=prevSketchId(sid), f={id:nextId(),type:(type==='loftcut'?'loftcut':'loft'),
+        name:(type==='loftcut'?'LoftCut':'Loft')+cnt(type==='loftcut'?'loftcut':'loft'),
+        profiles:(prev!=null&&sid!=null)?[prev,sid]:(sid!=null?[sid]:[]),
+        ruled:false, suppressed:false};
+      if(type!=='loftcut')f.merge=true;
+      return f;
+    }
     if(type==='dplane')return {id:nextId(),type:'dplane',name:'Plane'+cnt('dplane'),base:'Top',about:'u',angle:30,suppressed:false};
     if(type==='daxis')return {id:nextId(),type:'daxis',name:'Axis'+cnt('daxis'),method:'planes',pa:'Top',pb:'Front',dir:'Y',px:0,py:0,pz:0,suppressed:false};
     if(type==='mirror')return {id:nextId(),type:'mirror',name:'Mirror'+cnt('mirror'),plane:'Right',merge:true,suppressed:false};
@@ -8048,9 +8159,15 @@ const CSG = (function(){
       setHint('Click a flat face for the text');
       return;
     }
-    if(type==='extrude'||type==='cut'||type==='revolve'||type==='rcut'||type==='sweep'||type==='swcut'){ if(!sketchId&&!lastSketchId()){setHint('Create a sketch first');return;} }
+    if(NEEDS_SKETCH[type]){ if(!sketchId&&!lastSketchId()){setHint('Create a sketch first');return;} }
     const f=defaults(type); f._isNew=true;
     if(sketchId!=null&&'sketchId' in f)f.sketchId=sketchId;
+    /* A loft has no single sketch, so "use this one" means end the run on it,
+       starting from the sketch drawn before it. */
+    else if(sketchId!=null&&Array.isArray(f.profiles)){
+      const p=prevSketchId(sketchId);
+      f.profiles=(p!=null&&p!==sketchId)?[p,sketchId]:[sketchId];
+    }
     if(type==='fillet'||type==='chamfer'){ selectedEdges=[]; redrawEdgeSel(); }
     insertFeature(f); selectFeature(f.id); openProps(f);
   }
@@ -8111,6 +8228,8 @@ const CSG = (function(){
     text:_sw(`<rect x="3" y="5" width="18" height="14" rx="2" stroke="${_B}" opacity=".55"/><path d="M8 9h8M12 9v7" stroke="${_Y}" stroke-width="2"/>`),
     sweep:_sw(`<path d="M3.5 19c0-7 5.5-8.5 8.5-8.5s8.5-1.5 8.5-8" stroke="${_Y}" stroke-dasharray="3.4 2"/><rect x="1.6" y="15.6" width="6.4" height="6.4" rx="1" stroke="${_B}"/><rect x="16.8" y="1.6" width="6.4" height="6.4" rx="1" stroke="${_B}" opacity=".55"/>`),
     swcut:_sw(`<path d="M3.5 19c0-7 5.5-8.5 8.5-8.5s8.5-1.5 8.5-8" stroke="${_R}" stroke-dasharray="3.4 2"/><rect x="1.6" y="15.6" width="6.4" height="6.4" rx="1" stroke="${_B}"/><path d="M17.2 2.2 22.8 7.8M22.8 2.2 17.2 7.8" stroke="${_R}"/>`),
+    loft:_sw(`<path d="M3 18.6l9 2.8 9-2.8-9-2.8z" stroke="${_B}"/><ellipse cx="12" cy="4.6" rx="4.8" ry="1.9" stroke="${_B}" opacity=".55"/><path d="M3 18.6C3 12.4 7.2 9.6 7.2 4.6M21 18.6C21 12.4 16.8 9.6 16.8 4.6" stroke="${_Y}"/>`),
+    loftcut:_sw(`<path d="M3 18.6l9 2.8 9-2.8-9-2.8z" stroke="${_B}"/><path d="M3 18.6C3 12.4 7.2 9.6 7.2 4.6M21 18.6C21 12.4 16.8 9.6 16.8 4.6" stroke="${_R}"/><path d="M9.2 1.8 14.8 7.4M14.8 1.8 9.2 7.4" stroke="${_R}"/>`),
     revolve:_sw(`<path d="M5 3v18" stroke="${_B}" stroke-dasharray="4.5 2 1.2 2"/><path d="M9 6.5c6 0 10 2.2 10 5.5s-4 5.5-10 5.5z" stroke="${_B}"/><path d="M8 3.5c5 .2 8.6 1 10.2 2.4M15.5 6.5l2.7-.6-.5-2.7" stroke="${_Y}"/>`),
     rcut:_sw(`<path d="M5 3v18" stroke="${_B}" stroke-dasharray="4.5 2 1.2 2"/><path d="M9 6.5c6 0 10 2.2 10 5.5s-4 5.5-10 5.5z" stroke="${_B}"/><path d="M9 10h5.5v4H9z" stroke="${_Y}"/>`),
     fillet:_sw(`<path d="M4 4v16h16" stroke="${_B}" stroke-dasharray="3 2.4" opacity=".45"/><path d="M4 4v6a10 10 0 0 0 10 10h6" stroke="${_Y}" stroke-width="1.9"/>`),
@@ -8273,7 +8392,21 @@ const CSG = (function(){
       mat.emissive.setHex(0x3a2c00);
     }
   }
-  function sketchConsumedBy(f){ return features.find(x=>x.sketchId===f.id)||null; }
+  /* Every sketch a feature consumes, in the order the feature reads them: one
+     for an extrude, the profile and then the path for a sweep, and a loft's
+     whole ordered run of sections. The tree nesting, the collapse control and
+     the "is this sketch still on show" rule all ask this one question, so they
+     cannot drift apart — which they had, leaving a sweep's path nested under
+     its feature in the tree and still drawn in the viewport. */
+  function consumedIds(f){
+    const out=[];
+    if(f.sketchId!=null)out.push(f.sketchId);
+    if(f.type==='sweep'&&f.pathId!=null)out.push(f.pathId);
+    if((f.type==='loft'||f.type==='loftcut')&&Array.isArray(f.profiles))
+      for(const id of f.profiles) if(id!=null)out.push(id);
+    return out;
+  }
+  function sketchConsumedBy(f){ return features.find(x=>consumedIds(x).indexOf(f.id)>=0)||null; }
   function sketchVisible(f){
     if(editing&&editing.id===f.id) return true;      // open for editing
     if(f.show) return true;                          // shown from the tree menu
@@ -8369,17 +8502,16 @@ const CSG = (function(){
     tree.appendChild(sect2);
 
     /* A feature owns every sketch it consumes — for a sweep that is TWO, the
-       profile and the path, and both draw nested under it. */
+       profile and the path, and for a loft the whole run of sections. All of
+       them draw nested under it, each one once however often it is listed. */
     const nested=new Set();
-    features.forEach(f=>{
-      if(f.sketchId!=null)nested.add(f.sketchId);
-      if(f.type==='sweep'&&f.pathId!=null)nested.add(f.pathId);
-    });
+    features.forEach(f=>{ for(const id of consumedIds(f))nested.add(id); });
     const kidsOf=f=>{
-      const out=[];
-      if(f.sketchId!=null){ const k=features.find(x=>x.id===f.sketchId); if(k)out.push(k); }
-      if(f.type==='sweep'&&f.pathId!=null&&f.pathId!==f.sketchId){
-        const k=features.find(x=>x.id===f.pathId); if(k)out.push(k); }
+      const out=[], seen=new Set();
+      for(const id of consumedIds(f)){
+        if(seen.has(id))continue; seen.add(id);
+        const k=features.find(x=>x.id===id); if(k)out.push(k);
+      }
       return out;
     };
     /* The rollback bar thinks in ARRAY indices but the tree displays groups —
@@ -8406,7 +8538,7 @@ const CSG = (function(){
     const cb=$('tree-collapse');
     if(cb)cb.textContent=anyExpanded()?'⌄':'›';
   }
-  function parentsWithSketches(){ return features.filter(f=>f.sketchId!=null); }
+  function parentsWithSketches(){ return features.filter(f=>consumedIds(f).length>0); }
   function anyExpanded(){ return parentsWithSketches().some(f=>!collapsed.has(f.id)); }
   function esc(s){return (s+'').replace(/"/g,'&quot;');}
   function showErrorDialog(f){
@@ -8590,6 +8722,56 @@ const CSG = (function(){
     const seg=document.createElement('div');seg.className='seg';
     opts.forEach(o=>{const b=document.createElement('button');b.textContent=o.l;b.className=(o.v===val?'active':'');b.addEventListener('click',()=>{on(o.v);[...seg.children].forEach(c=>c.classList.remove('active'));b.classList.add('active');});seg.appendChild(b);});
     w.appendChild(seg);return w;
+  }
+  /* An ORDERED list of picks, one drop-down per row. A segmented control says
+     "one of these"; this says "these, in this order", which is a different
+     question and the only one a loft asks. The three buttons beside each row
+     are up, down and remove; the row number is the order, so it is never in
+     doubt which section the skin runs through first. */
+  function fieldOrderedList(label,vals,opts,addLabel,on){
+    const w=document.createElement('div');w.className='field';
+    w.innerHTML=`<span class="field-label">${label}</span>`;
+    const box=document.createElement('div');box.className='ord';
+    const emit=v=>on(v.slice());
+    vals.forEach((val,i)=>{
+      const row=document.createElement('div');row.className='ord-row';
+      const n=document.createElement('span');n.className='ord-n';n.textContent=(i+1)+'.';
+      row.appendChild(n);
+      const sel=document.createElement('select');
+      opts.forEach(o=>{const op=document.createElement('option');
+        op.value=String(o.v);op.textContent=o.l;if(o.v===val)op.selected=true;sel.appendChild(op);});
+      if(opts.every(o=>o.v!==val)){         // its sketch was deleted: say so, don't guess
+        const op=document.createElement('option');
+        op.value='';op.textContent='(deleted sketch)';op.selected=true;sel.appendChild(op);
+      }
+      sel.addEventListener('change',()=>{
+        const o=opts.find(x=>String(x.v)===sel.value); if(!o)return;
+        const nv=vals.slice(); nv[i]=o.v; emit(nv);
+      });
+      row.appendChild(sel);
+      const btn=(txt,title,dis,fn)=>{
+        const b=document.createElement('button');b.className='btn-ghost';
+        b.textContent=txt;b.title=title;b.disabled=dis;
+        b.addEventListener('click',fn);row.appendChild(b);
+      };
+      btn('↑','Earlier in the run',i===0,()=>{
+        const nv=vals.slice();nv[i-1]=vals[i];nv[i]=vals[i-1];emit(nv);});
+      btn('↓','Later in the run',i===vals.length-1,()=>{
+        const nv=vals.slice();nv[i+1]=vals[i];nv[i]=vals[i+1];emit(nv);});
+      btn('×','Remove this one',vals.length<=1,()=>{
+        const nv=vals.slice();nv.splice(i,1);emit(nv);});
+      box.appendChild(row);
+    });
+    const addb=document.createElement('button');addb.className='btn-ghost';
+    addb.textContent=addLabel;addb.disabled=!opts.length;
+    addb.addEventListener('click',()=>{
+      /* A new row defaults to a sketch not already in the run, so adding one
+         is a real section rather than an instant duplicate. */
+      const free=opts.find(o=>vals.indexOf(o.v)<0)||opts[opts.length-1];
+      emit(vals.concat([free.v]));
+    });
+    box.appendChild(addb);
+    w.appendChild(box);return w;
   }
   function fieldText(label,val,placeholder,on){
     const w=document.createElement('div');w.className='field';
@@ -8800,6 +8982,29 @@ const CSG = (function(){
       const nt2=document.createElement('div'); nt2.className='note';
       nt2.textContent='The profile is swept from where you drew it, staying square to the path as it travels. Draw the path so it starts on the profile\u2019s plane, and round any corner in the path sketch for a proper bend.';
       add(nt2);
+    } else if(f.type==='loft'||f.type==='loftcut'){
+      /* The list IS the shape. Rearranging it is not tidying — the skin runs
+         through the sections in this order, so the buttons that move a row are
+         modelling controls, not housekeeping. */
+      const sks=features.filter(x=>x.type==='sketch').map(x=>({l:x.name,v:x.id}));
+      const list=Array.isArray(f.profiles)?f.profiles.filter(id=>id!=null):[];
+      if(sks.length<2){
+        const nt=document.createElement('div'); nt.className='note';
+        nt.textContent='A loft needs at least two sketches to run between. Draw the second section on another plane, then come back.';
+        add(nt);
+      }
+      add(fieldOrderedList('Profiles, in order',list,sks,'+ Add a profile',v=>{
+        f.profiles=v; openProps(propsFeat);      // openProps rebuilds; the rows moved
+      }));
+      add(fieldCheck('Ruled (straight between sections)',!!f.ruled,v=>{f.ruled=v;rerun();}));
+      if(f.type==='loft')
+        add(fieldCheck('Merge with body',f.merge,v=>{f.merge=v;rerun();}));
+      const nl=document.createElement('div'); nl.className='note';
+      nl.textContent='One closed contour per sketch — the biggest, if a sketch holds more than one. '+
+        'Sections are skinned in the order listed, so put them in the order the shape runs. '+
+        'Ruled joins them with flat sides; leave it off for one smooth surface down the whole run. '+
+        'No guide curve and no twist yet.';
+      add(nl);
     } else if(f.type==='fillet'){
       add(fieldSeg('Type',[{l:'Fillet',v:'fillet'},{l:'Chamfer',v:'chamfer'}],f.kind,v=>{f.kind=v;f.name=(v==='fillet'?'Fillet':'Chamfer')+f.name.replace(/\D+/,''); propsEl.querySelector('h3').textContent=f.name; rerun(); openProps(propsFeat); }));
       /* Chamfers get SolidWorks' three shapes. `cmode` is absent on parts made
@@ -10976,6 +11181,8 @@ const CSG = (function(){
     f_rcut   :{ic:'rcut',   label:'Revolve cut', fn:()=>addFeature('rcut'),   need:'sketch'},
     f_sweep  :{ic:'sweep',  label:'Swept boss',  fn:()=>addFeature('sweep'),  need:'sketch'},
     f_swcut  :{ic:'swcut',  label:'Swept cut',   fn:()=>addFeature('swcut'),  need:'sketch'},
+    f_loft   :{ic:'loft',   label:'Lofted boss', fn:()=>addFeature('loft'),   need:'sketch'},
+    f_loftcut:{ic:'loftcut',label:'Lofted cut',  fn:()=>addFeature('loftcut'),need:'sketch'},
     f_gfbin  :{ic:'gfbin',  label:'Gridfinity bin',      fn:()=>addFeature('gfbin')},
     f_gfplate:{ic:'gfplate',label:'Gridfinity baseplate',fn:()=>addFeature('gfplate')},
     f_text   :{ic:'text',   label:'Text on a face',      fn:()=>addFeature('text'),need:'solid'},
@@ -10989,7 +11196,7 @@ const CSG = (function(){
   };
   const DEFAULT_MODEL_LAYOUT=[
     {name:'View',     ids:['normal','iso','fit','proj','v_render']},
-    {name:'Features', ids:['sketch','f_extrude','f_cut','f_revolve','f_rcut','f_sweep','f_swcut','f_gfbin','f_gfplate','f_text','f_fillet','f_chamfer','t_mirror','t_lpat','t_cpat']},
+    {name:'Features', ids:['sketch','f_extrude','f_cut','f_revolve','f_rcut','f_sweep','f_swcut','f_loft','f_loftcut','f_gfbin','f_gfplate','f_text','f_fillet','f_chamfer','t_mirror','t_lpat','t_cpat']},
     {name:'Appearance',ids:['a_pcolor','a_bcolor','a_fcolor']},
     {name:'Reference',ids:['r_plane','r_axis']}
   ];
@@ -11459,6 +11666,8 @@ const CSG = (function(){
       items.push({ic:'rcut',label:'Revolve cut',fn:()=>addFeature('rcut',f.id)});
       items.push({ic:'sweep',label:'Swept boss',fn:()=>addFeature('sweep',f.id)});
       items.push({ic:'swcut',label:'Swept cut',fn:()=>addFeature('swcut',f.id)});
+      items.push({ic:'loft',label:'Lofted boss',fn:()=>addFeature('loft',f.id)});
+      items.push({ic:'loftcut',label:'Lofted cut',fn:()=>addFeature('loftcut',f.id)});
     } else if(f.type==='dplane'){
       items.push({ic:'sketch',label:'Sketch on this plane',fn:()=>addSketchOnDPlane(f)});
       items.push({ic:'edit',label:'Edit plane',fn:()=>openProps(f)});
@@ -13905,7 +14114,7 @@ const CSG = (function(){
     const r=$('btn-add').getBoundingClientRect();
     menu.style.left=r.left+'px';menu.style.top=(r.bottom+6)+'px';menu.classList.toggle('open');
     const hasSketch=!!lastSketchId();
-    menu.querySelectorAll('[data-add]').forEach(b=>{const a=b.dataset.add;b.disabled=(['extrude','cut','revolve','rcut','sweep','swcut'].includes(a)&&!hasSketch);});
+    menu.querySelectorAll('[data-add]').forEach(b=>{const a=b.dataset.add;b.disabled=(!!NEEDS_SKETCH[a]&&!hasSketch);});
     e.stopPropagation();
   });
   document.addEventListener('click',e=>{if(!menu.contains(e.target)&&e.target.id!=='btn-add')menu.classList.remove('open');});

@@ -696,6 +696,11 @@ sketch, or an existing solid — stay greyed out until it exists.</p>
     Pipework, handles, trim, cable runs, O-ring grooves.</td></tr>
   <tr><td><b>Swept cut</b></td><td>Two sketches + a solid</td><td>The same carry, subtracted.
     Channels and bores that do not run straight.</td></tr>
+  <tr><td><b>Lofted boss</b></td><td>Two or more sketches</td><td>Skins a surface through a
+    run of profiles in the order you list them. Transitions — square to round, a tapered
+    neck, a boat hull.</td></tr>
+  <tr><td><b>Lofted cut</b></td><td>Two or more sketches + a solid</td><td>The same skin,
+    subtracted. Tapered pockets and funnelled holes.</td></tr>
   <tr><td><b>Fillet</b></td><td>A solid</td><td>Rounds edges to a radius. Softens corners
     and removes stress risers.</td></tr>
   <tr><td><b>Chamfer</b></td><td>A solid</td><td>Cuts a flat bevel on an edge. Good for
@@ -786,7 +791,31 @@ feature.</p>
   <p>The path has to be <b>one connected run</b>. Several lines drawn end to end are joined
   automatically, but a gap, a fork or a stray second line is refused rather than guessed at.
   A sweep also cannot twist along its path or change section as it goes, and it takes one path
-  rather than a path plus guide curves.</p>
+  rather than a path plus guide curves. Where the section has to change, use a
+  <a href="#loft">loft</a>.</p>
+</div>
+<h3 id="loft">Lofting through profiles</h3>
+<p>A loft needs <b>two or more</b> sketches and skins a surface through them. Draw each
+section on its own plane — the origin planes, a datum plane, or a flat face of the model —
+then pick <b>Lofted boss</b> or <b>Lofted cut</b>. The panel's <b>Profiles</b> row is an
+<b>ordered list</b>: one drop-down per section, with <b>↑</b> and <b>↓</b> to move a section
+along the run, <b>×</b> to drop it and <b>+ Add a profile</b> for the next.</p>
+<p><b>The order is the shape.</b> The skin runs through the sections top to bottom of that
+list, so moving a row is not tidying up — it builds a different solid. The numbers down the
+left are the run.</p>
+<p><b>Ruled</b> joins each pair of sections with straight sides, so three circles come out as
+two cones stacked. Leave it off — the default — and one smooth surface is fitted down the
+whole run, which is what turns the same three circles into a waisted neck.</p>
+<p><b>One closed contour per sketch.</b> A loft pairs its sections up wire by wire, and a
+sketch holding two loops gives no answer to which loop pairs with which. The biggest closed
+region of each sketch is the section; anything else in that sketch, holes included, is left
+out. Two loops that both want lofting are two lofts.</p>
+<div class="note">
+  <span class="tag">Worth knowing</span>
+  <p>There are <b>no guide curves and no twist</b> yet, and no start or end tangency
+  condition — sections and their order are the whole control. Two sections on the same plane
+  have nothing to skin between and the feature says so rather than building an empty solid.
+  A loft can be mirrored and patterned like any other feature.</p>
 </div>
 <h3 id="text">Text on a face</h3>
 <p>Pick <b>Text on a face</b> from Add and click any <b>flat</b> face — or right-click a flat
@@ -1244,9 +1273,12 @@ three view keys — can all be changed under <b>Customise tools… → Keyboard<
       no notes or balloons, no section or detail views, and the sheet isn't saved with the
       part. Centre marks and centrelines <em>are</em> there — see
       <a href="#cmarks">Centre marks and centrelines</a>.</li>
-  <li><b>No loft, and no twist on a sweep.</b> A swept feature carries one profile along one
-      path at a constant section. There is no lofted boss between two profiles, no twist, and
-      no guide curves. See <a href="#sweep">Sweeping along a path</a>.</li>
+  <li><b>Neither sweep nor loft takes a guide curve.</b> A sweep carries one profile along
+      one path at a constant section, and cannot twist as it goes. A <b>loft</b> does exist —
+      an ordered run of two or more profiles, ruled or smooth — but it is driven by those
+      sections and their order alone: no guide curves, no twist, no start or end tangency,
+      and one closed contour per sketch. See <a href="#sweep">Sweeping along a path</a> and
+      <a href="#loft">Lofting through profiles</a>.</li>
   <li><b>A pattern can't copy a fillet or chamfer.</b> Bosses, cuts, revolves and imports
       can each be mirrored or patterned on their own; edge treatments can't, because they
       reshape the body rather than add a shape to it. Put the pattern before the fillet.</li>

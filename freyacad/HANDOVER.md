@@ -1041,3 +1041,77 @@ the spout's cap), and the circular edge it clicks is still a **48**-chord circle
 Cold build of the reshaped lamp: **6.7–6.9 s** headless (it was 4.2 s), of which
 the construction is only ~1.6 s — the rest is the one batched fuse of hull +
 spout + handle + lid and the mesh that follows it.
+
+## Loft
+
+`loft` and `loftcut` are real features, and the pair is shaped like `extrude`/`cut` rather
+than like `sweep`/`swcut`: two distinct `type`s, no operation toggle in the panel.
+
+```
+{type:'loft'|'loftcut', name, profiles:[sketchId, ...], ruled:false,
+ merge:true (loft only), suppressed:false}
+```
+
+`OCK.loft(sections, {ruled})` is `BRepOffsetAPI_ThruSections(isSolid=true, ruled, 1e-6)`
+over one wire per section. Sections are plain sketch objects — the same
+`{entities,fillet,chamfer,corners,frame}` shape `applyFeature` hands to `OCK.sweep` — and each
+one's wire comes from `OCK.regions(sk,0)[0].outer.mk(false)`, so the loft, the sweep, the
+extrude and the contour picker are all reading the same builder.
+
+**One closed contour per section, and the biggest one.** `OCK.regions` sorts by area, so
+`regs[0]` is the outer region of the sketch; holes and any further region are left out. A loft
+pairs its sections up wire by wire and a sketch with two loops gives no answer to which loop
+pairs with which. Two loops that both want lofting are two lofts. The panel says so.
+
+**The winding correction is not there, and that was measured.** Every outer wire this app
+builds runs CCW about its own sketch normal, so a section on a plane that faces *back* down
+the run arrives wound the opposite way to its neighbours — the classic square-to-circle
+bowtie input. ThruSections' compatibility pass (on by default, and what also lets a four-edge
+square meet a one-edge circle at all) reverses such a wire before pairing anything up.
+Seventeen configurations were built with a normals-vs-travel-direction correction in place and
+again with it removed — square to circle, square to square, circle to circle, a flipped middle
+section of three, sections on tilted planes along a rising curve, ruled and smooth — and every
+volume agreed to the last digit. `$SP/newdemos/loftwind.js` and `lofttilt.js` are those two
+probes; `newdemos/loft.js` keeps the flipped-plane case (`sqcircFlipped`) as the standing pin.
+
+**Failure modes ThruSections actually has.** `IsDone()` returns true on a shape with no
+volume, exactly as `MakePipeShell` does — two sections on the same plane skin to nothing —
+so the volume is measured before the shape is returned. The kernel also throws (an emscripten
+number, no `.message`) rather than returning a bad status on some inputs, so the Build is
+wrapped and the throw becomes a sentence. Errors reach the feature's `error` field through the
+usual `markFeatureError`, one per cause: fewer than two profiles, a profile not picked, a
+deleted sketch, the same sketch twice in a row, an open contour, a kernel throw, an empty
+result.
+
+**Ruled and smooth are the same solid for two sections** — there is nothing to smooth
+between. The difference is real from three up: circle 3 → 6 → 3 over 12 mm measures 791.681
+ruled (exactly two cone frusta) and 972.637 smooth.
+
+**Ordered list in the panel.** `fieldOrderedList` is a new field builder beside
+`fieldSeg`/`fieldCheck`: one `<select>` per row, ↑ / ↓ / × per row, and an add button. The
+order is the shape, not housekeeping — reordering `[1,2,3]` to `[1,3,2]` on the three-circle
+case takes it from 972.637 to 199.944.
+
+**`consumedIds(f)`** is new and now answers "which sketches does this feature own" in one
+place: `f.sketchId`, then a sweep's `pathId`, then a loft's whole `profiles` run.
+`refreshTree`'s `nested`/`kidsOf`, `parentsWithSketches` and `sketchConsumedBy` all go through
+it. That last one closed a standing gap: a sweep's PATH sketch nested under its feature in the
+tree but was still drawn in the viewport, which both the tree section's own comment and
+help.html ("consumed and hidden") already claimed it was not. Consumed sketches of every kind
+are now hidden unless shown from the tree. `lastSketchId` was deliberately left alone —
+excluding consumed sketches from it would stop a sketch being used for a second feature, and
+every sketch in the lamp is consumed.
+
+**Not special-cased anywhere else.** Features serialise wholesale into `geomSignature` and the
+checkpoint keys, so edit, rebuild and rollback across a loft need no work; `scopeFloor` is
+about scoped patterns only and is untouched. `loft`/`loftcut` are in `SCOPEABLE`, so a mirror
+or pattern can copy one. `NEEDS_SKETCH` replaces the two hand-kept lists of "tools that need a
+sketch" (the Add menu's disabled set and `addFeature`'s guard), which had to agree and now
+cannot disagree.
+
+Tests: `$SP/newdemos/loft.js`, thirteen cases through `loadDocData` — cylinder against
+πr²h, square→circle bracketed by the two prism volumes, the flipped-plane repeat, three
+sections against two analytic frusta, a loftcut through a plate, a profile-sketch edit, a
+real mouse drag of the rollback bar across the loft and back, the refusals, the tree/panel,
+and the reorder. `adoptNewCommands` is pinned too: the harness seeds a pre-loft
+`fcad-model-layout` before the app script runs and checks both ids arrive in Features.
