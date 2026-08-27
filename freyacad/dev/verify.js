@@ -256,7 +256,7 @@ window.__VER = 'running';
   }
   /* lamp: reshaped to the owner's reference photo (long boat hull, scrolled
      handle, trumpet foot, stepped lid) — the volume moved with the shape. */
-  const demoFiles=[['lamp','models/magic-lamp.sketchcad',2889.141],
+  const demoFiles=[['lamp','models/magic-lamp.sketchcad',2886.44],
                    ['boat','models/print-test-boat.sketchcad',10923.956]];
   Promise.all(demoFiles.map(([n,f,want])=>
     /* A model file is a bare feature array, or {type:'part',appearance,features}
@@ -280,7 +280,7 @@ window.__VER = 'running';
  *   cpattern   572.947  | 37f 190e 1b
  *   lpattern   156      | 30f 120e 1b
  *   filletrun  655.708  | 12f  68e 1b
- *   lamp       2889.141 | 22f 101e 1b     <- see the VolumeProperties warning
+ *   lamp       2886.44  | 21f  95e 1b     <- see the VolumeProperties warning
  *   boat       10923.956| 29f 134e 1b
  *
  * And the three scoped cases, which are right or wrong rather than merely

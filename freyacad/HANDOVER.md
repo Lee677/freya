@@ -988,3 +988,56 @@ beside the recipe so opening one displays immediately and the kernel only runs i
 something. That is the whole of the "opening the lantern on a slow laptop" complaint, which
 checkpoints do nothing for — a cold load has no cache to hit. Keep the stored shape honest
 with a hash of the feature JSON.
+
+## Magic lamp reshaped to the owner's reference photo
+
+The demo was a teapot with a stick on it. It is now the ornate genie lamp in the
+owner's photo: a **long low boat hull** (25.9 wide, 8 deep — the reference is
+3.4:1 and so is this), a **slender stem** down to a **trumpet foot**, a **spout**
+that leaves the bow and rises to a beaked tip, a **big open scrolled handle**
+whose tail closes the scroll's eye and dives back into the hull, and a new
+**stepped pagoda lid** with three eaved tiers, a spire and a ball finial. ~41 mm
+long, 22.2 tall. Ten features now, not eight — `Lid profile` + `Lid` were added;
+`Body` / `Spout` / `Handle` keep their names, the revolve keeps its +Y axis, the
+spout still ends in a small flat cap and it is still one merged body.
+
+Three things are worth keeping if the shape is ever edited again:
+
+- **The bow joins the hull because the two are tangent.** The hull's rim is a
+  half-round nose of radius 1.05 centred at (11.93, 14.1) in the body profile,
+  and the spout tube has the *same* radius and runs LEVEL through that centre.
+  Their silhouettes therefore share a tangent where the tube leaves the solid and
+  the prow grows out of the body with no step. Move the spout path off 14.1 at
+  x≈12 and a lip appears round the tube immediately.
+- **Consecutive spline entities in a profile fuse into one kernel face.** Four
+  splines in a row (neck, hull, nose, sheer) came back as a single 1193 mm² face,
+  which is no use when you want to paint only the belly. A one-line entity
+  between them splits them — hence the "knop" at the stem and the "rim moulding"
+  at the widest point. Both are in the reference photo anyway.
+- **Two swept tubes that interpenetrate cost the union about a second.** The
+  handle path used to start at y 13.4, inside the spout's tube; starting it at
+  11.0 and climbing costs nothing visually (that stretch is buried) and took the
+  cold build from 7.7 s to 6.7 s. Face count is the other lever — the boolean
+  pays per face pair, so every profile here is as few segments as the shape can
+  stand.
+
+**Per-demo appearance.** `DEMOS` entries may now carry an `app` field; `loadDemo`
+resets the appearance as before and then applies `normApp(d.app)` if one is
+there, so a demo can ship colours and a demo without them still loads bare. The
+lamp ships `DEMO_LAMP_APP`: part **#e7bb45** gold, with **#17909f** teal on five
+signature-matched faces — the belly, the trumpet foot and the lid's three tiers.
+The gold/teal split is the reference's, done with the only tool the kernel gives
+us: whole faces. The `models/magic-lamp.sketchcad` twin now saves in the
+`{type:'part',appearance,features}` form and is byte-identical to the inline
+data; `dev/verify.js` unwraps either shape when it fetches a demo model.
+
+**Numbers that moved.** `dev/verify.js` lamp pin: 4070.494 → **2886.44** (21f 95e
+1b) — the shape changed, so the volume did; the BOAT pin and all eighteen A/B
+cases are untouched and still exact. `scratchpad/newdemos/brepsel.js`: 26 real
+edges → **47**, 10 faces → **21**, planes still **2** (the foot's base disc and
+the spout's cap), and the circular edge it clicks is still a **48**-chord circle.
+`facesel.js` finds its targets dynamically and still passes 14/14.
+
+Cold build of the reshaped lamp: **6.7–6.9 s** headless (it was 4.2 s), of which
+the construction is only ~1.6 s — the rest is the one batched fuse of hull +
+spout + handle + lid and the mesh that follows it.
