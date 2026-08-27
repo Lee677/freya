@@ -1329,3 +1329,50 @@ untouched). Stored under its own `fcad-detail` key, removed at ×1 so an
 untouched session leaves no key; loaded at parse so the first build of a
 returning session is already fine. `__C.setMeshDetail` / `__C.meshDetail`
 drive it in tests; `$SP/newdemos/detail.js` is the probe.
+
+## Kernel preload: the 2.4 seconds that were doing nothing
+
+The kernel loader is a `<script type="module">` whose import is *dynamic*
+(`await import(base + 'opencascade.full.js')`), so its request was not issued
+when the document was parsed — it was issued when `go()` actually ran, which is
+after `three.min.js` (a blocking classic script) had been fetched, parsed and
+executed, and after the whole document had been parsed. Measured cold with a
+180 ms CDN latency simulated (`$SP/newdemos/loadseq.js`):
+
+```
+index.html request      37 ms
+three.js request       112 ms
+kernel JS request     2488 ms   <- 13 MB, and the connection was idle until here
+kernel WASM request   2755 ms
+```
+
+`<head>` now declares `window.__OCCT_SOURCES` and injects `preconnect` +
+`modulepreload` + `preload as=fetch` for the first source, before the blocking
+three.js tag. Same fetch, started at parse time: the kernel request moves to
+**47–81 ms** across runs. End-to-end "kernel ready" also improves, but that
+number is noisy in the harness (software rasteriser, local mirror), so the
+request-start figure is the one to trust and the one to re-measure after any
+change to the head.
+
+Two things this depends on, both easy to break:
+
+- **One source of truth.** The loader reads `window.__OCCT_SOURCES`; the hints
+  are built from the same array. Hard-coding the version in either place again
+  would let them drift, and a preload of the wrong version is a wasted 13 MB
+  rather than a saving.
+- **Anonymous CORS on both hints.** A module script is always fetched with
+  CORS, and emscripten requests the `.wasm` with `credentials:'same-origin'`,
+  which sends none cross-origin. If a hint's credentials mode stops matching
+  the real fetch, the preload lands in a different cache entry and the file is
+  downloaded **twice**. `loadseq.js` reports `requestCounts` for exactly this;
+  it must stay `{kernelJS: 1, kernelWASM: 1}`.
+
+The hints are skipped when `__MOBILE_GATE` is set — a phone must not pull 13 MB
+for an app it is not going to run.
+
+Worth being clear about what this is *not*: it is not caching. jsDelivr already
+serves these version-pinned URLs as immutable, so a repeat visit was always a
+cache hit, and browsers keep a compiled-wasm code cache keyed by URL on top of
+that. There was no speed left in caching the CDN harder — the loss was purely
+scheduling. Caching work (a service worker) buys resilience and offline
+instead, and is stage 2 of PLAN-HARDWARE.md.

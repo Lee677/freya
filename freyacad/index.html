@@ -55,6 +55,44 @@
 })();
 </script>
 
+<script>
+/* The kernel is ~13 MB over the wire, and until this block existed its request
+ * was not issued until the module loader below actually RAN — which is after
+ * three.min.js has downloaded, parsed and executed, and after the whole
+ * document has been parsed. Measured cold: index.html requested at 37 ms,
+ * three.js at 112 ms, and the kernel not until 2488 ms, with the connection
+ * sitting idle in between. These hints start the very same fetch at parse
+ * time instead, in parallel with everything else; nothing else changes.
+ * __OCCT_SOURCES is the one place the version lives — the loader below reads
+ * it — so what is preloaded can never drift from what is imported. Skipped
+ * behind the mobile gate, which deliberately never loads the kernel. */
+window.__OCCT_SOURCES = [
+  'https://cdn.jsdelivr.net/npm/opencascade.js@2.0.0-beta.b5ff984/dist/',
+  'https://unpkg.com/opencascade.js@2.0.0-beta.b5ff984/dist/'
+];
+if(!window.__MOBILE_GATE){
+  (function(){
+    var b = window.__OCCT_SOURCES[0];
+    var add = function(rel, href, as){
+      var l = document.createElement('link');
+      l.rel = rel; l.href = href;
+      /* Both must be anonymous-CORS to share a cache entry with the real
+         fetches: a module script is always fetched with CORS, and emscripten
+         asks for the .wasm with credentials:'same-origin', which on a
+         cross-origin URL sends none. Mismatch here would cost a second 13 MB
+         download rather than saving anything, so loadseq.js counts the
+         requests. */
+      l.crossOrigin = 'anonymous';
+      if(as) l.as = as;
+      document.head.appendChild(l);
+    };
+    try{ add('preconnect', new URL(b).origin); }catch(_){ }
+    add('modulepreload', b + 'opencascade.full.js');
+    add('preload', b + 'opencascade.full.wasm', 'fetch');
+  })();
+}
+</script>
+
 <script src="./three.min.js"></script>
 <script>window.THREE||document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js">\x3C/script>')</script>
 <script>window.THREE||document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js">\x3C/script>')</script>
@@ -73,10 +111,9 @@ if(!window.THREE){
    * The .wasm is ~50 MB raw (~13 MB brotli over the wire) and too big for
    * Cloudflare Pages' per-file limit, so it comes from a CDN and is cached by
    * the browser after the first visit. All modelling still runs locally. */
-  const SOURCES = [
-    'https://cdn.jsdelivr.net/npm/opencascade.js@2.0.0-beta.b5ff984/dist/',
-    'https://unpkg.com/opencascade.js@2.0.0-beta.b5ff984/dist/'
-  ];
+  /* Declared at the top of <head> so the preload hints and this import can
+     never disagree about the version. */
+  const SOURCES = window.__OCCT_SOURCES;
   async function go(){
     let oc=null, lastErr=null;
     for(const base of SOURCES){
