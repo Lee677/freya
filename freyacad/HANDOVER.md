@@ -1041,3 +1041,72 @@ the spout's cap), and the circular edge it clicks is still a **48**-chord circle
 Cold build of the reshaped lamp: **6.7–6.9 s** headless (it was 4.2 s), of which
 the construction is only ~1.6 s — the rest is the one batched fuse of hull +
 spout + handle + lid and the mesh that follows it.
+
+## Rendered view: gold that glimmers
+
+The rendered view was `roughness 0.42 / metalness 0.06` under a single
+hemisphere light, and the demo lamp's gold came out as flat yellow plastic.
+Metal is almost entirely what it reflects, and this scene had nothing to
+reflect. So the rendered view now brings a room with it.
+
+**A procedural studio, generated in code.** `studioPanorama()` paints an
+equirectangular room into a 1024×512 canvas — graded sky, dark floor, a low
+ceiling, and seven lights: six tall strips standing round the subject plus one
+wider key panel. `studioEnvTexture()` reads it back through
+`pow(byte/255, STUDIO_CURVE) * STUDIO_GAIN` (2.35 and 5.0) into a `FloatType`
+`DataTexture`, because a canvas is 8-bit and a studio is not — without that
+curve PMREM clamps the lights flat and the metal goes back to looking painted.
+`studioEnvMap()` runs it through `PMREMGenerator` on the first trip into the
+rendered view and hangs the result on `scene.environment`. Nothing is fetched.
+
+The lights' placement is not decoration. An azimuth with no light in it shows up
+as a lid that has gone dull from one particular orbit angle, which is how the
+seventh strip earned its place — `scratchpad/newdemos/reflmap.js` mirrors rays
+off the lid and prints the panorama u,v they land on, which beats guessing.
+
+Two things that bit us here:
+
+- **Do not call `PMREMGenerator.dispose()` in r128.** It disposes the shared,
+  module-level lod planes, so the *next* generator anyone builds comes up with
+  broken geometry. The generator is kept in `studioPMREM` and reused; the source
+  texture is what gets disposed.
+- **r128 never notices that `renderer.toneMapping` changed.** The curve is a
+  `#define` compiled into every shader, and `setProgram`'s change detection
+  checks encoding, envMap, fog and clipping — not tone mapping. So
+  `setRenderedView` marks every material in the scene `needsUpdate` on the
+  toggle. Without it the grid and the overlays keep their old programs and the
+  frame comes out half tone-mapped.
+
+**The materials.** `applyRenderLook` is still the only place the two looks are
+decided. Rendered view: `envMapIntensity 1`, and one rule splits plate from
+enamel on Rec.601 luma — brighter than `ENAMEL_LUMA` (0.5) gets
+`roughness 0.18 / metalness 0.96`, darker gets `0.44 / 0.70`. The lamp's gold
+`#e7bb45` is luma 0.73 and turns to plate; its teal `#17909f` is 0.43 and stays
+enamelled, which is what stopped the teal washing out to pale blue when the
+whole part first went full metal. Workshop view: unchanged `0.9 / 0.0`, plus
+`envMapIntensity 0` so the studio cannot reach it once it exists. That last part
+is load-bearing and was checked rather than assumed — same lamp, same pose, the
+build before this change against the build after: **0 of 315,000 pixels differ**,
+both cold and after a round trip through the rendered view. Shadows are
+untouched (`shadowMap` still on; the scene's only light is still the hemisphere
+one, which casts none).
+
+**Exposure is the seam for the lighting tool.** `setExposure(v)` is the only
+thing that writes `renderer.toneMappingExposure`; `renderExposure` starts at
+1.15 and clamps to 0.2–3. It is deliberately not on `__C` yet — add it there
+when the slider is wired, and drive it through the function, not the renderer.
+Note r128's ACES opens with `color *= toneMappingExposure / 0.6`, so 1.15 is a
+gain of about 1.9, and the panorama was balanced against that. The clamp is a
+fence, not a cliff: across 0.2–3 the lamp's gold median runs 84 → 174 and the
+filmic curve holds the hue at both ends, so the whole span is safe to expose
+(`scratchpad/newdemos/expo.js` walks it and prints the numbers).
+
+**Highlights over metal.** `faceHovMat` / `faceSelMat` gained `toneMapped:false`
+— they are UI, not surfaces, and the filmic curve was pulling the cyan and the
+blue back towards the metal they have to stand out against.
+
+Shots and harness: `scratchpad/lamp/glim-1..4.png` (four orbit angles),
+`glim-workshop.png` (the matte control) and `pano.png` (the room itself), driven
+by `scratchpad/newdemos/glim.js` and `pano.js`. Suites after the change: verify
+12/12, verify-live allOk, `facesel-lane.js` 14/14, `brepsel-lane.js` pins
+unchanged, no page errors.

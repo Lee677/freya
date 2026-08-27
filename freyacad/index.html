@@ -1120,6 +1120,140 @@ const CSG = (function(){
   const solidMat = new THREE.MeshStandardMaterial({color:0xe8f0f8, roughness:0.9, metalness:0.0, side:THREE.DoubleSide});
   const edgeMat = new THREE.LineBasicMaterial({color:0x34A853, transparent:true, opacity:0.9});
 
+  /* ---- the studio: a room for the rendered view to reflect ----
+     Metal is very nearly nothing but what it reflects, and this scene has
+     nothing to reflect: one hemisphere light and a grid. Gold under that is
+     yellow plastic, which is exactly what the rendered view used to look
+     like. So it brings its own room. An equirectangular panorama is painted
+     in a canvas — dark floor, graded sky, a low ceiling and a ring of strip
+     lights at believable studio heights — then prefiltered by PMREMGenerator
+     and hung on scene.environment. Nothing is fetched: the room is 2D
+     drawing.
+
+     The lights are the whole point. A polished surface reflects a tall bright
+     strip as a long bright streak, and that streak SLIDES across the body as
+     the camera orbits — the thing that separates metal from paint. The six
+     strips give the travelling highlights; the one wider key panel gives the
+     broad sheen the shape of the part is read by.
+
+     A canvas is 8-bit and a studio is not: a real softbox is tens of times
+     the sky, not twice it. So the painted panorama is read back as a CURVE
+     rather than as colour — each byte raised to a power and scaled into a
+     float texture. That is also what lets PMREM keep the highlights bright
+     instead of clamping them flat. STUDIO_GAIN is the brightest thing in the
+     room, STUDIO_CURVE how fast everything else falls away from it. */
+  const STUDIO_GAIN=5.0, STUDIO_CURVE=2.35;
+  function studioPanorama(){
+    const W=1024, H=512, cv=document.createElement('canvas');
+    cv.width=W; cv.height=H;
+    const g=cv.getContext('2d');
+    // row 0 is straight up: sky down to the horizon at mid-height, then floor
+    const sky=g.createLinearGradient(0,0,0,H*0.5);
+    sky.addColorStop(0,'#4d545e'); sky.addColorStop(0.55,'#363c44'); sky.addColorStop(1,'#2f343c');
+    g.fillStyle=sky; g.fillRect(0,0,W,H*0.5);
+    const flr=g.createLinearGradient(0,H*0.5,0,H);
+    flr.addColorStop(0,'#1a1c20'); flr.addColorStop(0.30,'#101215'); flr.addColorStop(1,'#090a0c');
+    g.fillStyle=flr; g.fillRect(0,H*0.5,W,H*0.5);
+    /* A narrow, quarter-strength ceiling. It was the first thing tuned down: a
+       wide bright one turns every upward-facing face into one flat cream
+       patch, which is the blown-out version of the same dull problem. */
+    const ceil=g.createLinearGradient(0,0,0,H*0.12);
+    ceil.addColorStop(0,'rgba(150,158,172,0.22)'); ceil.addColorStop(1,'rgba(150,158,172,0)');
+    g.fillStyle=ceil; g.fillRect(0,0,W,H*0.12);
+    /* One source, drawn three times so one sitting on the u=0 seam comes out
+       whole. Fading rings added over the sky, then a hard core laid straight
+       on top: PMREM does the real softening per roughness, and a crisp core
+       is what gives a streak an end you can watch move.
+
+       peak is the byte the core is painted at, and it is the whole difference
+       between gold and cream. The narrow strips go to 255 and blow white,
+       which is the sparkle; the wide boxes stop well short, because a big
+       source at full gain turns a whole upward face into one white patch —
+       bright, and no more like metal than the dull version was. Gold only
+       stays gold while its sheen sits below the point where red and green
+       both saturate. */
+    const box=(u,v,w,h,peak,halo)=>{
+      const bw=w*W, bh=h*H, y=v*H;
+      for(const dx of [-W,0,W]){
+        const x=u*W+dx;
+        g.globalCompositeOperation='lighter';
+        for(let i=14;i>=1;i--){
+          const t=i/14, pad=t*Math.min(bw,bh)*1.1;
+          g.fillStyle='rgba(255,251,242,'+(halo*(1-t)*(1-t)/3).toFixed(4)+')';
+          g.fillRect(x-bw/2-pad, y-bh/2-pad, bw+2*pad, bh+2*pad);
+        }
+        g.globalCompositeOperation='source-over';
+        g.fillStyle='rgb('+peak+','+Math.round(peak*0.99)+','+Math.round(peak*0.95)+')';
+        g.fillRect(x-bw/2, y-bh/2, bw, bh);
+      }
+    };
+    /* The lights: strip lights standing round the subject and one wider key
+       panel, all in the band a flat upward face reflects at ordinary camera
+       heights. This is the glimmer — white-hot streaks travelling across the
+       lid as the view orbits, instead of one even wash. Uneven on purpose:
+       evenly spaced identical strips read as a pattern rather than as a room.
+
+       Seven, and only because the sky came down to meet them. What makes a
+       streak read is the darkness beside it: against the brighter sky this
+       started with, anything past five had its prefiltered blur close the
+       gaps and the whole band went back to one bright smear. Same reason the
+       key panel is small — a wide soft source standing in the same band
+       washes out everything it is meant to be lighting. Their spacing is not
+       decoration either: an azimuth with no light in it shows up as a lid
+       that has gone dull from one particular orbit angle.
+         u,v  where in the room       w,h   how big     peak  how bright
+                                                        halo  how soft */
+    const LIGHTS=[[0.06,0.30,0.032,0.32,255,0.16],
+                  [0.17,0.26,0.070,0.15,176,0.09],   // the key panel
+                  [0.31,0.35,0.026,0.30,232,0.14],
+                  [0.42,0.33,0.028,0.30,255,0.15],
+                  [0.53,0.27,0.022,0.24,214,0.13],
+                  [0.64,0.23,0.026,0.26,232,0.14],
+                  [0.86,0.29,0.032,0.32,255,0.16]];
+    for(const s of LIGHTS)box(s[0],s[1],s[2],s[3],s[4],s[5]);
+    g.globalCompositeOperation='source-over';
+    return cv;
+  }
+  function studioEnvTexture(){
+    const cv=studioPanorama(), W=cv.width, H=cv.height;
+    const px=cv.getContext('2d').getImageData(0,0,W,H).data;
+    const data=new Float32Array(W*H*4);
+    for(let y=0;y<H;y++){
+      /* The panorama was painted sky-up, but an equirect texture reads v=0 as
+         straight DOWN and a DataTexture never flips — so the rows go in the
+         other way up. */
+      const src=y*W*4, dst=(H-1-y)*W*4;
+      for(let x=0;x<W*4;x+=4){
+        for(let k=0;k<3;k++)
+          data[dst+x+k]=Math.pow(px[src+x+k]/255,STUDIO_CURVE)*STUDIO_GAIN;
+        data[dst+x+3]=1;
+      }
+    }
+    const t=new THREE.DataTexture(data,W,H,THREE.RGBAFormat,THREE.FloatType);
+    t.mapping=THREE.EquirectangularReflectionMapping;
+    t.minFilter=THREE.LinearFilter; t.magFilter=THREE.LinearFilter;
+    t.needsUpdate=true;
+    return t;
+  }
+  /* Built once, on the first trip into the rendered view: a session that never
+     leaves the workshop look never pays for it. The generator is kept rather
+     than disposed — in r128 PMREMGenerator.dispose() takes the shared lod
+     planes with it, so disposing it here would break the NEXT panorama anyone
+     wants to build. What is disposed is what we own: the source texture, once
+     its radiance map exists, and any radiance map being replaced. */
+  let studioPMREM=null, studioRT=null;
+  function studioEnvMap(){
+    if(studioRT)return studioRT.texture;
+    const src=studioEnvTexture();
+    if(!studioPMREM){
+      studioPMREM=new THREE.PMREMGenerator(renderer);
+      studioPMREM.compileEquirectangularShader();
+    }
+    studioRT=studioPMREM.fromEquirectangular(src);
+    src.dispose();
+    return studioRT.texture;
+  }
+
   /* ---- appearance: part, body and surface colours ----
      Display-only state: it never touches geometry or the rebuild signature.
      part      one colour for every body without its own,
@@ -1137,12 +1271,26 @@ const CSG = (function(){
   function appearanceEmpty(){ return !appearance.part
     && !Object.keys(appearance.bodies).length && !appearance.faces.length; }
   function bodyColorOf(i){ return appearance.bodies[i]||appearance.part||null; }
-  /* Rendered view: same scene, product-photo materials — colours with a
-     satin finish and no edge lines. The workshop look is the matte default. */
+  /* Rendered view: same scene, product-photo materials — polished metal under
+     the studio above, and no edge lines. The workshop look is the matte
+     default and stays exactly that: envMapIntensity 0 keeps the studio out of
+     it entirely, even after the panorama has been built. */
   let renderedView=false;
+  /* One rule for what a colour is made of. Plate is bright — gold, steel,
+     bare aluminium — and takes the full metal treatment. A dark or deep
+     colour reads as enamel over metal instead: a little more roughness and
+     short of full metalness, so the demo lamp's teal stays enamelled while
+     its gold turns to plate. Rec.601 luma, threshold set by eye on the lamp. */
+  const ENAMEL_LUMA=0.5;
   function applyRenderLook(m){
-    m.roughness=renderedView?0.42:0.9;
-    m.metalness=renderedView?0.06:0.0;
+    if(renderedView){
+      const c=m.color, enamel=(0.299*c.r+0.587*c.g+0.114*c.b)<ENAMEL_LUMA;
+      m.roughness=enamel?0.44:0.18;
+      m.metalness=enamel?0.70:0.96;
+      m.envMapIntensity=1;
+    } else {
+      m.roughness=0.9; m.metalness=0.0; m.envMapIntensity=0;
+    }
     m.needsUpdate=true;
   }
   const matCache=new Map();
@@ -1160,8 +1308,40 @@ const CSG = (function(){
       applyRenderLook(m); faceMatCache.set(hex,m); }
     return m;
   }
+  /* Exposure is the one number the studio is finally judged by, so it goes
+     through a single function rather than through call sites: the lighting
+     tool is what puts it under a user slider next, and it should only ever
+     have to call setExposure. Workshop view is always exposure 1 — that is
+     the r128 default, and the matte look has to come back unchanged.
+
+     Worth knowing before it goes under a slider: r128's ACES curve starts
+     with `color *= toneMappingExposure / 0.6`, so 1.15 is really a gain of
+     about 1.9, not of 1.15. The panorama above was balanced against that.
+     The 0.2–3 clamp is a fence rather than a cliff — measured on the lamp the
+     gold's median runs 84 to 174 across that span and the filmic curve holds
+     the hue at both ends, so the whole range is safe to hand to a user. */
+  let renderExposure=1.15;
+  function setExposure(v){
+    const e=+v;
+    if(isFinite(e))renderExposure=Math.max(0.2,Math.min(3,e));
+    renderer.toneMappingExposure=renderedView?renderExposure:1;
+    return renderExposure;
+  }
   function setRenderedView(on,quiet){
     renderedView=!!on;
+    if(renderedView&&!scene.environment)scene.environment=studioEnvMap();
+    /* Filmic in the rendered view, so a studio highlight rolls off instead of
+       clipping to a flat white patch; straight back to the r128 default in the
+       workshop view. r128 compiles the curve INTO each shader and never
+       notices that the renderer's has changed, so every material in the scene
+       has to be told to rebuild — once, on the toggle. */
+    const tm=renderedView?THREE.ACESFilmicToneMapping:THREE.NoToneMapping;
+    if(renderer.toneMapping!==tm){
+      renderer.toneMapping=tm;
+      scene.traverse(o=>{ const mm=o.material; if(!mm)return;
+        if(Array.isArray(mm))mm.forEach(x=>{x.needsUpdate=true;}); else mm.needsUpdate=true; });
+    }
+    setExposure(renderExposure);
     applyRenderLook(solidMat);
     matCache.forEach(applyRenderLook); faceMatCache.forEach(applyRenderLook);
     const edgeVis=c=>{ if(c.isLineSegments&&!(c.userData&&c.userData.faceCol))c.visible=!renderedView; };
@@ -11997,9 +12177,11 @@ const CSG = (function(){
   /* Two materials for the whole session, not a clone per repaint. The offset
      sits deeper than the surface colours' -1.5 so a highlight still reads on a
      painted face, and depthWrite stays off so the tint never occludes the
-     edges drawn over it. */
+     edges drawn over it. toneMapped is off because these are UI, not surfaces:
+     the rendered view's filmic curve would desaturate the cyan and the blue
+     towards the metal they are meant to stand out against. */
   const faceHlMat=(hex,op,off)=>new THREE.MeshBasicMaterial({color:hex,transparent:true,
-    opacity:op,depthWrite:false,side:THREE.DoubleSide,
+    opacity:op,depthWrite:false,side:THREE.DoubleSide,toneMapped:false,
     polygonOffset:true,polygonOffsetFactor:off,polygonOffsetUnits:-3});
   const faceHovMat=faceHlMat(0x35d4e6,0.25,-2), faceSelMat=faceHlMat(0x4285F4,0.4,-2.5);
   /* The tint rides ON the body mesh so it inherits the body's transform and
