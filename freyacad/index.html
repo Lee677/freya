@@ -1606,12 +1606,16 @@ const CSG = (function(){
   const LIGHT_NEW={type:'spot',intensity:0.9,color:'#ffffff',distance:0,
                    angle:0.6,penumbra:0.35,shadow:true,on:true};
   /* Every shadow-casting light is one more full render of the model into a
-     depth map — SIX more for a point light, which draws a cube. Measured on
-     the demo lamp in the suites' software rasteriser: 1 light ~1.3x the
-     no-shadow frame, 4 lights ~2.4x, 8 lights ~4x, and each shadow map also
-     costs a texture unit in the body shader. Four is where that stops being
-     free, so four is the cap — and it is a CAP, not a silent drop: lights
-     past it still light the scene, the panel names them and says why. */
+     depth map — SIX more for a point light, which draws a cube — and one more
+     map for the body shader to sample per fragment, which turns out to be the
+     bigger half. Measured on the demo lamp at 1400x900 on the suites'
+     software rasteriser (ratios, not milliseconds: a real GPU is an order of
+     magnitude quicker): the empty frame is 1.0, one shadow-casting lamp 1.6,
+     two 2.1, four 3.6. Lamps with their shadow OFF are nearly free — eight of
+     them cost 1.7. Each shadow map also spends a texture unit in the body
+     shader. Four is where it stops being free, so four is the cap — and it is
+     a CAP, not a silent drop: lamps past it still light the scene, and the
+     panel names them and says why. */
   const LIGHT_SHADOW_CAP=4;
   /* A light near the horizon throws the model's shadow towards infinity, and
      a shadow frustum that wide has no resolution left for the model itself.
@@ -1771,8 +1775,8 @@ const CSG = (function(){
 
      So the set of points the camera has to contain is the model's eight
      corners AND where each of those corners lands on the ground under THIS
-     light. Nothing here is hardcoded: the lamp is 30 mm and a Gridfinity
-     baseplate is 400, and both get a frustum that fits them. */
+     light. Nothing here is hardcoded: measured, the demo lamp gets a 51-unit
+     sun frustum and a Gridfinity baseplate five times its size gets 285. */
   function lightCover(rec){
     const box=partBox(); if(!box)return null;
     const c=box.getCenter(new THREE.Vector3());
@@ -1893,11 +1897,18 @@ const CSG = (function(){
     d.normalize();
     return {pos,dir:[+d.x.toFixed(6),+d.y.toFixed(6),+d.z.toFixed(6)]};
   }
+  /* "Light 3" twice over is confusing, and deleting the middle of three used
+     to produce exactly that. Count up until the name is free. */
+  function lightFreeName(){
+    let n=lights.length+1;
+    while(lights.some(l=>l.name==='Light '+n))n++;
+    return 'Light '+n;
+  }
   function addLight(type){
     const p=lightPlaceNew();
     const rec=normLight(Object.assign({},LIGHT_NEW,p,
       {type:LIGHT_TYPES.some(x=>x.v===type)?type:LIGHT_NEW.type,
-       id:lightUid++,name:'Light '+(lights.length+1)}),lights.length);
+       id:lightUid++,name:lightFreeName()}),lights.length);
     lights.push(rec);
     lightSel=rec.id;
     lightSync(); lightGizBuild(); lightRows();
