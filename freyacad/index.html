@@ -1625,6 +1625,19 @@ const CSG = (function(){
   let lightSel=null;        // id of the light the gizmo is on, or null
   let lightShadowSkipped=[];// names the cap turned down, for the panel to say
   const lightObj=new Map(); // id -> {light,target,type} — the scene side
+  const groundShadowMat=ground.material;   // the shipped invisible floor
+  let groundLitMat=null;
+  /* Dark enough to stay a backdrop, matte enough to show a soft shadow edge,
+     and barely reflective so the rendered view's studio does not turn it into
+     a mirror the part is standing on. Built on first use: a session with no
+     lamps never makes it. */
+  function groundLit(){
+    if(!groundLitMat){
+      groundLitMat=new THREE.MeshStandardMaterial({color:0x171f28,roughness:0.97,metalness:0});
+      groundLitMat.envMapIntensity=0.15;
+    }
+    return groundLitMat;
+  }
 
   const ltNum=(v,d)=>{ const n=+v; return isFinite(n)?n:d; };
   const ltClamp=(v,r)=>Math.max(r[0],Math.min(r[1],v));
@@ -1733,22 +1746,18 @@ const CSG = (function(){
       if(grant)left--;
       lightApply(rec,o,grant);
     }
-    /* The floor is a ShadowMaterial over a near-black backdrop, and at the
-       0.3 it has always had, a shadow on it is very nearly invisible. Once
-       there are lamps in the document that is the whole point of the
-       exercise, so it darkens — and goes straight back to 0.3 the moment the
-       last one goes, which is part of what keeps a document with no lights
-       pixel-identical to the build before any of this. */
-    const shade=lights.some(l=>l.on&&l.shadow);
-    ground.material.opacity=shade?0.62:0.3;
-    /* And the shadow has to fall ON the grid rather than under it. The grid
-       writes depth at y=0, so a floor two microns below it is masked out
-       along every wire and the pool reads as a shadow with bright lines
-       through it. While there is a shadow to draw, the floor is lifted just
-       over the grid and drawn after it; with no lamps it goes straight back
-       under, which is the state every earlier build ships. */
-    ground.position.y=shade?0.0035:-0.002;
-    ground.renderOrder=shade?1:0;
+    /* Two floors, one plane — and this is the change that makes a shadow
+       worth casting. With no lamps the floor is the ShadowMaterial it has
+       always been: invisible, and only ever a darkening. That is fine when
+       nothing casts. The moment a lamp does, an invisible floor is the WRONG
+       floor — a 30% black wash over a near-black backdrop is a shadow nobody
+       can see, which is exactly what the first build of this did. So the
+       floor becomes a real matte surface for the lamps to light, and the
+       shadow is the part of it they do not reach. It goes straight back to
+       the ShadowMaterial when the last lamp goes, which is part of what keeps
+       a document with no lights pixel-identical to the build before any of
+       this landed. */
+    ground.material=lights.some(l=>l.on)?groundLit():groundShadowMat;
     lightDirty();
   }
 
@@ -2044,7 +2053,7 @@ const CSG = (function(){
   const _ltD=new THREE.Vector3();
   function lightGizTick(){
     if(!lightGiz)return;
-    const k=Math.max(0.05,controls.sph.radius*0.020);
+    const k=Math.max(0.05,controls.sph.radius*0.024);
     for(const g of lightGiz.children){
       const rec=lightById(g.userData.lightId); if(!rec)continue;
       g.position.set(rec.pos[0],rec.pos[1],rec.pos[2]);
@@ -14095,6 +14104,11 @@ const CSG = (function(){
     resultMeshes.forEach(mm=>mm.visible=!isD&&modelHost!=='asm');
     if(pickLines)pickLines.visible=!isD&&modelHost!=='asm';
     cancelMate(true);
+    /* Lamps belong to a part document. Stepping into an assembly leaves them
+       behind rather than lighting somebody else's components from a file
+       they are not saved in; a DRAWING keeps its model — and its lamps —
+       alive underneath, so it is only 'asm' that clears. */
+    if(isA&&lights.length)resetLights();
     lightDirty(); lightGizBuild(); lightRows();
     asmMeshes.flat().forEach(mm=>mm.visible=!isD&&modelHost==='asm');
     closeProps();closeEdgeMenu();
