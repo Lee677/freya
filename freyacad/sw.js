@@ -29,7 +29,7 @@ const KERNEL = 'freyacad-kernel-' + VERSION; // the version-pinned CDN kernel
 /* Enough to boot with the network off. Anything missing is skipped rather than
    failing the whole install — a 404 here must not cost the user offline. */
 const PRECACHE = [
-  './', './index.html', './three.min.js', './manifold.js', './manifold.wasm',
+  './', './index.html', './three.min.js', './planegcs.js', './manifold.js', './manifold.wasm',
   './help.html', './manifest.webmanifest', './favicon.svg', './favicon.ico'
 ];
 
