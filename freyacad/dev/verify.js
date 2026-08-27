@@ -254,10 +254,19 @@ window.__VER = 'running';
     if(want!=null){ r.want=want;
       r.ok = r.vol!=null && Math.abs(r.vol-want)<0.01 && r.bodies===1 && !(r.errs||[]).length; }
   }
-  const demoFiles=[['lamp','models/magic-lamp.sketchcad',4070.494],
+  /* lamp: reshaped to the owner's reference photo (long boat hull, scrolled
+     handle, trumpet foot, stepped lid) — the volume moved with the shape.
+     Re-derived at 2882.272 (was 2886.44): spout raised to match the reference,
+     so the swept tube climbs clear of the hull instead of running along it and
+     a little less of it is buried in the union. */
+  const demoFiles=[['lamp','models/magic-lamp.sketchcad',2882.272],
                    ['boat','models/print-test-boat.sketchcad',10923.956]];
   Promise.all(demoFiles.map(([n,f,want])=>
-    fetch(f).then(r=>r.json()).then(list=>{
+    /* A model file is a bare feature array, or {type:'part',appearance,features}
+       once it carries colours — the lamp does. Only the features are measured;
+       appearance never touches geometry. */
+    fetch(f).then(r=>r.json()).then(doc=>{
+      const list=Array.isArray(doc)?doc:(doc&&doc.features)||[];
       const d=run(list); d.want=want;
       d.ok=d.vol!=null && Math.abs(d.vol-want)<0.01 && d.bodies===1 && !(d.errs||[]).length;
       res[n]=d;
@@ -274,7 +283,7 @@ window.__VER = 'running';
  *   cpattern   572.947  | 37f 190e 1b
  *   lpattern   156      | 30f 120e 1b
  *   filletrun  655.708  | 12f  68e 1b
- *   lamp       4070.494 | 10f  53e 1b     <- see the VolumeProperties warning
+ *   lamp       2882.272 | 21f  95e 1b     <- see the VolumeProperties warning
  *   boat       10923.956| 29f 134e 1b
  *
  * And the three scoped cases, which are right or wrong rather than merely
