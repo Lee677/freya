@@ -256,10 +256,11 @@ window.__VER = 'running';
   }
   /* lamp: reshaped to the owner's reference photo (long boat hull, scrolled
      handle, trumpet foot, stepped lid) — the volume moved with the shape.
-     Re-derived at 2882.272 (was 2886.44): spout raised to match the reference,
-     so the swept tube climbs clear of the hull instead of running along it and
-     a little less of it is buried in the union. */
-  const demoFiles=[['lamp','models/magic-lamp.sketchcad',2882.272],
+     Re-derived at 2876.964 (was 2882.272): the spout is no longer a swept tube
+     of constant Ø2.1 but a LOFT through six circles, shorter (tip x 19.0, was
+     21.4) and tapered Ø3.0→Ø1.55, with a lofted bore cut down the middle so it
+     is hollow — hence 23 faces and 103 edges where there were 21 and 95. */
+  const demoFiles=[['lamp','models/magic-lamp.sketchcad',2876.964],
                    ['boat','models/print-test-boat.sketchcad',10923.956]];
   Promise.all(demoFiles.map(([n,f,want])=>
     /* A model file is a bare feature array, or {type:'part',appearance,features}
@@ -283,7 +284,7 @@ window.__VER = 'running';
  *   cpattern   572.947  | 37f 190e 1b
  *   lpattern   156      | 30f 120e 1b
  *   filletrun  655.708  | 12f  68e 1b
- *   lamp       2882.272 | 21f  95e 1b     <- see the VolumeProperties warning
+ *   lamp       2876.964 | 23f 103e 1b     <- see the VolumeProperties warning
  *   boat       10923.956| 29f 134e 1b
  *
  * And the three scoped cases, which are right or wrong rather than merely
