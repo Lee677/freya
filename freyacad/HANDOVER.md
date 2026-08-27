@@ -2592,3 +2592,32 @@ flood fill and is faster than what it replaced.
   four paths above** — corner treatments, mirror, trim, and the drag gestures
   named above. The two mechanisms coexist deliberately; the fallback has to
   keep working anyway, because the solver may be absent.
+
+## Three owner tweaks (defaults, the boat, and the boot credit)
+
+**Add plane opens parallel and 5 mm clear.** `defaults('dplane')` was
+`angle:30, offset:0` — a plane tilted through the world origin, which was the
+only kind that existed before offsets landed and reads oddly now. It is
+`angle:0, offset:5`. The record shape is unchanged, so every saved document
+still resolves exactly as before; only what a NEW plane starts as moved.
+
+**The print-test boat is off the demo menu.** Its `DEMOS` entry is gone;
+`DEMO_BENCHY` is deliberately still defined above the registry, because
+re-adding it is one entry and the boat is meant to be rebuilt (the model is
+crude next to the lamp). `demoByKey` already falls through to the first demo,
+so a stored preference naming `benchy` boots the pillow block rather than
+failing — asserted, not assumed. The centre button's tooltip says two worked
+examples, and help.html's demo table lost the boat's row.
+
+**PlaneGCS is credited in the boot sequence**, between the boolean engine and
+the line count. One trap worth knowing if you ever add another line: `finish()`
+sweeps every row still classed `run` and rewrites its state to `ONLINE`, so a
+bare string credit would be erased a second after it appeared. The row survives
+because its state is markup (`<span>FREECAD · LGPL</span>`) and the class
+picker treats anything starting with `<` as already-final. `$SP/newdemos/tweaks.js`
+asserts the credit both before and after the sweep.
+
+That suite also records a mistake worth not repeating: its first version asked
+for a `__C.DEMOS` global that does not exist, got `[]`, and *passed* the "the
+boat is gone" check on an empty list. It now opens the real demo menu and reads
+the labels. A check that cannot fail is worse than no check.

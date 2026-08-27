@@ -879,7 +879,7 @@ if(!window.THREE){
     }).catch(()=>{});
     document.getElementById('build-tag').textContent='build '+document.lastModified;
     </script>
-    <button id="btn-demo" class="demo-btn" style="display:none" title="Three worked examples — every step stays open in the feature tree">⚙ Load a demo model ⌄</button>
+    <button id="btn-demo" class="demo-btn" style="display:none" title="Two worked examples — every step stays open in the feature tree">⚙ Load a demo model ⌄</button>
     <div class="help-panel" id="help-panel"><div class="help-title" id="help-title"></div><div id="help-body"></div></div>
   </main>
 
@@ -3198,11 +3198,11 @@ const CSG = (function(){
      sub:'10 features · a revolved hull, a stepped lid and two swept tubes', data:DEMO_LAMP,
      cam:{t:[1,11,0], s:[60,1.42,0.36]}, app:DEMO_LAMP_APP,
      hint:'Magic lamp — gold with teal enamel; the spout and handle are swept tubes, so open their path sketches to bend them'},
-    {key:'benchy', kind:'part', label:'Print test boat',
-     sub:'15 features · hull, cabin, funnel — a benchy-style tug', data:DEMO_BENCHY,
-     cam:{t:[9,15.3,0], s:[84,1.2,0.65]},
-     hint:'Print test boat — every overhang is an editable feature; Print / Export it when you are done'}
   ];
+  /* DEMO_BENCHY is deliberately still defined above but NOT registered here:
+     the boat is off the menu until it is rebuilt properly. Re-adding it is one
+     entry, which is why the data was kept rather than deleted. A stored
+     preference naming it simply falls through to the first demo. */
   const demoByKey=k=>DEMOS.find(d=>d.key===k)||DEMOS[0];
   let demoActive=null;              // key of the demo on screen, or null for none
 
@@ -9651,7 +9651,11 @@ const CSG = (function(){
     /* base/about/angle are exactly the shape every earlier document carries;
        offset, flip, baseKind and faceSig are the new half, and all four read
        as "no offset, based on an origin plane" when they are absent. */
-    if(type==='dplane')return {id:nextId(),type:'dplane',name:'Plane'+cnt('dplane'),base:'Top',about:'u',angle:30,offset:0,flip:false,suppressed:false};
+    /* Opens parallel and 5 mm clear, not tilted through the origin: the common
+       case is a plane standing off a face to sketch on, and a plane that opens
+       at an angle through the origin is neither what you usually want nor
+       visible where you expect to find it. */
+    if(type==='dplane')return {id:nextId(),type:'dplane',name:'Plane'+cnt('dplane'),base:'Top',about:'u',angle:0,offset:5,flip:false,suppressed:false};
     if(type==='daxis')return {id:nextId(),type:'daxis',name:'Axis'+cnt('daxis'),method:'planes',pa:'Top',pb:'Front',dir:'Y',px:0,py:0,pz:0,suppressed:false};
     if(type==='mirror')return {id:nextId(),type:'mirror',name:'Mirror'+cnt('mirror'),plane:'Right',merge:true,suppressed:false};
     if(type==='lpattern')return {id:nextId(),type:'lpattern',name:'LPattern'+cnt('lpattern'),dir:'X',count:3,spacing:4,merge:false,suppressed:false};
@@ -17588,6 +17592,7 @@ const CSG = (function(){
       })()],
       ['OPEN CASCADE KERNEL (13 MB)','FETCHING'],
       ['B-REP BOOLEAN ENGINE','STANDBY'],
+      ['PLANEGCS CONSTRAINT SOLVER','<span>FREECAD · LGPL</span>'],
       ['CURRENT LINES OF CODE','<span id="boot-loc">counting…</span>'],
       ['STEP AP214 WRITER','STANDBY'],
     ];
