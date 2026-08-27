@@ -83,6 +83,28 @@ booleans gain less (OCCT parallelises them unevenly). Measure with the verify
 timings, keep the single-threaded CDN build as the automatic fallback for any
 browser that fails isolation.
 
+#### Offline, while we are in there
+
+Worth stating plainly because the names collide: a **Web Worker** (stage 1)
+is a browser thread on the user's own machine and has nothing to do with a
+**Cloudflare Worker**, which is server-side edge compute. Stage 1 moves code
+between threads inside one tab; it cannot affect offline behaviour either way.
+
+What *does* affect it: freyacad is not genuinely offline-capable today. The
+kernel comes from jsDelivr on every load — the browser's HTTP cache usually
+serves it after a first visit, but that is a convenience, not a guarantee —
+and while there is a manifest (so the app installs and owns the .part /
+.drawing file icons), there is **no service worker**, so nothing caches the
+app shell. An offline load fails at the page, never mind the kernel.
+
+Stage 2 removes the third-party half of that by putting the kernel on our own
+origin. The other half is a service worker precaching index.html, three.min.js,
+the icons and that kernel — perhaps 60 lines, and it only makes sense *after*
+the kernel is same-origin, since a service worker cannot cache a cross-origin
+opaque response usefully. So: **true offline ships as part of stage 2**, not as
+a stage of its own. Proof is a suite that loads the app, goes offline, reloads,
+and still builds the lamp.
+
 ### 3. Modern viewport: three.js r184, WebGPU with WebGL 2 fallback
 
 Two moves, shipped separately:
@@ -123,7 +145,7 @@ and IndexedDB kept as the fallback. Small, self-contained, nice-to-have.
 | Stage | Effort | Risk | What proves it |
 |---|---|---|---|
 | 1. Kernel in a worker | Large | UI/kernel seam refactor | Battery + new responsiveness probe |
-| 2. Isolation + threads/SIMD | Medium | Header side-effects, self-hosting | Verify timings ÷ cores; fallback path probe |
+| 2. Isolation + threads/SIMD + offline | Medium | Header side-effects, self-hosting | Verify timings ÷ cores; fallback probe; offline reload builds the lamp |
 | 3. three r184 / WebGPU | Large | Every visual pin re-derived | Screenshot suites, re-pinned once |
 | 4. Memory64 | Small–medium | Perf tax, Safari gap | A model that needs it |
 | 5. OPFS library | Small | Migration | library.js suite |
