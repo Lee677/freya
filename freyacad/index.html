@@ -136,6 +136,13 @@ if(!window.THREE){
 }
 </script>
 
+<!-- PlaneGCS, FreeCAD's 2D constraint solver, ported to JavaScript. Its own
+     file and its own licence (LGPL-2.1-or-later, see LICENSE-planegcs.txt):
+     freyacad calls into it, and anyone may replace this file with their own
+     build of it. Same-origin and small, so the parser starts the fetch as
+     soon as it reads this line — a preload hint would only repeat that. -->
+<script src="./planegcs.js"></script>
+
 <script type="module">
   /* Open CASCADE (the kernel FreeCAD uses) compiled to WASM — real B-rep
    * solids, so fillets are genuine kernel blend surfaces, not mesh tricks.
@@ -16249,6 +16256,624 @@ const CSG = (function(){
     if(cubeRenderer){cubeMesh.quaternion.copy(camera.quaternion).invert();cubeRenderer.render(cubeScene,cubeCam);}
     renderer.render(scene,camera);})();
 
+/* GCS-ADAPTER-BEGIN */
+  /* ================= CONSTRAINT SOLVER ADAPTER (inert in phase 1) =========
+     freyacad's own code; the solver itself is planegcs.js, a port of
+     FreeCAD's PlaneGCS carrying its own LGPL notice. Nothing in the sketcher
+     calls any of this yet — it is reachable only through __C.gcs.
+
+     THE VARIABLE MODEL. A sketch becomes a flat vector of parameters. Every
+     entity contributes exactly entVarCount(e) of them, in entity order, and
+     the point positions the constraints speak about are FUNCTIONS of those:
+
+       poly     2 per point   base+2k = x of pts[k], base+2k+1 = y
+       rect     4             base+0..3 = a.x, a.y, b.x, b.y
+                              (its four corners are pairs of those four
+                               numbers, which is what keeps it axis-aligned
+                               with no extra equations at all)
+       circle   3             base+0..2 = c.x, c.y, r
+       polygon  4             base+0..3 = c.x, c.y, r, rot
+
+     ent -1 is the sketch origin: a point built from two constants, so it
+     costs no variables and can never move. A plane trace is a line through
+     two constants, ground for the same reason.
+
+     A regular polygon's CORNERS are the one thing PlaneGCS cannot express,
+     because they are transcendental functions of (c, r, rot). A corner that
+     some constraint actually names gets two auxiliary parameters, appended
+     AFTER every entity's own variables, pinned to the polygon by two
+     internal-alignment equations (ConstraintPolygonCorner). Two parameters
+     against two always-independent equations, so the polygon still counts
+     as four degrees of freedom and the corner still works with every
+     ported constraint. The first ctx.nGeomVars entries of the vector are
+     therefore the sketch's own variables, in entity order, and nothing else.
+
+     TAGS. Each solver constraint carries the tag of the sketch record it
+     came from, which is how the diagnosis names a culprit:
+        1 + i        constraint i of sk.cons
+        1001 + i     dimension i of sk.dims
+        0            internal alignment (never blamed)
+       -1            a drag pin (temporary, lower priority than the rest)
+     ctx.tagInfo maps a tag back to {src:'cons'|'dims', index, kind}. */
+  const GCS_TAG_CON=1, GCS_TAG_DIM=1001, GCS_TAG_PIN=-1;
+  function gcsLib(){ return (typeof window!=='undefined'?window.PlaneGCS:null)||
+                            (typeof PlaneGCS!=='undefined'?PlaneGCS:null); }
+  function gcsWrap(a){ while(a>Math.PI)a-=2*Math.PI; while(a<=-Math.PI)a+=2*Math.PI; return a; }
+  function gcsBuild(sk,opts){
+    const G=gcsLib(); if(!G)return null;
+    opts=opts||{};
+    const sys=new G.System();
+    const ctx={G:G, sk:sk, sys:sys, ents:[], params:[], varNames:[], nGeomVars:0,
+               tagInfo:new Map(), corners:new Map(), traces:new Map(),
+               warnings:[], origin:null, pins:[], pinParams:[]};
+    const P=(v)=>({v:v});
+    const push=(p,name)=>{ ctx.params.push(p); ctx.varNames.push(name); return p; };
+    (sk.entities||[]).forEach((e,ei)=>{
+      const base=ctx.params.length, rec={kind:e.type,base:base,ei:ei};
+      if(e.type==='poly'){
+        rec.pts=(e.pts||[]).map((q,k)=>{
+          const x=push(P(q.x),ei+'.pt'+k+'.x'), y=push(P(q.y),ei+'.pt'+k+'.y');
+          return new G.Point(x,y); });
+      } else if(e.type==='rect'){
+        rec.ax=push(P(e.a.x),ei+'.a.x'); rec.ay=push(P(e.a.y),ei+'.a.y');
+        rec.bx=push(P(e.b.x),ei+'.b.x'); rec.by=push(P(e.b.y),ei+'.b.y');
+      } else if(e.type==='circle'){
+        rec.cx=push(P(e.c.x),ei+'.c.x'); rec.cy=push(P(e.c.y),ei+'.c.y');
+        rec.r=push(P(e.r),ei+'.r');
+        rec.circle=new G.Circle(new G.Point(rec.cx,rec.cy),rec.r);
+      } else if(e.type==='polygon'){
+        rec.cx=push(P(e.c.x),ei+'.c.x'); rec.cy=push(P(e.c.y),ei+'.c.y');
+        rec.r=push(P(e.r),ei+'.r'); rec.rot=push(P(e.rot),ei+'.rot');
+        rec.sides=Math.max(3,e.sides|0);
+      }
+      rec.count=ctx.params.length-base;
+      // the structural interface is the authority on how many variables a
+      // shape has; disagreeing with it would make every DOF count a lie
+      if(typeof entVarCount==='function'&&rec.count!==entVarCount(e))
+        ctx.warnings.push('entity '+ei+' ('+e.type+') has '+rec.count+
+          ' solver variables but entVarCount says '+entVarCount(e));
+      ctx.ents.push(rec);
+    });
+    ctx.nGeomVars=ctx.params.length;
+    ctx.origin=new G.Point(P(0),P(0));           // constants: not declared unknown
+    return ctx;
+  }
+  // a regular polygon corner, materialised only when something refers to it
+  function gcsCorner(ctx,ei,k){
+    const key=ei+':'+k, had=ctx.corners.get(key);
+    if(had)return had;
+    const rec=ctx.ents[ei], G=ctx.G;
+    const n=rec.sides, a=ctx.sk.entities[ei].rot+k/n*Math.PI*2;
+    const px={v:ctx.sk.entities[ei].c.x+ctx.sk.entities[ei].r*Math.cos(a)};
+    const py={v:ctx.sk.entities[ei].c.y+ctx.sk.entities[ei].r*Math.sin(a)};
+    ctx.params.push(px); ctx.varNames.push(ei+'.corner'+k+'.x');
+    ctx.params.push(py); ctx.varNames.push(ei+'.corner'+k+'.y');
+    const pt=new G.Point(px,py);
+    ctx.sys.addConstraintPolygonCorner(0,px,rec.cx,rec.r,rec.rot,k,n,0);
+    ctx.sys.addConstraintPolygonCorner(1,py,rec.cy,rec.r,rec.rot,k,n,0);
+    ctx.corners.set(key,pt);
+    // a corner asked for after the system was declared still has to count as
+    // an unknown, or its polygon would look pinned to a solver that never
+    // heard of the two new numbers
+    if(ctx.sys.hasUnknowns)ctx.sys.declareUnknowns(ctx.params);
+    return pt;
+  }
+  // {ent,idx} -> a solver point, following entPoints' numbering exactly
+  function gcsPoint(ctx,ref){
+    if(!ref)return null;
+    if(ref.ent==null||ref.ent<0)return ctx.origin;
+    const rec=ctx.ents[ref.ent]; if(!rec)return null;
+    const G=ctx.G, idx=ref.idx|0;
+    if(rec.kind==='poly')return rec.pts[idx]||null;
+    if(rec.kind==='rect'){
+      if(idx===0)return new G.Point(rec.ax,rec.ay);
+      if(idx===1)return new G.Point(rec.ax,rec.by);
+      if(idx===2)return new G.Point(rec.bx,rec.by);
+      if(idx===3)return new G.Point(rec.bx,rec.ay);
+      return null;
+    }
+    if(rec.kind==='circle')return idx===0?new G.Point(rec.cx,rec.cy):null;
+    if(rec.kind==='polygon'){
+      if(idx===0)return new G.Point(rec.cx,rec.cy);
+      if(idx>=1&&idx<=rec.sides)return gcsCorner(ctx,ref.ent,idx-1);
+      return null;
+    }
+    return null;
+  }
+  // {ent,seg} -> the two endpoints of that segment, entSeg's numbering
+  function gcsSeg(ctx,ref){
+    if(!ref||ref.ent==null||ref.ent<0)return null;
+    const rec=ctx.ents[ref.ent]; if(!rec)return null;
+    const e=ctx.sk.entities[ref.ent], s=ref.seg|0;
+    if(rec.kind==='poly'){
+      const n=rec.pts.length;
+      if(n<2)return null;
+      if(!e.closed&&s+1>=n)return null;
+      const a=rec.pts[s], b=rec.pts[(s+1)%n];
+      return (a&&b)?{a:a,b:b}:null;
+    }
+    if(rec.kind==='polygon'){
+      const n=rec.sides;
+      if(s<0||s>=n)return null;
+      return {a:gcsCorner(ctx,ref.ent,s),b:gcsCorner(ctx,ref.ent,(s+1)%n)};
+    }
+    if(rec.kind==='rect'){
+      // the host's entSeg does not offer rect sides (they are axis-aligned by
+      // construction); the solver accepts them anyway, at no extra cost
+      if(s<0||s>3)return null;
+      return {a:gcsPoint(ctx,{ent:ref.ent,idx:s}),b:gcsPoint(ctx,{ent:ref.ent,idx:(s+1)%4})};
+    }
+    return null;
+  }
+  // a plane trace as a ground line: two constants, so it can never move
+  function gcsTrace(ctx,name){
+    const had=ctx.traces.get(name); if(had)return had;
+    let L=null;
+    if(ctx.traceLookup)L=ctx.traceLookup(name);
+    else if(typeof traceUV==='function')L=traceUV(name);
+    if(!L)return null;
+    const G=ctx.G;
+    const line=new G.Line(new G.Point({v:L.u0},{v:L.v0}),
+                          new G.Point({v:L.u0+L.du},{v:L.v0+L.dv}));
+    ctx.traces.set(name,line);
+    return line;
+  }
+  function gcsCircleOf(ctx,ent){
+    const rec=ctx.ents[ent];
+    if(!rec)return null;
+    if(rec.kind==='circle')return rec.circle;
+    if(rec.kind==='polygon')                    // its circumcircle
+      return new ctx.G.Circle(new ctx.G.Point(rec.cx,rec.cy),rec.r);
+    return null;
+  }
+  function gcsLine(ctx,ref){
+    const s=gcsSeg(ctx,ref);
+    return s?new ctx.G.Line(s.a,s.b):null;
+  }
+  /* One sketch constraint -> one or more solver constraints, all sharing a
+     tag. Returns false when the record cannot be honoured (a stale index, a
+     missing trace), which the caller records rather than throwing. */
+  function gcsAddCon(ctx,c,tag){
+    const sys=ctx.sys, G=ctx.G;
+    const k=c.kind;
+    if(k==='coinc'||k==='conc'||k==='concentric'){
+      const a=gcsPoint(ctx,c.a), b=gcsPoint(ctx,c.b);
+      if(!a||!b)return false;
+      sys.addConstraintP2PCoincident(a,b,tag); return true;
+    }
+    if(k==='horiz'||k==='vert'){
+      let a=null,b=null;
+      if(c.a&&c.b&&c.a.idx!=null){ a=gcsPoint(ctx,c.a); b=gcsPoint(ctx,c.b); }
+      else { const s=gcsSeg(ctx,{ent:c.ent,seg:c.seg}); if(s){a=s.a;b=s.b;} }
+      if(!a||!b)return false;
+      if(k==='horiz')sys.addConstraintHorizontal(a,b,tag);
+      else sys.addConstraintVertical(a,b,tag);
+      return true;
+    }
+    if(k==='paral'||k==='parallel'){
+      const l1=gcsLine(ctx,c.a), l2=gcsLine(ctx,c.b);
+      if(!l1||!l2)return false;
+      sys.addConstraintParallel(l1,l2,tag); return true;
+    }
+    if(k==='perp'||k==='perpendicular'){
+      const l1=gcsLine(ctx,c.a), l2=gcsLine(ctx,c.b);
+      if(!l1||!l2)return false;
+      sys.addConstraintPerpendicular(l1.p1,l1.p2,l2.p1,l2.p2,tag); return true;
+    }
+    if(k==='equal'){
+      if(c.a&&c.a.seg!=null&&c.b&&c.b.seg!=null){
+        const l1=gcsLine(ctx,c.a), l2=gcsLine(ctx,c.b);
+        if(!l1||!l2)return false;
+        sys.addConstraintEqualLength(l1,l2,tag); return true;
+      }
+      const c1=gcsCircleOf(ctx,c.a&&c.a.ent), c2=gcsCircleOf(ctx,c.b&&c.b.ent);
+      if(!c1||!c2)return false;
+      sys.addConstraintEqualRadius(c1,c2,tag); return true;
+    }
+    if(k==='ontrace'){
+      const p=gcsPoint(ctx,c.ref), L=gcsTrace(ctx,c.trace);
+      if(!p||!L)return false;
+      sys.addConstraintPointOnLine(p,L.p1,L.p2,tag); return true;
+    }
+    if(k==='ptonline'||k==='pointonline'){
+      const p=gcsPoint(ctx,c.ref||c.a), l=gcsLine(ctx,c.b||c.seg);
+      if(!p||!l)return false;
+      sys.addConstraintPointOnLine(p,l.p1,l.p2,tag); return true;
+    }
+    if(k==='tangent'){
+      // line-to-circle when one side names a segment, circle-to-circle if not
+      const segRef=(c.a&&c.a.seg!=null)?c.a:((c.b&&c.b.seg!=null)?c.b:null);
+      const othRef=(segRef===c.a)?c.b:c.a;
+      if(segRef){
+        const l=gcsLine(ctx,segRef), cc=gcsCircleOf(ctx,othRef&&othRef.ent);
+        if(!l||!cc)return false;
+        // which side of the line the centre starts on, held for the solve
+        const dx=l.p2.x.v-l.p1.x.v, dy=l.p2.y.v-l.p1.y.v;
+        const area=-cc.center.x.v*dy+cc.center.y.v*dx+l.p1.x.v*l.p2.y.v-l.p2.x.v*l.p1.y.v;
+        sys.addConstraintTangentLineCircle(l,cc,area>=0,tag); return true;
+      }
+      const c1=gcsCircleOf(ctx,c.a&&c.a.ent), c2=gcsCircleOf(ctx,c.b&&c.b.ent);
+      if(!c1||!c2)return false;
+      sys.addConstraintTangentCircles(c1,c2,tag); return true;
+    }
+    if(k==='symm'||k==='symmetric'){
+      const p1=gcsPoint(ctx,c.a), p2=gcsPoint(ctx,c.b);
+      if(!p1||!p2)return false;
+      if(c.trace){ const L=gcsTrace(ctx,c.trace); if(!L)return false;
+        sys.addConstraintP2PSymmetric(p1,p2,L,tag); return true; }
+      if(c.about&&c.about.seg!=null){ const l=gcsLine(ctx,c.about); if(!l)return false;
+        sys.addConstraintP2PSymmetric(p1,p2,l,tag); return true; }
+      if(c.about){ const p=gcsPoint(ctx,c.about); if(!p)return false;
+        sys.addConstraintP2PSymmetricPoint(p1,p2,p,tag); return true; }
+      return false;
+    }
+    if(k==='fix'||k==='anchor'){
+      const p=gcsPoint(ctx,c.ref||c.a);
+      if(!p)return false;
+      sys.addConstraintCoordinateX(p,{v:(c.x!=null?c.x:p.x.v)},tag);
+      sys.addConstraintCoordinateY(p,{v:(c.y!=null?c.y:p.y.v)},tag);
+      return true;
+    }
+    if(k==='radius'||k==='dia'||k==='diameter'){
+      const cc=gcsCircleOf(ctx,(c.ref&&c.ref.ent)!=null?c.ref.ent:c.ent);
+      if(!cc||c.v==null)return false;
+      if(k==='radius')sys.addConstraintCircleRadius(cc,{v:c.v},tag);
+      else sys.addConstraintCircleDiameter(cc,{v:c.v},tag);
+      return true;
+    }
+    if(k==='dist'||k==='distance'){
+      const a=gcsPoint(ctx,c.a), b=gcsPoint(ctx,c.b);
+      if(!a||!b||c.v==null)return false;
+      sys.addConstraintP2PDistance(a,b,{v:c.v},tag); return true;
+    }
+    if(k==='angle')return gcsAddAngle(ctx,c,tag,c.v);
+    return false;
+  }
+  /* Which end of a poly segment an angle dimension spins about — the same
+     reading segPivot makes: a point on the origin first, then one shared with
+     another entity, then a chain's inner elbow, then simply the first. */
+  function gcsPivotEnd(sk,ent,seg){
+    const e=sk.entities[ent];
+    if(!e||e.type!=='poly')return null;
+    const n=e.pts.length, ia=seg, ib=(seg+1)%n;
+    const A=e.pts[ia], B=e.pts[ib];
+    if(!A||!B)return null;
+    const EPS=1e-4;
+    if(Math.hypot(A.x,A.y)<EPS)return 0;
+    if(Math.hypot(B.x,B.y)<EPS)return 1;
+    const ends=[[A,0],[B,1]];
+    for(const pair of ends)
+      for(let j=0;j<sk.entities.length;j++){
+        if(j===ent)continue;
+        const q=pair[0];
+        if(entPoints(sk.entities[j]).some(function(o){
+            return Math.hypot(o.x-q.x,o.y-q.y)<EPS; }))return pair[1];
+      }
+    if(!e.closed){
+      if(ia>0&&ia<n-1)return 0;
+      if(ib>0&&ib<n-1)return 1;
+    }
+    return 0;
+  }
+  /* The angle a dimension reads is the one between the two legs pointing AWAY
+     from where they cross — see dimResolve — while the solver's L2LAngle
+     measures from stored direction to stored direction. The two differ by a
+     sign and possibly by half a turn.
+
+     Which it is comes from the geometry, not from the number in the box: for
+     two segments, from where they intersect (the far end of each leg is the
+     one the dimension points along); against a plane trace, from the pivot end
+     and the trace's stored direction. That way a dimension retyped from 30 to
+     150 goes to 150 rather than folding back to its supplement, without the
+     caller having to tell us what the label used to say. Where neither can be
+     worked out — parallel legs, or a segment of a shape the dimension tools do
+     not reach — it falls back to matching whatever value the dimension is
+     showing (d.now, else d.v), and a dimension sitting at exactly 90 degrees is
+     genuinely ambiguous either way; the first match wins, deterministically. */
+  function gcsAddAngle(ctx,d,tag,val){
+    const sys=ctx.sys, G=ctx.G;
+    const l1=gcsLine(ctx,d.a);
+    if(!l1||val==null)return false;
+    let l2=null;
+    if(d.b&&d.b.trace!=null){
+      const L=gcsTrace(ctx,d.b.trace); if(!L)return false;
+      l2=d.b.rev?new G.Line(L.p2,L.p1):L;
+    } else l2=gcsLine(ctx,d.b);
+    if(!l2)return false;
+    const a1=Math.atan2(l1.p2.y.v-l1.p1.y.v,l1.p2.x.v-l1.p1.x.v);
+    const a2=Math.atan2(l2.p2.y.v-l2.p1.y.v,l2.p2.x.v-l2.p1.x.v);
+    const raw=gcsWrap(a2-a1);
+    let f1=null, f2=null;
+    if(d.b&&d.b.trace!=null){
+      const piv=gcsPivotEnd(ctx.sk,d.a.ent,d.a.seg|0);
+      if(piv!=null){ f1=(piv===1); f2=false; }   // o2 is the trace, already aimed
+    } else {
+      // where the two legs cross; each leg points from there to its far end
+      const u1={x:Math.cos(a1),y:Math.sin(a1)}, u2={x:Math.cos(a2),y:Math.sin(a2)};
+      const den=u1.x*u2.y-u1.y*u2.x;
+      if(Math.abs(den)>1e-9){
+        const px=l1.p1.x.v, py=l1.p1.y.v, qx=l2.p1.x.v, qy=l2.p1.y.v;
+        const t=((qx-px)*u2.y-(qy-py)*u2.x)/den;
+        const Px=px+u1.x*t, Py=py+u1.y*t;
+        const far=function(L){
+          const da=Math.hypot(L.p1.x.v-Px,L.p1.y.v-Py);
+          const db=Math.hypot(L.p2.x.v-Px,L.p2.y.v-Py);
+          return da>db;                          // true when the far end is p1
+        };
+        f1=far(l1); f2=far(l2);
+      }
+    }
+    let target;
+    if(f1!==null&&f2!==null){
+      const off=(f2?Math.PI:0)-(f1?Math.PI:0);
+      const away=gcsWrap(raw+off);
+      const sgn=(away<0)?-1:1;
+      target=gcsWrap(sgn*val*Math.PI/180-off);
+    } else {
+      const now=(d.now!=null?d.now:(d.v!=null?d.v:Math.abs(raw)*180/Math.PI))*Math.PI/180;
+      let best=null,bd=Infinity;
+      [[1,0],[-1,0],[1,Math.PI],[-1,Math.PI]].forEach(function(so){
+        const t=gcsWrap(so[0]*now+so[1]), e=Math.abs(gcsWrap(raw-t));
+        if(e<bd-1e-12){ bd=e; best=so; }
+      });
+      target=gcsWrap(best[0]*val*Math.PI/180+best[1]);
+    }
+    sys.addConstraintL2LAngle(l1.p1,l1.p2,l2.p1,l2.p2,{v:target},tag);
+    return true;
+  }
+  /* A driving dimension is a constraint with a number attached. Reference
+     dimensions (d.driven) and dimensions with no stored value drive nothing
+     and are skipped, exactly as the rest of the app treats them. */
+  function gcsAddDim(ctx,d,tag){
+    const sys=ctx.sys, G=ctx.G;
+    if(d.driven||d.v==null)return false;
+    const v=d.v;
+    if(d.kind==='p2p'){
+      const a=gcsPoint(ctx,d.a), b=gcsPoint(ctx,d.b);
+      if(!a||!b)return false;
+      sys.addConstraintP2PDistance(a,b,{v:v},tag); return true;
+    }
+    if(d.kind==='ptrace'){
+      const p=gcsPoint(ctx,d.ref), L=gcsTrace(ctx,d.trace);
+      if(!p||!L)return false;
+      // ccw records which side of the trace the point is on now, so a
+      // distance dimension cannot pull it through the plane
+      const dx=L.p2.x.v-L.p1.x.v, dy=L.p2.y.v-L.p1.y.v;
+      const area=-p.x.v*dy+p.y.v*dx+L.p1.x.v*L.p2.y.v-L.p2.x.v*L.p1.y.v;
+      sys.addConstraintP2LDistance(p,L,{v:Math.abs(v)},area>=0,tag); return true;
+    }
+    if(d.kind==='angle')return gcsAddAngle(ctx,d,tag,v);
+    if(d.kind==='seg'){
+      const s=gcsSeg(ctx,{ent:d.entIdx,seg:d.seg});
+      if(!s)return false;
+      sys.addConstraintP2PDistance(s.a,s.b,{v:v},tag); return true;
+    }
+    if(d.kind==='pedge'){
+      const rec=ctx.ents[d.entIdx];
+      if(!rec||rec.kind!=='polygon')return false;
+      const s=gcsSeg(ctx,{ent:d.entIdx,seg:d.seg});
+      if(!s)return false;
+      sys.addConstraintP2PDistance(s.a,s.b,{v:v},tag); return true;
+    }
+    if(d.kind==='width'||d.kind==='height'){
+      const rec=ctx.ents[d.entIdx];
+      if(!rec||rec.kind!=='rect')return false;
+      const lo=(d.kind==='width')?rec.ax:rec.ay, hi=(d.kind==='width')?rec.bx:rec.by;
+      // the reading is a magnitude; keep the corner order the rectangle has now
+      if(hi.v>=lo.v)sys.addConstraintDifference(lo,hi,{v:v},tag);
+      else sys.addConstraintDifference(hi,lo,{v:v},tag);
+      return true;
+    }
+    if(d.kind==='dia'||d.kind==='pdia'){
+      const cc=gcsCircleOf(ctx,d.entIdx);
+      if(!cc)return false;
+      sys.addConstraintCircleDiameter(cc,{v:v},tag); return true;
+    }
+    return false;
+  }
+  /* Build the whole system for a sketch: variables, then every stored
+     constraint, then every driving dimension. opts.extraCons and
+     opts.extraDims add records that are not (yet) in the sketch — which is
+     how "would this new constraint over-constrain?" is asked. */
+  function gcsSystem(sk,opts){
+    opts=opts||{};
+    const ctx=gcsBuild(sk,opts);
+    if(!ctx)return null;
+    if(opts.traceLookup)ctx.traceLookup=opts.traceLookup;
+    ctx.skipped=[];
+    const cons=(sk.cons||[]).concat(opts.extraCons||[]);
+    const dims=(sk.dims||[]).concat(opts.extraDims||[]);
+    cons.forEach(function(c,i){
+      const tag=GCS_TAG_CON+i;
+      ctx.tagInfo.set(tag,{src:'cons',index:i,kind:c.kind,rec:c,
+                           extra:i>=(sk.cons||[]).length});
+      if(!gcsAddCon(ctx,c,tag))ctx.skipped.push({src:'cons',index:i,kind:c.kind});
+    });
+    dims.forEach(function(d,i){
+      const tag=GCS_TAG_DIM+i;
+      ctx.tagInfo.set(tag,{src:'dims',index:i,kind:d.kind,rec:d,
+                           extra:i>=(sk.dims||[]).length});
+      if(!gcsAddDim(ctx,d,tag))ctx.skipped.push({src:'dims',index:i,kind:d.kind});
+    });
+    ctx.sys.declareUnknowns(ctx.params);
+    return ctx;
+  }
+  /* Pin points to where a drag wants them. A pin is a temporary constraint
+     (tag -1), which the solver keeps in a lower-priority subsystem: the real
+     constraints are satisfied first and the pin gets what is left, so a
+     dragged point follows the cursor exactly as far as the sketch allows. */
+  function gcsPin(ctx,pins){
+    if(!pins||!pins.length)return;
+    for(const pin of pins){
+      const p=gcsPoint(ctx,pin);
+      if(!p)continue;
+      const px={v:(pin.x!=null?pin.x:p.x.v)}, py={v:(pin.y!=null?pin.y:p.y.v)};
+      ctx.sys.addConstraintCoordinateX(p,px,GCS_TAG_PIN);
+      ctx.sys.addConstraintCoordinateY(p,py,GCS_TAG_PIN);
+      ctx.pins.push({ref:pin,px:px,py:py});
+    }
+  }
+  // move an existing pin without rebuilding anything — the per-frame path
+  function gcsMovePin(ctx,i,x,y){
+    const pin=ctx.pins[i]; if(!pin)return false;
+    pin.px.v=x; pin.py.v=y; return true;
+  }
+  /* pinMode decides how a drag pin argues with the real constraints:
+       'priority' — the ported SQP: the sketch's own constraints are satisfied
+                    first and the pin gets whatever freedom is left, so a
+                    dimension never stretches to follow the cursor. Costs a
+                    dense QR of the whole component per iteration.
+       'merged'   — pin and constraints solved together as one least-squares
+                    problem. An order of magnitude cheaper on a big connected
+                    sketch, but an impossible drag is split between the pin and
+                    the constraints instead of falling entirely on the pin.
+       'auto'     — priority while the largest component is small enough for it
+                    to fit in a frame, merged beyond that. */
+  const GCS_SQP_LIMIT=80;
+  function gcsSolve(ctx,opts){
+    opts=opts||{};
+    const G=ctx.G, sys=ctx.sys;
+    if(opts.maxIter)sys.maxIter=opts.maxIter;
+    sys.computeDependentParameters=!!opts.dependentParams;
+    const alg=(opts.algorithm!=null)?opts.algorithm:G.Algorithm.DogLeg;
+    const t0=(typeof performance!=='undefined'?performance.now():Date.now());
+    if(!sys.isInit||opts.reinit)sys.initSolution(alg);
+    const mode=opts.pinMode||ctx.pinMode||'auto';
+    if(mode==='auto'){
+      let big=0;
+      for(const ss of sys.subSystems) if(ss&&ss.pSize()>big)big=ss.pSize();
+      sys.preferMergedAux=(big>GCS_SQP_LIMIT);
+    } else sys.preferMergedAux=(mode==='merged');
+    const status=sys.solve(true,alg,false);
+    if(status!==G.SolveStatus.Failed||opts.applyOnFailure!==false)sys.applySolution();
+    const t1=(typeof performance!=='undefined'?performance.now():Date.now());
+    return {status:status,
+            ok:status===G.SolveStatus.Success,
+            converged:status!==G.SolveStatus.Failed,
+            dof:sys.dofsNumber(),
+            iterations:sys.lastIterations||0,
+            residual:sys.maxResidual(),
+            ms:t1-t0};
+  }
+  // write the solved parameters back onto the sketch's own objects
+  function gcsApply(ctx){
+    const sk=ctx.sk;
+    ctx.ents.forEach(function(rec,ei){
+      const e=sk.entities[ei];
+      if(!e)return;
+      if(rec.kind==='poly'){
+        rec.pts.forEach(function(p,k){ if(e.pts[k]){ e.pts[k].x=p.x.v; e.pts[k].y=p.y.v; } });
+      } else if(rec.kind==='rect'){
+        e.a.x=rec.ax.v; e.a.y=rec.ay.v; e.b.x=rec.bx.v; e.b.y=rec.by.v;
+      } else if(rec.kind==='circle'){
+        e.c.x=rec.cx.v; e.c.y=rec.cy.v; e.r=Math.abs(rec.r.v);
+      } else if(rec.kind==='polygon'){
+        e.c.x=rec.cx.v; e.c.y=rec.cy.v; e.r=Math.abs(rec.r.v); e.rot=rec.rot.v;
+      }
+    });
+    return ctx;
+  }
+  // the constraint records a set of tags points at, named for a person
+  function gcsNameTags(ctx,tags){
+    return (tags||[]).map(function(t){
+      const info=ctx.tagInfo.get(t);
+      if(!info)return {tag:t,kind:'?',src:'?'};
+      return {tag:t,src:info.src,index:info.index,kind:info.kind};
+    });
+  }
+  /* Degrees of freedom, and what is wrong if anything is. Rank comes from a
+     QR of the Jacobian, so a redundant constraint is counted once, not twice.
+     A residual that will not go to zero is the difference between "you said
+     the same thing twice" and "you asked for two different things". */
+  function gcsDiagnose(ctx,opts){
+    opts=opts||{};
+    const G=ctx.G, sys=ctx.sys;
+    sys.invalidatedDiagnosis();
+    sys.computeDependentParameters=!!opts.dependentParams;
+    const t0=(typeof performance!=='undefined'?performance.now():Date.now());
+    const dof=sys.diagnose(opts.algorithm!=null?opts.algorithm:G.Algorithm.DogLeg);
+    const t1=(typeof performance!=='undefined'?performance.now():Date.now());
+    const conflicting=gcsNameTags(ctx,sys.conflictingTags);
+    const redundant=gcsNameTags(ctx,sys.redundantTags);
+    const partial=gcsNameTags(ctx,sys.partiallyRedundantTags);
+    let state;
+    if(conflicting.length)state='conflicting';
+    else if(dof<0)state='over-defined';
+    else if(dof===0)state='fully defined';
+    else state='under-defined';
+    return {dof:dof, rank:sys.lastRank, vars:ctx.params.length,
+            geomVars:ctx.nGeomVars, state:state,
+            conflicting:conflicting, redundant:redundant, partiallyRedundant:partial,
+            pinMode:sys.preferMergedAux?'merged':'priority',
+            skipped:ctx.skipped||[], warnings:ctx.warnings, ms:t1-t0};
+  }
+  /* Build, solve and write back in one call — the shape phase 2 will use for
+     "the user typed a dimension" and "the user added a constraint". */
+  function gcsSolveSketch(sk,opts){
+    opts=opts||{};
+    const ctx=gcsSystem(sk,opts);
+    if(!ctx)return {ok:false,error:'planegcs.js not loaded'};
+    gcsPin(ctx,opts.pins);
+    const before=ctx.params.map(function(p){ return p.v; });
+    const res=gcsSolve(ctx,opts);
+    if(opts.apply!==false)gcsApply(ctx);
+    let moved=0;
+    for(let i=0;i<ctx.nGeomVars;i++){
+      const d=Math.abs(ctx.params[i].v-before[i]);
+      if(d>moved)moved=d;
+    }
+    res.moved=moved;
+    res.ctx=ctx;
+    if(opts.diagnose)res.diagnosis=gcsDiagnose(ctx,opts);
+    return res;
+  }
+  /* Would adding this constraint over-constrain the sketch? Asked BEFORE it
+     is committed: build the system with the candidate appended, diagnose,
+     and report whether it merely repeats what is already there (redundant)
+     or contradicts it (conflicting). */
+  function gcsWouldOverConstrain(sk,rec,opts){
+    opts=opts||{};
+    const isDim=!!(rec&&rec.kind&&['p2p','ptrace','seg','pedge','width','height','dia','pdia']
+                    .indexOf(rec.kind)>=0)||opts.asDim;
+    const o=Object.assign({},opts);
+    if(isDim)o.extraDims=(opts.extraDims||[]).concat([rec]);
+    else o.extraCons=(opts.extraCons||[]).concat([rec]);
+    const ctx=gcsSystem(sk,o);
+    if(!ctx)return {ok:false,error:'planegcs.js not loaded'};
+    const tag=isDim?(GCS_TAG_DIM+(sk.dims||[]).length+((opts.extraDims||[]).length))
+                   :(GCS_TAG_CON+(sk.cons||[]).length+((opts.extraCons||[]).length));
+    const d=gcsDiagnose(ctx,opts);
+    const names=function(l){ return l.some(function(x){ return x.tag===tag; }); };
+    let verdict='ok';
+    if(d.conflicting.length)verdict=names(d.conflicting)?'conflict':'conflict-elsewhere';
+    else if(names(d.redundant)||names(d.partiallyRedundant))verdict='redundant';
+    else if(d.redundant.length||d.partiallyRedundant.length)verdict='redundant-elsewhere';
+    const at=isDim?((sk.dims||[]).length+(opts.extraDims||[]).length)
+                  :((sk.cons||[]).length+(opts.extraCons||[]).length);
+    return {ok:verdict==='ok', verdict:verdict, dof:d.dof, diagnosis:d, tag:tag,
+            // true when the candidate could not be built at all: the caller
+            // has been told nothing about it, and should say so
+            skipped:(ctx.skipped||[]).some(function(s){
+              return (isDim?s.src==='dims':s.src==='cons')&&s.index===at; })};
+  }
+  // what each variable is, for anyone who needs to read the vector directly
+  function gcsVarMap(ctx){
+    return ctx.params.map(function(p,i){
+      return {index:i, name:ctx.varNames[i], value:p.v, geometric:i<ctx.nGeomVars};
+    });
+  }
+  const gcsAPI={
+    get available(){ return !!gcsLib(); },
+    build:gcsSystem, solve:gcsSolve, apply:gcsApply, diagnose:gcsDiagnose,
+    solveSketch:gcsSolveSketch, wouldOverConstrain:gcsWouldOverConstrain,
+    pin:gcsPin, movePin:gcsMovePin, varMap:gcsVarMap,
+    point:gcsPoint, seg:gcsSeg, trace:gcsTrace, nameTags:gcsNameTags,
+    TAG:{con:GCS_TAG_CON, dim:GCS_TAG_DIM, pin:GCS_TAG_PIN},
+    get lib(){ return gcsLib(); }
+  };
+  /* ================= end constraint solver adapter ======================= */
+/* GCS-ADAPTER-END */
+
   // Test hook: the app state is otherwise unreachable from the console, which
   // makes features like fillet impossible to verify headlessly.
   window.__C = {
@@ -16307,6 +16932,7 @@ const CSG = (function(){
         return [v.x,v.y,v.z]; })()})); },
     lightGizBuild, lightRows, lightCover,
     entSpin, coupledEnt, entSeg, segAlign,
+    gcs: gcsAPI,
     libPut, libGet, libList, libDelete, openLibrary, saveProject,
     dimHit, dimResolve, dimApply, polyCorners, cornerAt, applyCorner,
     get cornerSel(){ return cornerSel; }, set cornerSel(v){ cornerSel=v; },

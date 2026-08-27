@@ -1931,3 +1931,392 @@ extruded into a post).
   ever recomputed the freyacad card. It now recomputes all three cards and the
   row count from the table, on the same principle the tallies were taken out of
   hand-editing for. The freyacad numbers are unchanged (42/4/30).
+
+## A real constraint solver: PlaneGCS, ported (phase 1, inert)
+
+freyacad now carries a genuine 2D geometric constraint solver — the same one
+FreeCAD's Sketcher uses, PlaneGCS, ported from C++ to JavaScript. **Phase 1 is
+the numerical core and nothing else.** It is loaded by the page, it is tested,
+and no part of the sketcher calls it. Wiring it into drawing, dragging and the
+DOF chip is phase 2, and this section is written for whoever does that.
+
+### The files
+
+- **`freyacad/planegcs.js`** — the port. ~2,000 lines, its own file, its own
+  licence. Loaded from `<head>` with a plain `<script src="./planegcs.js">`,
+  the way `three.min.js` is. Exposes `window.PlaneGCS`, and `module.exports`
+  as well so the node suite can `require()` it.
+- **`freyacad/LICENSE-planegcs.txt`** — the LGPL-2.1 text, fetched from
+  upstream, not retyped.
+- **The adapter**, inside `index.html` between `/* GCS-ADAPTER-BEGIN */` and
+  `/* GCS-ADAPTER-END */` (just above `window.__C`). freyacad's own code: it
+  maps a sketch onto the solver's parameters and constraints. Reachable as
+  `__C.gcs`.
+- **`sw.js`** precaches `./planegcs.js`, so offline still boots.
+- Suites: `newdemos/solver.js` (plain node, 114 checks) and
+  `newdemos/gcsbrowser.js` (Playwright, 9 checks). Both are in `runbattery.sh`.
+  The node suite lifts the adapter out of `index.html` between its markers and
+  evaluates it with the real `entPoints`/`entVarCount`/`entSeg`/`entSpin`/
+  `coupledEnt`/`polyCorners` pulled from the same file, so it tests the code the
+  browser runs rather than a copy of it.
+
+### The licence, in practice
+
+PlaneGCS is LGPL-2.1-or-later, Copyright (c) 2011 Konstantinos Poulios, part of
+the FreeCAD CAx development system. LGPL is not GPL: an application may use an
+LGPL library without becoming LGPL itself. What it requires is that the library
+stays replaceable and that its notices survive. That is why the port is a
+**separate file**, loaded as a separate script, with the copyright notice, the
+SPDX line, the upstream URL and the exact commit it was ported from
+(`fda5c1438057ec84fb1d5bd0f45fb29e94e0c8e1`) at the top, and why the licence
+text ships beside it. freyacad's own code — the adapter and everything else in
+`index.html` — stays proprietary and simply calls in.
+
+**Rules for anyone editing it.** Keep `planegcs.js` a separate file: do not
+inline it into `index.html`, and do not move freyacad's own logic into it.
+Changes to it are changes to an LGPL work — fine, and they stay LGPL. New
+constraint classes belong in `planegcs.js` (they subclass its `Constraint`);
+new sketch-mapping logic belongs in the adapter.
+
+### What is ported and what is not
+
+Ported faithfully, structure and mathematics both: `DeriVector2`, `Point`,
+`Line`, `Circle`; the `Constraint` hierarchy with its `error()`/`grad()`/
+`maxStep()` bodies (Equal, Difference, P2PDistance, P2PAngle, P2LDistance,
+PointOnLine, PointOnPerpBisector, Parallel, Perpendicular, L2LAngle,
+MidpointOnLine, TangentCircumf, EqualLineLength); `SubSystem` with its
+parameter redirection; `System` with `declareUnknowns`, the `addConstraint*`
+helpers, `initSolution` (component partitioning + equality reduction), `solve`,
+`solve_BFGS`, `solve_LM`, `solve_DL` (DogLeg), the two-subsystem SQP
+`solve(A,B)`, `lineSearch`, `applySolution`, and `diagnose()` with the whole
+QR rank analysis and the conflicting/redundant/partially-redundant
+classification; `qp_eq`.
+
+Not ported: arcs, ellipses, hyperbolas, parabolas, B-splines and every
+constraint only they reach (freyacad has none of those as constrainable
+geometry); the sparse-QR diagnosis path; Boost's connected-components (a plain
+union-find does the same job); the solver-reporting scaffolding.
+
+Written here, not upstream — all inside `planegcs.js`, all LGPL like the rest
+of that file:
+
+- **The dense linear algebra**, which upstream gets from Eigen: full-pivoting
+  Householder QR (rank, R, column permutation, Q, least-squares solve),
+  full-pivoting LU solve, LDL^T solve, and the matrix products the solvers
+  reach. The algorithms follow Eigen's so that pivot orders and rank decisions
+  agree with upstream's.
+- **`ConstraintPolygonCorner`**, described under the variable model below.
+
+Deliberate deviations, each commented at the site:
+
+- `ConstraintEqual.grad` returns `-ratio` for its second parameter where
+  upstream returns `-1`. Upstream is only correct for ratio 1; it never bites
+  there because the ratio form is used for radius-vs-diameter and the diameter
+  is a constant. Ours is the true derivative and the finite-difference check
+  insists on it.
+- `calcJacobi` walks each constraint's own parameter list rather than every
+  parameter of the subsystem. Same matrix, far less work.
+- `SubSystem` keeps parameters in the caller's order (upstream sorts by pointer
+  address, which is not reproducible), and when a coincidence merges two
+  parameters the **kept** one's value seeds the merged variable. Upstream
+  leaves that to `std::map` ordering; here it means the second point of a
+  coincidence moves onto the first, which is what `applyCoincident` already
+  does elsewhere in freyacad.
+- `solve_DL` restores the last accepted iterate before returning, so a rejected
+  trial step can never be what gets applied.
+- The DogLeg Gauss-Newton step defaults to the least-norm LDLT form (upstream
+  offers it too, but defaults to a full-pivot LU on the rectangular Jacobian).
+  Least-norm is the step that moves the sketch as little as the constraints
+  allow, and it only needs square factorisations.
+- `diagnose()` runs its two decompositions in sequence (upstream uses a thread),
+  and the second one — "which parameters are still free" — is opt-in, because
+  it costs as much as the rank itself and the rank is what DOF needs.
+- If the SQP refuses a drag (it needs the main subsystem's constraints to be
+  independent), the solve falls back to solving the drag constraints alongside
+  the real ones rather than doing nothing.
+
+### The variable model — the thing to get right
+
+A sketch becomes a flat vector of parameters. **Every entity contributes
+exactly `entVarCount(e)` of them, in entity order.** The points constraints
+speak about are *functions* of those parameters, not parameters themselves:
+
+| entity | vars | layout from the entity's base index |
+|---|---|---|
+| `poly` | `2 * pts.length` | `base+2k` = `pts[k].x`, `base+2k+1` = `pts[k].y` |
+| `rect` | 4 | `base+0..3` = `a.x, a.y, b.x, b.y` |
+| `circle` | 3 | `base+0..2` = `c.x, c.y, r` |
+| `polygon` | 4 | `base+0..3` = `c.x, c.y, r, rot` |
+
+`ctx.ents[i]` holds `{kind, base, count}` plus the parameter objects, and
+`gcs.varMap(ctx)` prints the whole vector with names like `2.c.x` or
+`0.pt3.y`. The adapter checks its own count against `entVarCount(e)` while
+building and records a warning in `ctx.warnings` if they ever disagree — the
+node suite fails on that, so the two cannot drift apart silently.
+
+Why the reduced space matters: a rectangle's four corners are pairs drawn from
+its four numbers, so `Point(ax, by)` *is* the top-left corner and axis-alignment
+costs no equations at all. Expanding every shape to free x,y per point and
+bolting rectangle-ness back on with internal constraints would inflate the
+system and make the redundancy analysis meaningless.
+
+**The one exception, and the reason for it.** A regular polygon's corners are
+transcendental functions of `(c, r, rot)`, and PlaneGCS has no primitive that
+says so. A corner that some constraint actually names therefore gets two
+auxiliary parameters — appended *after* every entity's own variables — pinned
+to the polygon by two internal-alignment equations
+(`ConstraintPolygonCorner`, one per coordinate):
+
+```
+px - cx - r*cos(rot + k*2*pi/n) = 0
+py - cy - r*sin(rot + k*2*pi/n) = 0
+```
+
+Two parameters against two always-independent equations, so the polygon still
+counts as four degrees of freedom and every ported constraint works on the
+corner unchanged. This is exactly the device upstream uses for an ellipse's
+focus. The first `ctx.nGeomVars` entries of the vector are the sketch's own
+variables and nothing else; anything past that is auxiliary. A corner asked for
+after `declareUnknowns` re-declares, so it cannot end up silently constant.
+
+`entSpin(e)`'s "single rotation variable" is exactly the `rot` parameter above:
+the adapter does not call `entSpin`, because the polygon's corner equations
+already carry that structural fact — aligning one of its edges solves for `rot`
+and nothing else about the shape moves, which is what `entSpin` exists to say.
+`coupledEnt(e)` is likewise true of precisely the shapes whose points are
+functions here rather than parameters.
+
+`ent: -1` is the origin: a point built from two constants, so it costs no
+variables and cannot move. A plane trace is a line through two constants, for
+the same reason — which is what makes it *ground*.
+
+### What each sketch record turns into
+
+Constraints (`sk.cons`):
+
+| kind | solver constraints |
+|---|---|
+| `coinc`, `conc` | `Equal(a.x,b.x)` + `Equal(a.y,b.y)` |
+| `horiz` / `vert` | `Equal(a.y,b.y)` / `Equal(a.x,b.x)` |
+| `paral` | `Parallel` — cross product of the directions, divided by both lengths |
+| `perp` | `Perpendicular` — dot product, same scaling |
+| `equal` | `EqualLineLength` for two segments, `Equal(r1,r2)` for two circles |
+| `ontrace` | `PointOnLine` against the ground line |
+| `tangent` | line+circle → `P2LDistance(centre, line, r, ccw)`; circle+circle → `TangentCircumf` |
+| `symm` | `Perpendicular` + `MidpointOnLine` about a line; `PointOnPerpBisector` + `PointOnLine` about a point |
+| `fix` | `CoordinateX` + `CoordinateY` against constants |
+| `radius` / `diameter` / `dist` / `angle` / `pointonline` | the obvious ones; the sketcher does not create these yet |
+
+Dimensions (`sk.dims`, skipped when `driven` or `v == null`):
+
+| kind | solver constraint |
+|---|---|
+| `p2p`, `seg`, `pedge` | `P2PDistance` between the two points |
+| `ptrace` | `P2LDistance` to the trace, with `ccw` fixed from the side the point is on now |
+| `width` / `height` | `Difference` on the rectangle's two x's or two y's, in the order the rectangle has now |
+| `dia`, `pdia` | `Proportional(r, value, 0.5)` |
+| `angle` | `L2LAngle` (see below) |
+
+**Distances use the plain `sqrt` form, as upstream does**, and this is on
+purpose. The derivative is `dx/d`, which is only singular when the two points
+coincide *exactly*; upstream has lived with that for fifteen years, and the
+alternative (a squared residual) changes the least-squares weighting of every
+over-constrained sketch. What guards it in practice is `maxStep`, which is
+ported: `P2PDistance` refuses a step that would change the distance by more than
+the distance itself. If you ever see a NaN out of a distance, that is the place
+to look, not the residual form.
+
+**Angles are the one translation with a convention to get wrong.** A dimension
+reads the angle between the two legs pointing *away* from where they cross (see
+`dimResolve`); `L2LAngle` measures from one stored direction to the other. They
+differ by a sign and possibly by half a turn. The adapter works out which from
+the **geometry**: for two segments, from where they intersect (each leg points
+from there to its far end); against a plane trace, from the pivot end —
+`gcsPivotEnd` mirrors `segPivot`'s reading — and the trace's stored direction.
+Nothing has to tell it what the label used to say, so a dimension retyped from
+30 to 150 goes to 150 instead of folding to its supplement. The browser suite
+checks this the only way that really counts: it drives a dimension and asks
+`dimResolve` what the label now reads.
+
+Two ways it can still be wrong. If the legs are parallel (no intersection) or
+the segment belongs to a shape the dimension tools cannot reach, it falls back
+to matching the value the dimension is showing — pass `d.now` if you have a
+better one than `d.v`. And a dimension sitting at exactly 90 degrees is
+genuinely ambiguous whichever way you look at it; the first match wins,
+deterministically. `gcsPivotEnd` also duplicates `segPivot`'s rule rather than
+calling it: if `segPivot` ever changes, change both.
+
+### The solve
+
+`initSolution` splits the system into decoupled components and eliminates
+`Equal` constraints between unknowns by merging the two parameters. Both matter
+more than they sound: twenty-five separate rectangles are twenty-five small
+problems, and a coincidence costs a variable rather than an equation.
+
+Then, per component: **DogLeg by default** (Powell's dog-leg: a least-norm
+Gauss-Newton step inside the trust region, steepest descent outside, a blend
+between), with **Levenberg-Marquardt** and **BFGS** ported and selectable
+through `opts.algorithm`. Tolerances are upstream's: `DL_tolf = 1e-10` on the
+infinity norm of the residual, `convergence = 1e-10`, `maxIter = 100`. Success
+means the residual was driven under `DL_tolf`; `Converged` means it stopped at a
+minimum that is not zero; `Failed` means neither.
+
+Everything is deterministic: no randomness, no clock, fixed iteration order,
+and — unlike upstream — no dependence on pointer addresses. The suite asserts
+bit-identical output from two identical inputs.
+
+`solve()` calls `resetToReference()` first, so every solve starts from the
+geometry as it was when `initSolution` ran. During a drag that makes the result
+depend only on where the cursor *is*, not on the path it took — deliberate, and
+worth knowing before you try to make a drag incremental.
+
+**Minimum norm.** The Gauss-Newton step is the least-norm solution of the
+linearised system, so an under-determined sketch — the normal case — moves as
+little as the constraints allow. The suite pins this down: stretching a free
+segment from 10 to 12 moves *both* ends by 1; adding one coincidence to twenty
+loose lines moves exactly one point and leaves the other 36 untouched to the
+last bit.
+
+**Pinning (this is how phase 2 drags).** `gcs.pin(ctx, [{ent, idx, x, y}])`
+adds `CoordinateX`/`CoordinateY` constraints tagged `-1`. A negative tag puts
+them in a *lower-priority* subsystem, and the two-subsystem SQP satisfies the
+sketch's own constraints first and gives the pin whatever freedom is left. That
+is why a dimensioned edge does not stretch to follow the cursor — asserted in
+the suite. `gcs.movePin(ctx, i, x, y)` moves the target without rebuilding
+anything, which is the per-frame path.
+
+`pinMode` picks how much that priority costs: `'priority'` is the SQP;
+`'merged'` solves pin and constraints together as one least-squares problem, an
+order of magnitude cheaper on a big connected sketch but it splits an
+impossible drag between the pin and the constraints instead of putting all of
+it on the pin; `'auto'` (the default) uses priority while the largest component
+is at most 80 unknowns and merged beyond that.
+
+### DOF, redundancy and conflict
+
+`diagnose()` builds the Jacobian of the driving constraints against the
+parameters and takes a **full-pivoting QR of its transpose**. Then:
+
+- **`dof = parameters - rank`.** Rank, not equation count: three parallels
+  round a rectangle are three equations of rank two, and counting equations
+  would report a degree of freedom that is not there.
+- If there are more constraints than rank, each dependent column of `R` names a
+  **group**: the constraints whose rows it depends on, plus itself. Upstream's
+  heuristic picks whom to blame (appears in most groups, then costs the fewest
+  solver constraints, then newest), drops them, and **solves the system
+  again**. Whatever the dropped constraint's residual is near zero after that
+  solve was **redundant but consistent**; whatever is not is **conflicting**.
+  That re-solve is the whole difference between "you said the same thing twice"
+  and "you asked for two different things", and it is why the answer is
+  trustworthy.
+- Groups with no redundant member become `conflictingTags`; the adapter turns
+  tags back into `{src:'cons'|'dims', index, kind}` so a message can name the
+  actual badge the user clicked.
+
+Tags: `1 + i` for `sk.cons[i]`, `1001 + i` for `sk.dims[i]`, `0` for internal
+alignment (counted for rank, never blamed), `-1` for drag pins (invisible to
+the diagnosis).
+
+Measured on the classic cases: four lines with coincident corners = 8 DOF; plus
+one horizontal = 7; plus H,V,H,V on the four sides = 4; plus width and height =
+2; plus a corner on the origin = 0, and it solves to the exact rectangle. A
+parallel added to that rectangle reads *redundant*, DOF stays 4. Two different
+lengths on one segment read *conflict*, with both dimensions named.
+
+### The API phase 2 will call
+
+Everything is on `__C.gcs`:
+
+```js
+const ctx = gcs.build(sketch, opts);      // parameters + constraints, nothing solved
+gcs.pin(ctx, [{ent, idx, x, y}]);         // optional drag pins (tag -1)
+const res = gcs.solve(ctx, opts);         // {ok, status, converged, dof, iterations, residual, ms}
+gcs.apply(ctx);                           // write the parameters back onto the sketch
+const d = gcs.diagnose(ctx, opts);        // {dof, rank, state, conflicting[], redundant[],
+                                          //  partiallyRedundant[], skipped[], warnings[], ms}
+const r = gcs.solveSketch(sketch, opts);  // build + pin + solve + apply, plus res.moved
+const w = gcs.wouldOverConstrain(sketch, record, opts);  // ask BEFORE committing
+gcs.movePin(ctx, 0, x, y);                // per-frame drag
+gcs.varMap(ctx);                          // [{index, name, value, geometric}]
+gcs.available                             // false if planegcs.js did not load
+```
+
+`opts`: `pins`, `pinMode`, `algorithm`, `maxIter`, `reinit`, `apply`,
+`diagnose`, `dependentParams`, `extraCons`, `extraDims`, `traceLookup`.
+
+`wouldOverConstrain` returns `verdict: 'ok' | 'redundant' | 'conflict' |
+'redundant-elsewhere' | 'conflict-elsewhere'` — the `-elsewhere` cases mean the
+sketch was already in that state before the candidate was added, which is a
+different message to show.
+
+`ctx.skipped` lists records the adapter could not honour (a stale segment index,
+a missing trace). Phase 2 should surface those rather than let a constraint
+silently do nothing.
+
+`gcs.apply` **mutates the existing point objects** (`e.pts[k].x = ...`, `e.a`,
+`e.c`), it never replaces them — drag handles, `resolvePt` results and anything
+else holding a live point keep working across a solve. A polygon's `rot` is
+written back unnormalised, so it can wander outside 0..2*pi over many solves;
+that is geometrically a no-op and `polyCorners` does not care.
+
+**`help.html` and `FEATURE-MATRIX.html` are deliberately untouched.** Nothing
+here is user-visible yet, and the manual's "no constraint solver" caveat is
+still true from where the user sits. The standing rule applies to the commit
+that makes it visible: whoever wires the first piece up deletes that caveat,
+documents what constraints now hold, and moves the matrix row.
+
+Suggested wiring order, easiest first: (1) replace the DOF chip's arithmetic
+with `diagnose().dof` — it is a strict improvement and touches nothing else;
+(2) run `solveSketch` after a dimension edit instead of `dimApply`'s relaxation;
+(3) drag through `pin`/`movePin`; (4) call `wouldOverConstrain` before storing a
+new constraint. Each step can ship on its own.
+
+### Measured performance (node 22, this container)
+
+| sketch | vars | constraints | DOF | diagnose | cold solve | warm solve | drag frame |
+|---|---|---|---|---|---|---|---|
+| 4 entities, 1 quad | 16 | 14 | 2 | 0.3 ms | 0.6 ms | 0.10 ms | 0.16 ms |
+| 20 entities, 5 quads | 80 | 70 | 10 | 1.7 ms | 2.5 ms | 0.51 ms | 0.32 ms |
+| 100 entities, 25 quads | 400 | 350 | 50 | 152 ms | 166 ms | 1.8 ms | 0.46 ms |
+| 100-segment chain, every segment dimensioned | 400 | 300 | 100 | 114 ms | 140 ms | 11.6 ms | 114 ms |
+
+Dense linear algebra is the right choice at this scale, and these are the
+numbers that say so: a drag frame on a hundred separate entities is half a
+millisecond, because the partitioning solves only the component under the
+cursor. The last row is the deliberate worst case — one connected component of
+202 unknowns and 102 nonlinear distance constraints — and it is the one place
+that misses a frame. `opts.maxIter: 20` brings it to 24.6 ms, which is the lever
+to reach for if a real sketch ever gets there. (The same row with `pinMode:
+'priority'` costs 419 ms, which is what `'auto'` exists to avoid.) Diagnosis of a hundred entities
+is a tenth of a second and runs when a constraint changes, not per frame; asking
+for `dependentParams` doubles it.
+
+The single biggest win was making `J * J^T` walk each row's nonzeros instead of
+its full width: the chain's warm solve went from 58 ms to 11 ms. A constraint
+Jacobian is nearly all zeros, and that one product is the dominant cost of a
+solve.
+
+### What is weak, and what phase 2 must be careful of
+
+- **Angles**, as above. The likeliest place to find a real bug.
+- **Radius can go negative.** Nothing stops a circle's `r` becoming negative
+  under a violent solve; `gcs.apply` writes `Math.abs(r)`, which is a patch, not
+  a fix. If a circle ever flips inside out, that is why.
+- **Tangency picks a side at build time** (`ccw` from where the centre is now)
+  and keeps it. That is what stops it flipping mid-solve, and it also means a
+  tangency cannot be solved "round the other side" without rebuilding.
+- **`entSeg` does not offer rectangle sides** — the host interface has no
+  segments for a rect. The solver accepts them anyway (`{ent, seg: 0..3}`),
+  which costs nothing, but the UI has no way to pick one today.
+- **Splines are poly points to the solver.** A `spline` entity's control points
+  constrain like any polyline points; the curve itself is not constrained.
+- **No arcs.** When arcs arrive, they need `ConstraintArcRules`,
+  `ConstraintCurveValue` and friends ported from upstream — that is a real
+  chunk of work, and the file is laid out to receive it.
+- **The diagnosis re-solve moves the geometry and puts it back.** It snapshots
+  and restores the parameters, but if you interrupt it (you cannot, it is
+  synchronous) or if a constraint's `evaluate()` writes somewhere unexpected,
+  that is where to look.
+- **Nothing calls any of this yet, on purpose.** `git grep 'gcs\.' index.html`
+  should only find the adapter's own internals and the `__C` export until phase
+  2 starts.
