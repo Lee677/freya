@@ -1667,3 +1667,267 @@ zero page errors.
 - The `dragLight` / `dragPlane` scaffold that was already in the pointer
   handlers (declared, never assigned, three dead branches) is gone; the real
   handlers replace it.
+
+## Offset datum planes
+
+Before this, the plane tool only tilted. `planeFrame`'s `dplane` branch cloned
+`DATUM[base]`, rotated u/v/n about one of the base's own in-plane axes, and
+returned — so **every datum plane in freyacad passed through the world origin**
+and there was no offset anywhere in the app. Its own comment said as much
+("an angled plane, not a floating one"), while the header comment two lines
+above already said "offset datum-plane features" and `planeLabelOf` already fell
+back to the string `'offset plane'`. The naming had arrived well before the
+maths.
+
+Now the same tool also offsets: a set distance from an origin plane, from
+another plane you added, or from a face of the model. The tilt is untouched.
+
+### The record
+
+```
+{ id, type:'dplane', name:'Plane1',
+  base:'Top'|'Front'|'Right'|'dp:<id>',   // or a plane's NAME; default 'Top'
+  about:'u'|'v', angle:30,                // unchanged
+  offset:0, flip:false,                   // new
+  baseKind:'plane'|'face',                // absent === 'plane'
+  faceSig:{k,p,d,r,a},                    // only when baseKind==='face'
+  suppressed:false }
+```
+
+`base`/`about`/`angle` are exactly what every earlier document carries, and
+every new key reads as "no offset, based on an origin plane" when it is absent
+(`+pf.offset||0`, `pf.flip?-1:1`, `pf.baseKind==='face'`). A legacy record
+therefore resolves through exactly the code path it always did plus one
+`if(off)` that is false. The suite proves this against the *last commit that
+does not contain `resolveFaceBase`* rather than against HEAD — this lane is
+checkpoint-committed as it goes, and diffing against HEAD would compare the
+build to itself.
+
+Neither `models/magic-lamp.sketchcad`, `models/print-test-boat.sketchcad` nor
+either demo contains a `dplane` at all, so there was nothing in them to
+disturb; `verify` stays 12/12 and `brepsel` stays 47/21/14765.
+
+### Composition order: base, then tilt, then offset
+
+`planeFrame` reads top to bottom the way the panel does.
+
+1. **Base** — `dplaneBaseFrame` resolves an origin plane, another `dplane`
+   (fully, so its own tilt and offset are already in), or a face frame.
+2. **Tilt** — rotate u/v/n about the base's own u or v by `angle`. `o` is left
+   alone, which is what keeps an angle-only plane passing through the base's
+   origin exactly as before.
+3. **Offset** — `o += n * (offset * (flip ? -1 : 1))`, along the **tilted**
+   normal.
+
+Tilt first and offset second means the distance you type is measured square to
+the plane you end up with, not to the base. Tilt 30° about Top's U and offset 5
+lands the origin at `(0, 5cos30, 5sin30)` = `(0, 4.330127, 2.5)`, not at
+`(0, 5, 0)`. The panel note says this in words and the suite asserts the
+coordinates.
+
+### The cycle guard
+
+Plane A based on B based on A recursed until the tab died. `planeFrame` now
+takes a second argument, `seen`: a `Set` of the plane ids already on the
+resolution stack, created lazily on the first hop and threaded down. Entering
+`dplaneBaseFrame` for a plane already in the set throws
+`its base planes run in a circle — a plane cannot be built on itself`.
+
+A visited set rather than a depth cap, because ids are unique so it is exact:
+it catches a self-reference at depth 2, a two-plane loop at depth 3 and an
+N-plane loop at depth N+1, and it never refuses a legal chain however deep. The
+set only grows along the dplane→dplane path; a datum or face base terminates
+before touching it.
+
+That error reaches the tree because **`applyFeature` now resolves a `dplane`
+instead of returning immediately**. It builds no geometry, as before — but a
+plane can still be *wrong*, and resolving it in its own place in the run is what
+puts a deleted base, a loop or a missing reference face onto the feature as
+`f.error`, with the red `!` and the error dialog every other feature already
+has. `drawRefGeometry` still swallows the throw and simply draws nothing, which
+is now the right behaviour rather than the only behaviour.
+
+The panel also refuses to *offer* a base that already leans on the plane being
+edited, so you cannot build a loop through the UI at all; the resolver guard is
+for files, hand-edits and anything that arrives from elsewhere.
+
+### A plane started from a face
+
+Faces carry no permanent name in the kernel. The record keeps the same kind of
+signature the **surface colours** keep — `faceSig`: fitted kind, centroid,
+direction, radius, area — and hunts for the face that still matches after every
+rebuild. Storing a frozen frame (what sketch-on-a-face does) was the cheap
+alternative and was rejected: a datum plane is a parametric object and a frozen
+one would sit still while the model moved under it.
+
+**Where it is resolved matters.** `resolveFaceBase` runs from `applyFeature`, at
+the plane's own position in the tree, against the body as it stands *underneath*
+it — `flushPending()` then `OCK.mesh` of each `resultShape`, then `regionsOf` /
+`faceSig` / `fitFace`, exactly as `applyAppearance` does. Resolving against
+`resultMeshes` instead (which is what colours do, after the rebuild) would have
+been one line shorter and **one rebuild behind**: change the block's height and
+the sketch built on the face-plane this pass would use last pass's face. The
+price is one extra tessellation of the body and a flushed boolean batch, and
+only for a model that actually has a face-referenced plane. The geometry is
+disposed in a `finally`, and OCCT caches the triangulation on the shape, so the
+second mesh at the tail of `rebuild` is nearly free.
+
+**One deliberate deviation from the colour precedent.** `sigMatch` is untouched
+— the colours behave exactly as they did — and the plane uses its own
+`faceBaseMatch`, which is `sigMatch` with one thing forgiven and one thing
+tightened:
+
+* **forgiven**: a planar face may have slid **along its own normal**. Only the
+  sideways component of the centroid difference is tested. Under `sigMatch`'s
+  full-centroid test, a plane 4 mm above a 20×16 block's top face let go the
+  moment the block grew by more than ~1.8 mm (`max(0.6, 0.1·√area)`), which
+  breaks the plainest reason to reference a face at all. Measured in the suite:
+  a 20×16 block 6 mm tall with a plane 5 mm off its top face sits at y=11; take
+  the block to 11 mm and the plane is at y=16. It follows.
+* **tightened**: the direction test is **signed** (`dot > 0.985`, not `|dot|`).
+  A plane's fitted normal points out of the solid, so signed is what tells the
+  top of a block from its bottom — and with the along-normal slide forgiven,
+  `|dot|` would happily match one to the other. Round faces are refused
+  outright; a plane needs a plane.
+
+Everything else still has to hold: same surface kind, same facing direction, no
+sideways move, and area within 0.7–1.43×. When several faces match — parallel
+steps of the same size — the nearest centroid wins, the same tie-break
+`applyAppearance` uses.
+
+**When it lets go it says so.** No fallback, no frozen frame, no quiet jump:
+`its reference face is no longer on the model` (or `no solid here to find its
+reference face on` when there is no body at that point at all) lands on the
+feature as an error and the plane stops drawing. Pick the face again and it
+carries on. The stored signature is never rewritten during a rebuild — that
+would churn `sigStr`, the checkpoint keys and the undo diff — so the reference
+is always relative to the face as it was picked.
+
+The resolved frame lives in a module-level `Map` (`dplaneFaceFrames`, id →
+frame), cleared at the top of each full rebuild and refilled by
+`resolveFaceBase`. Deliberately **not** on the record: the feature is
+`JSON.stringify`d into the save file, into `sigStr` and into the undo
+comparison, and a frame recomputed every rebuild has no business in any of the
+three. `rebuildOverlaysOnly` keeps what the last full rebuild found, which is
+correct — nothing about the model moved on that path.
+
+### The pick
+
+`pendingPlaneFace` sits beside `pendingAxisPick` and rides the machinery that
+was already there: `showPickCard`, `armedPick`, `cancelPicks`, the Escape and
+right-click cancels, the `canvas` pointerup dispatcher, and `rescuePlanarFace`
+with its 12 px forgiveness for faces that are a few pixels across.
+`consumePlaneFacePick` takes `faceAtPointer`, falls back to the rescue when the
+ray landed on something curved, and stores `faceSig(geom, seed)` — the canonical
+lowest-triangle seed, so sliding across a face never reads as a different one.
+The frame is built by `frameFromNormal` from the face's **fitted centre**, not
+the click point, using the same u/v recipe `makeFaceSketch` uses — so a plane on
+a face and a sketch on that face line their axes up.
+
+### Things that changed beyond "add an offset"
+
+Two of these are bugs that were already there and only became visible because
+an offset plane is a thing you actually look at and select.
+
+* **`planeFrame` now prefers the panel's draft.** The panel edits a JSON clone
+  (`draftFeat`) and only assigns it on Done, but `planeFrame` looked the plane
+  up by id in `features` — so **dragging a plane's angle never previewed**; the
+  quad sat still until you pressed Done. The lookup now stands the draft in for
+  itself, exactly as `drawRefGeometry` and the checkpoint keys already do, and
+  the suite asserts that dragging the offset moves the drawn quad and that
+  Cancel puts it back.
+* **`selectFeature` now redraws the reference geometry.** It refreshed the tree
+  and the sketch overlays but not `refOverlay`, so selecting a plane or an axis
+  highlighted the tree row and left the thing itself blue until some unrelated
+  edit rebuilt. One line, asserted (`#4285f4` before, `#fbbc05` after).
+* **`buildPartShapes` saves and restores `dplaneFaceFrames`.** It swaps
+  `features`, `resultShapes`, `sketchData` and the pending-boolean state for a
+  component part's list and puts them all back in a `finally` — the face-frame
+  map had to join them, because feature ids are per-document and a component's
+  plane would otherwise write over the open part's.
+* **Switching a plane's base to "A face" zeroes the tilt** — once, on the first
+  switch, and only when no face has been picked yet. The tool opens at 30°, and
+  a plane 30° off the face you just clicked is a strange default; "parallel to
+  this face, this far off" is what people mean. The tilt control is right there
+  and still composes on a face base (asserted).
+* **A plane may be based on a plane that sits below it in the tree.** The
+  resolver reaches forward, and if that plane is face-referenced and has not run
+  yet this rebuild, `dplaneBaseFrame` resolves it on demand rather than
+  reporting a perfectly present face as missing. Asserted.
+* `addSketchOnDPlane` no longer throws out of a menu handler when the plane is
+  errored — it sets a hint saying why.
+
+### Costs
+
+One extra tessellation per face-referenced plane per full rebuild, plus the
+boolean batch flushed at that point in the run. Zero for every other document:
+`resolveFaceBase` is only reached from `baseKind==='face'`. `dplaneFaceFrames`
+holds one `{o,u,v,n}` per such plane.
+
+### Suite
+
+`$SP/newdemos/offsetplane.js` — 17/17, and in `runbattery.sh`. Offset N from
+each of the three datums, positive, negative and flipped, asserted against the
+base normal times the number; a legacy tilt-only record resolving identically to
+the pre-offset build (reference quad, sketch frame and extruded volume, all
+three compared exactly);
+tilt-then-offset against hand-computed coordinates; a three-deep chain by id and
+by name plus a 90° bend in the middle; one-, two- and three-plane loops each
+erroring with the tab still building afterwards; a face picked through the real
+armed pick (panel → "A face" → Pick a face → click the canvas) landing exactly
+5 mm along that face's normal; a tilt composing on top of a face base; the face
+reference following the face when the block grows and letting go when it is
+suppressed; the reference quad's fill AND border both drawn at the offset and
+turning amber on select; a sketch on a plane 12 mm up extruding to 288 mm³
+between y=12 and y=15 and coming back identical through `docFile`/`loadDocData`
+with `offset:12` in the file; the panel carrying all six controls; live preview
+and Cancel; the base list refusing to offer a plane that already leans on this
+one; `planeOf` handing the axis feature an origin that is no longer (0,0,0);
+a plane leaning on a face-plane below it in the tree; zero page errors.
+
+Screenshots in `$SP/lamp/`: `plane-offset.png` (Top, a pad on it, a plane 11 mm
+clear of Top and a second built on THAT one, tilted 30° and pushed 6 further),
+`plane-offset-face.png` (a plane 8 mm off the pad's top face with the panel
+showing where the face reference came from), `plane-offset-panel.png` (every
+control), `plane-offset-sketch.png` (a circle drawn on a plane 11 mm up,
+extruded into a post).
+
+### Judgement calls and rough edges
+
+- **The along-normal relaxation is a deviation from the surface-colour
+  precedent** and the one real design call here. It is what makes the feature
+  parametric instead of merely re-findable. The strict `sigMatch` behaviour is
+  still one line away if it ever proves wrong.
+- **A face reference cannot survive a sideways move.** Move the boss 3 mm in X
+  and the plane on its top face lets go. Following that too would mean giving up
+  the only thing anchoring the face's identity, so it is refused honestly rather
+  than guessed at.
+- **`Add plane` still opens at 30°**, which now reads oddly next to an offset
+  field sitting at 0. Left alone on purpose: changing it changes what the tool
+  does for everyone who already knows it. Worth asking the owner.
+- **A datum plane still cannot be clicked in the viewport to sketch on it** —
+  only the three origin planes are pickable that way; an added plane is
+  right-click → Sketch on this plane in the tree. Unchanged, and out of scope,
+  but an offset plane you can see floating is a much more obvious thing to want
+  to click than an angled one through the origin was.
+- **`planeLabelOf` is dead code.** It is defined at ~2622 and called from
+  nowhere — `grep` finds exactly one hit, its own definition. Its fallback
+  string `'offset plane'` is half of what put the word "offset" in this part of
+  the file in the first place, and it describes the case where the plane feature
+  was *deleted*, which was never what those words meant. Left exactly as it is:
+  rewording a string nobody reads is churn, and deleting a function somebody may
+  be about to wire up is the owner's call, not mine. Worth a decision either
+  way.
+- **One bug I wrote and then found.** The panel's "which planes may I be based
+  on" filter memoised its walk in a set shared across the whole filter pass, so
+  a plane it had *passed through* on the way to finding the edited plane was
+  then answered "no, it does not lean on you" when asked about directly — and
+  would have been offered as a base. One visited set per walk, and a suite check
+  that the list is exactly `Top, Front, Right, Free` for a three-deep chain.
+- **`FEATURE-MATRIX.html`'s tally wart is fixed, in the script.** The known
+  "(of 75) with 76 rows" turned out to be worse than a stale label: the SolidWorks
+  and FreeCAD cards were each a whole row light (72/1/**2** and 72/3/**0**
+  against a table that says 72/1/3 and 72/3/1), because `matrix_done.py` only
+  ever recomputed the freyacad card. It now recomputes all three cards and the
+  row count from the table, on the same principle the tallies were taken out of
+  hand-editing for. The freyacad numbers are unchanged (42/4/30).

@@ -107,6 +107,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line-soft);
   <a href="#features">Features</a>
   <a href="#tree">The feature tree</a>
   <a href="#datum">Datum geometry</a>
+  <a href="#offsetplane">Planes you add</a>
   <a href="#undo">Undo</a>
   <div class="grp">Files</div>
   <a href="#save">Saving &amp; opening</a>
@@ -1025,10 +1026,9 @@ they are always there and never part of the recipe.</p>
 <p>They're hidden until wanted; right-click one and toggle its visibility. You can also add
 your own:</p>
 <ul>
-  <li><b>Add plane</b> — a new sketching plane set <b>at an angle</b> to one of the three.
-      Pick the plane to start from, which of its two in-plane axes to tilt about, and the
-      angle. The result still passes through that axis, so it's an angled plane rather than
-      a floating one. This is how you sketch somewhere that isn't a face of the model.</li>
+  <li><b>Add plane</b> — a new sketching plane, <b>at an angle</b> to something, a <b>set
+      distance</b> from it, or both. This is how you sketch somewhere that isn't already a
+      face of the model. Its panel is the subject of the next section.</li>
   <li><b>Add axis</b> — a reference line, useful as the spin axis for a revolve or a
       circular pattern. Its panel asks how the axis is defined: <b>two planes</b> (the line
       where they meet), <b>normal to a plane</b> through a point, a plain
@@ -1038,6 +1038,46 @@ your own:</p>
       corner</b>. The axis lands at its centre,
       pointing along it. Parallel planes are refused — they never meet.</li>
 </ul>
+
+<h3 id="offsetplane">Planes you add</h3>
+<p>The <b>Add plane</b> panel reads top to bottom the way the plane is built: <b>start
+from</b> something, <b>tilt</b> it, then <b>offset</b> it. Any of the three can be left
+alone — a plane with no tilt and no offset is simply a copy of what it started from.</p>
+<ul>
+  <li><b>Start from &middot; A plane</b> — one of Top, Front or Right, or <b>another plane
+      you have added</b>. Planes chain: put one 10&nbsp;mm above Top, another 4&nbsp;mm
+      above that, and the second sits at 14. Change the first and the second follows.</li>
+  <li><b>Start from &middot; A face</b> — press <b>Pick a face</b> and click a flat face of
+      the model. The plane starts on that face, lying flat against it, and the offset
+      floats it clear. Switching to a face drops the 30&deg; the tool opens with, since
+      "parallel to this face, this far off" is nearly always what is wanted; the tilt is
+      still there if it isn't.</li>
+  <li><b>Tilt about</b> its U or its V axis, by an <b>angle</b>. The axis is one of the
+      base's own in-plane directions, so a tilted plane still passes through the base's
+      origin — an angled plane, not a floating one, exactly as before.</li>
+  <li><b>Offset along its own normal</b>, with <b>Reverse the offset direction</b> for the
+      other side. The plane is tilted <em>first</em> and moved <em>second</em>, so the
+      distance you type is measured square to the plane you end up with, not to the base.
+      Tilt 30&deg; and offset 5 and the plane is 5&nbsp;mm from the tilted one, not
+      5&nbsp;mm up.</li>
+</ul>
+<p>Right-click the plane in the tree to <b>sketch on it</b>, and everything downstream —
+extrudes, cuts, revolves — works from there as it would from any other plane.</p>
+<h4>When the face underneath changes</h4>
+<p>Faces have no permanent name inside the kernel, so a plane started from a face
+remembers its <em>shape</em> — what kind of surface it is, its size, which way it faces
+and where it sits — and finds it again after every rebuild. That is what lets the plane
+<b>follow</b> its face: make the block taller and a plane 4&nbsp;mm above its top face is
+still 4&nbsp;mm above the top. The face is allowed to slide along its own normal, which
+is what a parameter change does to it; it is not allowed to change size, turn to face
+somewhere else, or move sideways.</p>
+<p>When it does one of those, or is cut away entirely, the plane <b>says so</b>: the
+feature is marked with a red <b>!</b> in the tree and the reason reads "its reference face
+is no longer on the model". It never quietly moves somewhere else and takes your sketches
+with it. Pick the face again and it carries on.</p>
+<p>A plane whose base plane was deleted, or whose bases run in a circle, is marked the
+same way. Circular bases are refused rather than followed — the panel won't offer you a
+base that already leans on the plane you are editing.</p>
 
 <h2 id="undo">Undo</h2>
 <p><kbd>Ctrl</kbd>+<kbd>Z</kbd> steps back, <kbd>Ctrl</kbd>+<kbd>Y</kbd> forward, up to

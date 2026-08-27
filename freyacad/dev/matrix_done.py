@@ -36,19 +36,30 @@ s = s[:i] + row + s[j:]
 # recompute from the table
 body = s[s.index("<tbody>"):]
 rows = re.findall(r'<tr>\s*<td class="col-feat">.*?</tr>', body, re.S)
-assert len(rows) == 76, len(rows)
-fy = [re.findall(r'class="mk (\w+)"', r)[-1] for r in rows]
+marks = [re.findall(r'class="mk (\w+)"', r) for r in rows]
+assert all(len(m) == 3 for m in marks), "every row carries three marks"
+fy = [m[-1] for m in marks]
 tot = sum(int(x) for x in re.findall(r'class="num">(\d+)k<', s))
 gaps = len(re.findall(r'class="num">\d+k<', s))
 y, p, n = fy.count("yes"), fy.count("partial"), fy.count("no")
 
-s = re.sub(r'(tcard fy.*?nums">)<b>\d+</b>(\s*✅\s*&nbsp;·&nbsp;\s*)<b>\d+</b>'
-           r'(\s*◐\s*&nbsp;·&nbsp;\s*)<b>\d+</b>',
-           lambda m: '%s<b>%d</b>%s<b>%d</b>%s<b>%d</b>' % (m.group(1), y, m.group(2), p, m.group(3), n),
-           s, flags=re.S)
+# ALL THREE cards are recomputed, not just freyacad's, and so is the "(of N)"
+# beside them. They used to drift: a 76th row was added, only the freyacad card
+# was recomputed, and the other two stayed a row light behind a label still
+# reading "(of 75)". Counting them here is the same reason the tallies were
+# taken out of hand-editing in the first place.
+for cls, col in (("sw", 0), ("fc", 1), ("fy", 2)):
+    cm = [m[col] for m in marks]
+    cy, cp, cn = cm.count("yes"), cm.count("partial"), cm.count("no")
+    s = re.sub(r'(tcard %s.*?nums">)<b>\d+</b>(\s*✅\s*&nbsp;·&nbsp;\s*)<b>\d+</b>'
+               r'(\s*◐\s*&nbsp;·&nbsp;\s*)<b>\d+</b>(\s*❌\s*&nbsp;\(of )\d+(\))' % cls,
+               lambda m: '%s<b>%d</b>%s<b>%d</b>%s<b>%d</b>%s%d%s'
+                         % (m.group(1), cy, m.group(2), cp, m.group(3), cn,
+                            m.group(4), len(rows), m.group(5)),
+               s, count=1, flags=re.S)
 s = re.sub(r'<b>~[\d.]+M</b> output tokens &nbsp;·&nbsp; \d+ items',
            '<b>~%.2fM</b> output tokens &nbsp;·&nbsp; %d items' % (tot / 1000.0, gaps), s)
 
 io.open(F, "w", encoding="utf-8", newline="").write(s)
-print("%s -> done | freyacad %dY %d~ %d. | remaining %dk over %d rows"
-      % (name, y, p, n, tot, gaps))
+print("%s -> done | freyacad %dY %d~ %d. of %d | remaining %dk over %d rows"
+      % (name, y, p, n, len(rows), tot, gaps))
