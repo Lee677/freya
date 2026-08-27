@@ -59,7 +59,8 @@ first move — every later stage benefits from the seam it cuts.
 
 ### 2. Cross-origin isolation + a threaded, SIMD kernel
 
-A `_headers` file in the deploy turns on isolation:
+The deploy already ships a `_headers` file (cache policy for three.js, manifold
+and the icons). Isolation is four more lines in it:
 
 ```
 /*
@@ -104,6 +105,14 @@ the kernel is same-origin, since a service worker cannot cache a cross-origin
 opaque response usefully. So: **true offline ships as part of stage 2**, not as
 a stage of its own. Proof is a suite that loads the app, goes offline, reloads,
 and still builds the lamp.
+
+For the record, freyacad has exactly **one** server-side dependency, and it is
+not on the modelling path: `functions/api/shelf.js`, a Pages Function that
+parks a just-exported 3MF at an unguessable URL for ten minutes, because a
+slicer can only *fetch* a hosted file and never receive one from a page. It
+already degrades honestly — with no KV binding every request 503s and the app
+falls back to download-then-launch. Sketching, modelling, the library, drawings
+and Print/Export all run locally with the network off.
 
 ### 3. Modern viewport: three.js r184, WebGPU with WebGL 2 fallback
 
