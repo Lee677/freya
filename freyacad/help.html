@@ -314,6 +314,15 @@ thumb.</p>
 <b>Soft</b> and <b>Moody</b>. They're conveniences, not modes: click one to get near what you
 want, then move any slider from there and nothing snaps back. <b>Reset</b> returns the
 shipped defaults and forgets the setting.</p>
+<p>Below the presets, <b>Detail</b> sets how finely curved faces are meshed, from ×1 to ×3.
+Curves in the viewport are drawn as many small flat steps, and at the default ×1 freyacad
+keeps them just fine enough to be quick — on a big smooth surface you can see the facets.
+Push Detail up and they melt away; the trade is that every rebuild takes longer, which is
+why this slider applies when you let go of it rather than following the thumb. The CAD
+geometry itself stays exact either way — dimensions and volumes don't move — and the same
+finer mesh feeds <b>Print/Export</b>, so a higher Detail also means smoother curved walls
+on the printed part. It can only refine: there's deliberately no coarser-than-default
+setting, so a print can never quietly come out rougher than the shipped look.</p>
 <p>Lighting is remembered in <em>this browser, on this computer</em> — not in the part file,
 so a model you send someone opens under their lighting, not yours. Clearing the browser's
 site data forgets it, and so does Reset.</p>
