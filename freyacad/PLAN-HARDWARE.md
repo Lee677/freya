@@ -6,8 +6,10 @@ as of mid-2026 every major browser ships WebGPU (Safari joined with Safari 26
 in September 2025), WebAssembly threads + SIMD are universal behind one pair of
 HTTP headers, and Wasm Memory64 has landed in Chrome and Firefox. This is the
 plan for what freyacad should actually take, in what order, and what each step
-costs. It was written after the loft / rendered-view / lighting work shipped;
-nothing here is started yet.
+costs. It was written after the loft / rendered-view / lighting work shipped.
+One piece of it — true offline — has since shipped ahead of schedule, for a
+reason worth reading in stage 2: the argument for deferring it was simply
+wrong. Everything else here is still unstarted.
 
 ## Where the ceilings are today
 
@@ -84,27 +86,26 @@ booleans gain less (OCCT parallelises them unevenly). Measure with the verify
 timings, keep the single-threaded CDN build as the automatic fallback for any
 browser that fails isolation.
 
-#### Offline, while we are in there
+#### Offline — done, ahead of this stage
 
-Worth stating plainly because the names collide: a **Web Worker** (stage 1)
-is a browser thread on the user's own machine and has nothing to do with a
+Worth stating plainly because the names collide: a **Web Worker** (stage 1) is a
+browser thread on the user's own machine and has nothing to do with a
 **Cloudflare Worker**, which is server-side edge compute. Stage 1 moves code
 between threads inside one tab; it cannot affect offline behaviour either way.
 
-What *does* affect it: freyacad is not genuinely offline-capable today. The
-kernel comes from jsDelivr on every load — the browser's HTTP cache usually
-serves it after a first visit, but that is a convenience, not a guarantee —
-and while there is a manifest (so the app installs and owns the .part /
-.drawing file icons), there is **no service worker**, so nothing caches the
-app shell. An offline load fails at the page, never mind the kernel.
+This section used to say offline had to wait until the kernel was same-origin,
+because "a service worker cannot cache a cross-origin opaque response usefully".
+That reasoning was wrong in a specific and checkable way: the kernel's responses
+are **not opaque**. jsDelivr sends `Access-Control-Allow-Origin` — it must, or
+the cross-origin `import()` in the loader could not work at all — so the worker
+receives a real, inspectable, cacheable response. Offline therefore did not need
+self-hosting, and **has shipped**: `freyacad/sw.js`, with `offline.js` proving a
+reload with the network genuinely gone still builds the lamp to the same
+triangle count as online. See HANDOVER.md for the shape of it.
 
-Stage 2 removes the third-party half of that by putting the kernel on our own
-origin. The other half is a service worker precaching index.html, three.min.js,
-the icons and that kernel — perhaps 60 lines, and it only makes sense *after*
-the kernel is same-origin, since a service worker cannot cache a cross-origin
-opaque response usefully. So: **true offline ships as part of stage 2**, not as
-a stage of its own. Proof is a suite that loads the app, goes offline, reloads,
-and still builds the lamp.
+What stage 2 still adds here is *independence*, not capability: while the kernel
+sits on jsDelivr, offline is contingent on a third party continuing to send CORS
+headers. Moving it to our own origin makes that guarantee ours.
 
 For the record, freyacad has exactly **one** server-side dependency, and it is
 not on the modelling path: `functions/api/shelf.js`, a Pages Function that
@@ -154,7 +155,7 @@ and IndexedDB kept as the fallback. Small, self-contained, nice-to-have.
 | Stage | Effort | Risk | What proves it |
 |---|---|---|---|
 | 1. Kernel in a worker | Large | UI/kernel seam refactor | Battery + new responsiveness probe |
-| 2. Isolation + threads/SIMD + offline | Medium | Header side-effects, self-hosting | Verify timings ÷ cores; fallback probe; offline reload builds the lamp |
+| 2. Isolation + threads/SIMD | Medium | Header side-effects, self-hosting | Verify timings ÷ cores; fallback probe |
 | 3. three r184 / WebGPU | Large | Every visual pin re-derived | Screenshot suites, re-pinned once |
 | 4. Memory64 | Small–medium | Perf tax, Safari gap | A model that needs it |
 | 5. OPFS library | Small | Migration | library.js suite |

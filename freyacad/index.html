@@ -93,6 +93,37 @@ if(!window.__MOBILE_GATE){
 }
 </script>
 
+<script>
+/* Offline (sw.js). Registered on load, deliberately not before: the kernel
+ * download is the thing that matters on a first visit and nothing should
+ * compete with it. Skipped behind the mobile gate, which never runs the app.
+ *
+ * ?nosw is the escape hatch — it unregisters the worker and drops its caches.
+ * A broken service worker is the one kind of bug that can outlive the deploy
+ * that fixes it, so there is always a way back out. */
+if('serviceWorker' in navigator && !window.__MOBILE_GATE){
+  if(/[?&]nosw\b/.test(location.search)){
+    navigator.serviceWorker.getRegistrations().then(function(rs){
+      rs.forEach(function(r){
+        if(r.active)r.active.postMessage('freyacad-drop-caches');
+        r.unregister();
+      });
+    }).catch(function(){});
+  } else {
+    addEventListener('load',function(){
+      navigator.serviceWorker.register('./sw.js').catch(function(){});
+    });
+    /* The worker answers with whether it managed to hold the kernel, which is
+       what decides if this browser can open freyacad offline. */
+    navigator.serviceWorker.addEventListener('message',function(ev){
+      var d=ev.data;
+      if(d&&d.type==='freyacad-kernel-cached')
+        window.__OFFLINE_READY={stored:d.stored,error:d.error};
+    });
+  }
+}
+</script>
+
 <script src="./three.min.js"></script>
 <script>window.THREE||document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js">\x3C/script>')</script>
 <script>window.THREE||document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js">\x3C/script>')</script>
@@ -115,12 +146,13 @@ if(!window.THREE){
      never disagree about the version. */
   const SOURCES = window.__OCCT_SOURCES;
   async function go(){
-    let oc=null, lastErr=null;
+    let oc=null, lastErr=null, usedBase=null;
     for(const base of SOURCES){
       try{
         const mod = await import(/* @vite-ignore */ base + 'opencascade.full.js');
         if(mod && mod.default){
           oc = await mod.default({ locateFile: (p)=> base + p });
+          usedBase = base;
           break;
         }
       }catch(e){ lastErr = e; }
@@ -129,6 +161,16 @@ if(!window.THREE){
       +(lastErr&&lastErr.message||''));
     window.OCCT = oc;
     window.dispatchEvent(new Event('kernel-ready'));
+    /* Tell the offline worker which base actually worked, so it can hold the
+       kernel even though it was not controlling this page when we fetched it
+       (see sw.js). Best effort: no worker, no offline, no complaints. */
+    try{
+      if('serviceWorker' in navigator && !window.__MOBILE_GATE)
+        navigator.serviceWorker.ready.then(function(reg){
+          if(reg && reg.active)
+            reg.active.postMessage({type:'freyacad-cache-kernel', base: usedBase});
+        }).catch(function(){});
+    }catch(_){ }
   }
   if(!window.__MOBILE_GATE) go().catch(err=>{
     window.dispatchEvent(new ErrorEvent('error', { message:

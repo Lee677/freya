@@ -1376,3 +1376,72 @@ cache hit, and browsers keep a compiled-wasm code cache keyed by URL on top of
 that. There was no speed left in caching the CDN harder — the loss was purely
 scheduling. Caching work (a service worker) buys resilience and offline
 instead, and is stage 2 of PLAN-HARDWARE.md.
+
+## Offline (sw.js)
+
+freyacad works with the network off: `freyacad/sw.js` precaches the app shell
+and holds the CDN kernel, so a reload with no connection boots the app and
+builds the same geometry. Proof is `$SP/newdemos/offline.js` — 9/9, ending on
+the lamp building to the same 14,765 triangles offline as online.
+
+Why this was possible now rather than only after self-hosting (PLAN-HARDWARE.md
+said the latter, and was wrong): a service worker genuinely cannot make useful
+offline out of an **opaque** cross-origin response, but the kernel's responses
+are not opaque. jsDelivr sends `Access-Control-Allow-Origin` — it has to, or the
+cross-origin `import()` in the loader could not work at all — so what reaches
+the worker is a real, inspectable, cacheable response. **If the kernel ever
+moves to a host that does not send CORS, offline dies with it.**
+
+Shape of it:
+
+- **Navigations are network-first**, cache as fallback. index.html *is* the
+  app, so this is what keeps a deploy from being shadowed by a stale cache.
+  Same-origin statics are stale-while-revalidate; the kernel is cache-first
+  (its URL is version-pinned and immutable).
+- **The kernel is matched by FILENAME** (`opencascade.full.js` / `.wasm`), not
+  by hostname. An allowlist of CDN hosts would silently stop caching the day
+  the kernel moves — to the unpkg fallback, or to our own origin in stage 2 —
+  and offline would vanish with nothing failing to say so.
+- **The page hands the worker the base it actually used**, once the kernel is
+  up (`freyacad-cache-kernel`), and the worker answers with what it managed to
+  hold (`window.__OFFLINE_READY = {stored, error}`). Two reasons for the
+  hand-off rather than a constant in sw.js: on a first visit the worker is not
+  yet controlling the page, so it never sees the kernel fetch and offline would
+  not start working until the *third* visit; and only the page knows whether
+  the primary CDN or the fallback actually answered.
+- **Never intercepted**: non-GET (the shelf POSTs), `/api/*`, and any
+  cross-origin request that is not one of those two kernel files.
+- **No skipWaiting, no clients.claim.** This is a CAD app; swapping assets
+  under someone with unsaved work to save them one reload is a bad trade. A new
+  worker installs, waits, and takes over on the next load.
+- **`?nosw` unregisters it and drops every cache.** A broken service worker is
+  the one class of bug that can outlive the deploy that fixes it, so there is
+  always a way out. `_headers` also serves `sw.js` as `no-cache`, so a fix can
+  always reach the browsers running the broken version.
+
+Testing note that cost an hour: **a service worker's own fetches do not go
+through Playwright's request routing.** The first version of `offline.js`
+mocked the CDN with `context.route` and the worker never saw it — "Failed to
+fetch", which looked exactly like an app bug. The suite now runs a second local
+http server as a real, reachable, genuinely cross-origin CORS host (different
+port = different origin) and serves index.html with its kernel sources
+rewritten to point at it, so page and worker see identical content. Do not
+"simplify" that back into a route mock.
+
+### The worker stays out of the way until it holds the kernel
+
+`sw.js` only calls `respondWith` for a kernel file once it is **actually
+holding** that file (`kernelHave`, a synchronous Set scanned at worker
+start — `fetch` handlers must decide before anything can be awaited; `null`
+means "not scanned yet", and then we intercept, because falling back to the
+network is safe and being wrong the other way is not).
+
+This started as a test failure and turned into a real improvement. Every suite
+that reloads a page — `lighttool` first — began timing out waiting for the
+kernel, because once the worker controlled the page it re-fetched the kernel
+*from inside the worker*, and **a service worker's own fetches bypass
+Playwright's request routing**, so the harness's mocked CDN was invisible to
+it. The fix is not a test accommodation: on a first visit the worker has
+nothing to offer, and interposing there only adds another place for a 13 MB
+download to fail while buying nothing. First-visit caching still happens, via
+the explicit `freyacad-cache-kernel` message from the page.

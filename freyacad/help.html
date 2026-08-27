@@ -327,6 +327,21 @@ setting, so a print can never quietly come out rougher than the shipped look.</p
 so a model you send someone opens under their lighting, not yours. Clearing the browser's
 site data forgets it, and so does Reset.</p>
 
+<h3 id="offline">Working offline</h3>
+<p>After freyacad has loaded once on a computer, it keeps working there with no
+connection — on a plane, in a shed, on a site with no signal. The app and the CAD
+kernel are both stored by the browser on that first visit, so opening the page
+again offline gives you the same workshop and builds exactly the same geometry.</p>
+<p>Your documents were always local anyway: the library lives in your browser and
+saving writes to your own disk, so nothing about your work depends on being online.
+Two things still need a connection, and both say so when they can't get one:
+<b>Open in Bambu Studio</b>, which briefly parks the file somewhere the slicer can
+fetch it (offline, it downloads the 3MF instead so you can drop it into the slicer
+yourself), and picking up a newly deployed version of freyacad itself.</p>
+<p>If freyacad ever seems stuck on an old version, add <code>?nosw</code> to the
+address — <code>freya.co.nz/freyacad/index.html?nosw</code> — and reload. That
+clears the stored copy and fetches everything fresh.</p>
+
 <h2 id="sketch">Making a sketch</h2>
 <p>One tool, one click: pick <b>Sketch</b> (under Features, in the Add menu or the
 right-click menu), and a prompt appears in the top right — click <b>where the sketch
