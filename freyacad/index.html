@@ -141,7 +141,11 @@ if(!window.THREE){
   @keyframes tw-b{0%,100%{opacity:.8}45%{opacity:.34}}
   .sep{width:1px;height:22px;background:var(--line);flex:0 0 auto}
   .tb-spacer{flex:1}
-  .tb-gap{width:26px;flex:0 0 auto}
+  /* the gap before Save/Print is breathing room, not structure — so it is the
+     first thing to give when the bar runs out of width (at 1400px it already
+     does: the spacer is at 0 and Print/Export loses letters). It keeps its
+     full 26px whenever there is room, and never shrinks past 6. */
+  .tb-gap{width:26px;flex:0 1 auto;min-width:6px}
   .tb-group{display:flex;align-items:center;gap:7px}
   
   button{font-family:var(--sans);font-size:11.5px;color:var(--text);background:var(--panel-2);
@@ -385,6 +389,10 @@ if(!window.THREE){
     color:var(--g-yellow);text-transform:uppercase;margin-bottom:5px}
   .help-panel b{color:var(--text);font-weight:600}
   .toolbar button.active{background:rgba(66,133,244,.2);border-color:var(--g-blue)}
+  /* the Lighting panel: a lit preset button reads like a lit toolbar button,
+     and the sliders take the app's blue instead of the browser's default */
+  #lightdlg button.active{background:rgba(66,133,244,.2);border-color:var(--g-blue);color:#fff}
+  #lightdlg input[type=range]{accent-color:var(--g-blue)}
   .demo-btn{position:absolute;bottom:58px;left:50%;transform:translateX(-50%);z-index:8;
     background:rgba(13,17,23,.85);backdrop-filter:blur(6px);border:1px solid var(--g-blue);border-radius:999px;
     padding:8px 16px;font-size:12px;box-shadow:0 0 15px rgba(66,133,244,.2)}
@@ -694,6 +702,11 @@ if(!window.THREE){
       <button id="btn-fitall" class="btn-ghost" title="Fit everything in view (F)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg><span class="lbl">Fit</span></button>
       <button id="btn-proj" class="btn-ghost" title="Perspective — converging, depth-cued (Ctrl+5)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.2 3.2h11.6L11.6 12.8H4.4z"/><path d="M4.4 12.8 2.2 3.2M11.6 12.8 13.8 3.2"/></svg><span class="lbl">Persp</span></button>
       <button id="btn-render" class="btn-ghost" title="Rendered view — part, body and surface colours with a satin finish and no edge lines"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M4.6 5.6a4.4 4.4 0 0 1 3-1.8" stroke-linecap="round"/><path d="M11.9 10.6a10 10 0 0 1-7.8 0" opacity=".55"/></svg><span class="lbl">Render</span></button>
+      <!-- Lighting is icon-only, and measured rather than guessed: at 1400px
+           the bar is already 41px wider than the window (the spacer is at 0
+           and Print/Export is clipped), so a labelled button here would cost
+           another ~78px. The glyph is 33. -->
+      <button id="btn-light" class="btn-ghost" title="Lighting — brightness, environment and the workshop light"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="2.6"/><path d="M8 1.3v1.8M8 12.9v1.8M1.3 8h1.8M12.9 8h1.8M3.3 3.3l1.3 1.3M11.4 11.4l1.3 1.3M12.7 3.3l-1.3 1.3M4.6 11.4l-1.3 1.3"/></svg></button>
       <button id="btn-del" class="btn-ghost" title="Delete the selection">✕</button>
       <button id="btn-undo" class="btn-ghost" title="Undo (Ctrl+Z)" disabled>↶</button>
       <button id="btn-redo" class="btn-ghost" title="Redo (Ctrl+Y)" disabled>↷</button>
@@ -1271,6 +1284,42 @@ const CSG = (function(){
   function appearanceEmpty(){ return !appearance.part
     && !Object.keys(appearance.bodies).length && !appearance.faces.length; }
   function bodyColorOf(i){ return appearance.bodies[i]||appearance.part||null; }
+  /* ---- lighting: the three numbers the user is given ---------------------
+     Brightness is the rendered view's exposure, Environment is how much of
+     the studio panorama the metal picks up, and Workshop light is the
+     hemisphere lamp — the only real light in the scene, which is why that one
+     changes the matte view as well as filling the shadows in the rendered
+     one. Display-only: none of it reaches geometry, the rebuild signature or
+     a saved file. One localStorage key holds all three.
+
+     The defaults ARE the shipped look, so a session that never opens the tool
+     renders exactly as if the tool did not exist — except for brightness,
+     which was deliberately raised. Measured on the demo lamp (gold pixels,
+     four orbit poses, scratchpad/newdemos/lightprobe.js): exposure 1.15 put
+     the gold's median at 113 and 1.45 puts it at 126, while the filmic curve
+     holds p99 at 240 and the clipped share at 0.0001 either way. 1.45 is
+     therefore a free ~12% lift, and the render ships brighter than it did.
+     Past about 1.7 the lid's gradient starts flattening to pale yellow —
+     that is taste, not clipping, and it is why the top of the range is left
+     to the slider rather than made the default. */
+  const LIGHT_KEY='fcad-lighting';
+  const LIGHT_DEF={brightness:1.45, env:1.00, workshop:0.40};
+  const LIGHT_LIM={brightness:[0.2,3], env:[0,2], workshop:[0.1,1.2]};
+  /* Conveniences, not modes: a preset writes all three and then gets out of
+     the way — move a slider afterwards and nothing snaps back. Studio is the
+     default state, so clicking it is the same as Reset without clearing the
+     stored key. */
+  const LIGHT_PRESETS=[
+    {name:'Studio', v:{brightness:1.45, env:1.00, workshop:0.40}},
+    {name:'Bright', v:{brightness:2.00, env:1.40, workshop:0.80}},
+    {name:'Soft',   v:{brightness:1.20, env:0.65, workshop:0.75}},
+    {name:'Moody',  v:{brightness:0.85, env:1.20, workshop:0.15}}
+  ];
+  const lighting=Object.assign({},LIGHT_DEF);
+  function lightClamp(k,v){
+    const r=LIGHT_LIM[k], n=+v;
+    return isFinite(n)?Math.max(r[0],Math.min(r[1],n)):LIGHT_DEF[k];
+  }
   /* Rendered view: same scene, product-photo materials — polished metal under
      the studio above, and no edge lines. The workshop look is the matte
      default and stays exactly that: envMapIntensity 0 keeps the studio out of
@@ -1287,7 +1336,7 @@ const CSG = (function(){
       const c=m.color, enamel=(0.299*c.r+0.587*c.g+0.114*c.b)<ENAMEL_LUMA;
       m.roughness=enamel?0.44:0.18;
       m.metalness=enamel?0.70:0.96;
-      m.envMapIntensity=1;
+      m.envMapIntensity=lighting.env;
     } else {
       m.roughness=0.9; m.metalness=0.0; m.envMapIntensity=0;
     }
@@ -1310,23 +1359,75 @@ const CSG = (function(){
   }
   /* Exposure is the one number the studio is finally judged by, so it goes
      through a single function rather than through call sites: the lighting
-     tool is what puts it under a user slider next, and it should only ever
-     have to call setExposure. Workshop view is always exposure 1 — that is
-     the r128 default, and the matte look has to come back unchanged.
+     tool drives the slider through setExposure and never touches
+     renderer.toneMappingExposure itself. Workshop view is always exposure
+     1 — that is the r128 default, and the matte look has to come back
+     unchanged.
 
-     Worth knowing before it goes under a slider: r128's ACES curve starts
-     with `color *= toneMappingExposure / 0.6`, so 1.15 is really a gain of
-     about 1.9, not of 1.15. The panorama above was balanced against that.
-     The 0.2–3 clamp is a fence rather than a cliff — measured on the lamp the
-     gold's median runs 84 to 174 across that span and the filmic curve holds
-     the hue at both ends, so the whole range is safe to hand to a user. */
-  let renderExposure=1.15;
+     Worth knowing: r128's ACES curve starts with
+     `color *= toneMappingExposure / 0.6`, so 1.45 is really a gain of about
+     2.4, not of 1.45. The panorama was balanced against 1.15 and takes the
+     lift without complaint. The 0.2–3 clamp is a fence rather than a cliff —
+     measured on the lamp the gold's median runs 84 to 174 across that span
+     and the filmic curve holds the hue at both ends, so the whole range is
+     safe to hand to a user. */
   function setExposure(v){
-    const e=+v;
-    if(isFinite(e))renderExposure=Math.max(0.2,Math.min(3,e));
-    renderer.toneMappingExposure=renderedView?renderExposure:1;
-    return renderExposure;
+    lighting.brightness=lightClamp('brightness',v);
+    renderer.toneMappingExposure=renderedView?lighting.brightness:1;
+    return lighting.brightness;
   }
+  /* Every material the two looks are applied to, in one place, so a live
+     slider reaches exactly what setRenderedView reaches and the two cannot
+     drift apart. */
+  function eachBodyMaterial(fn){
+    fn(solidMat);
+    matCache.forEach(fn); faceMatCache.forEach(fn);
+    resultMeshes.forEach(m=>fn(m.material));
+    asmMeshes.flat().forEach(m=>fn(m.material));
+  }
+  /* Push the whole of `lighting` at the scene. Deliberately cheap: exposure,
+     envMapIntensity and a light's intensity are all plain uniforms in r128,
+     refreshed from the material every frame, so dragging a slider costs a
+     redraw and nothing else — no shader rebuild, and above all no PMREM
+     pass. (Changing the tone mapping TYPE is the expensive one; that is
+     setRenderedView's business, not this function's.) */
+  function applyLighting(){
+    hemiLight.intensity=lighting.workshop;
+    setExposure(lighting.brightness);
+    if(renderedView)eachBodyMaterial(m=>{ m.envMapIntensity=lighting.env; });
+  }
+  function saveLighting(){
+    try{ localStorage.setItem(LIGHT_KEY,JSON.stringify(lighting)); }catch(_){ }
+  }
+  /* The one way in — a partial {brightness,env,workshop}. `quiet` skips the
+     write, which is what the restore on boot wants: a session that never
+     touches the tool must leave no key behind, so that "no stored key" stays
+     a meaningful state. */
+  function setLighting(p,quiet){
+    if(p)for(const k in LIGHT_DEF)if(p[k]!=null)lighting[k]=lightClamp(k,p[k]);
+    applyLighting(); syncLightDlg();
+    if(!quiet)saveLighting();
+    return Object.assign({},lighting);
+  }
+  function resetLighting(){
+    Object.assign(lighting,LIGHT_DEF);
+    applyLighting(); syncLightDlg();
+    try{ localStorage.removeItem(LIGHT_KEY); }catch(_){ }
+    setHint('Lighting back to the Studio default');
+  }
+  /* Restored before the first frame: the hemisphere light and the exposure
+     are set here, and the environment intensity rides in on applyRenderLook
+     the moment the rendered view is entered. A stored value out of range, or
+     a key someone hand-edited into nonsense, clamps back to the default
+     rather than throwing. */
+  function loadLighting(){
+    let s=null;
+    try{ s=JSON.parse(localStorage.getItem(LIGHT_KEY)); }catch(_){ }
+    if(s&&typeof s==='object')
+      for(const k in LIGHT_DEF)if(s[k]!=null)lighting[k]=lightClamp(k,s[k]);
+    applyLighting();
+  }
+  loadLighting();
   function setRenderedView(on,quiet){
     renderedView=!!on;
     if(renderedView&&!scene.environment)scene.environment=studioEnvMap();
@@ -1341,14 +1442,14 @@ const CSG = (function(){
       scene.traverse(o=>{ const mm=o.material; if(!mm)return;
         if(Array.isArray(mm))mm.forEach(x=>{x.needsUpdate=true;}); else mm.needsUpdate=true; });
     }
-    setExposure(renderExposure);
-    applyRenderLook(solidMat);
-    matCache.forEach(applyRenderLook); faceMatCache.forEach(applyRenderLook);
+    setExposure(lighting.brightness);
+    eachBodyMaterial(applyRenderLook);
     const edgeVis=c=>{ if(c.isLineSegments&&!(c.userData&&c.userData.faceCol))c.visible=!renderedView; };
-    resultMeshes.forEach(m=>{ applyRenderLook(m.material); m.children.forEach(edgeVis); });
-    asmMeshes.flat().forEach(m=>{ applyRenderLook(m.material); m.children.forEach(edgeVis); });
+    resultMeshes.forEach(m=>m.children.forEach(edgeVis));
+    asmMeshes.flat().forEach(m=>m.children.forEach(edgeVis));
     const b=document.getElementById('btn-render'); if(b)b.classList.toggle('active',renderedView);
     try{ localStorage.setItem('fcad-render',renderedView?'1':'0'); }catch(_){ }
+    syncLightDlg();          // the panel's "turn the rendered view on" note
     if(!quiet)setHint(renderedView?'Rendered view — colours and materials, no edge lines'
                                   :'Workshop view — matte with edges');
   }
@@ -8262,6 +8363,7 @@ const CSG = (function(){
   const _B='#a9c2e8',_Y='#FBBC05',_G='#34A853',_R='#f28b82',_U='#4285F4';
   const ICONS={
     render:_sw(`<circle cx="12" cy="12" r="8.4" stroke="${_B}"/><path d="M7.2 8.6a5.6 5.6 0 0 1 3.6-2.3" stroke="${_Y}" stroke-linecap="round"/><path d="M17.6 14.8a13 13 0 0 1-11.2 0" stroke="${_B}" opacity=".5"/>`),
+    light:_sw(`<circle cx="12" cy="12" r="3.9" stroke="${_Y}"/><path d="M12 2.2v2.6M12 19.2v2.6M2.2 12h2.6M19.2 12h2.6M5.1 5.1l1.9 1.9M17 17l1.9 1.9M18.9 5.1 17 7M7 17l-1.9 1.9" stroke="${_B}"/>`),
     paint:_sw(`<path d="M12 3.6c-2.6 3.4-5.4 6.6-5.4 9.6a5.4 5.4 0 0 0 10.8 0c0-3-2.8-6.2-5.4-9.6z" stroke="${_B}"/><path d="M9.6 13.8a2.6 2.6 0 0 0 2 2.5" stroke="${_Y}" stroke-linecap="round"/>`),
     line:_sw(`<path d="M5 19 19 5" stroke="${_B}"/><circle cx="5" cy="19" r="1.8" fill="${_Y}"/><circle cx="19" cy="5" r="1.8" fill="${_Y}"/>`),
     move:_sw(`<path d="M12 3v18M3 12h18" stroke="${_B}"/><path d="M9.8 5.2 12 3l2.2 2.2M9.8 18.8 12 21l2.2-2.2M5.2 9.8 3 12l2.2 2.2M18.8 9.8 21 12l-2.2 2.2" stroke="${_Y}"/>`),
@@ -10147,6 +10249,93 @@ const CSG = (function(){
     document.body.appendChild(ov);
   }
 
+  /* ---- the Lighting tool -------------------------------------------------
+     Non-modal, and that is the whole design: you are judging the model while
+     you drag, so there is no dimming scrim over the viewport and no overlay
+     swallowing the orbit. The panel parks under the toolbar on the right,
+     out of the way of the part, and the model stays live behind it —
+     rotate, then keep dragging.
+
+     The panel owns no state. Every control writes through setLighting and
+     every control reads back through syncLightDlg, so the sliders, the
+     numbers, the lit preset and the stored key can never disagree. */
+  const LIGHT_ROWS=[
+    {k:'brightness',   label:'Brightness',     note:'exposure — how bright the rendered view is overall'},
+    {k:'env',          label:'Environment',    note:'how much of the studio the metal picks up'},
+    {k:'workshop',     label:'Workshop light', note:'the lamp the matte view is lit by'}
+  ];
+  function openLighting(){
+    closeLighting();
+    const ov=document.createElement('div'); ov.id='lightdlg';
+    ov.style.cssText='position:fixed;top:50px;right:14px;z-index:100000;width:min(310px,92vw);'
+      +'background:var(--panel);border:1px solid var(--g-blue);border-radius:12px;'
+      +'padding:13px 15px 11px;box-shadow:0 24px 60px -12px rgba(0,0,0,.9)';
+    const row=r=>`<div style="margin-top:11px">
+        <div style="display:flex;align-items:baseline;gap:8px">
+          <label for="lt-${r.k}" style="font-size:12px;flex:1">${r.label}</label>
+          <span id="lt-v-${r.k}" style="font-family:var(--mono);font-size:11px;color:var(--g-blue)"></span>
+        </div>
+        <input id="lt-${r.k}" data-lt="${r.k}" type="range" min="${LIGHT_LIM[r.k][0]}"
+          max="${LIGHT_LIM[r.k][1]}" step="0.05" style="width:100%;margin:2px 0 1px;vertical-align:middle">
+        <div style="font-size:10.5px;color:var(--muted-2);line-height:1.35">${r.note}</div>
+      </div>`;
+    ov.innerHTML=`<div style="display:flex;align-items:baseline;gap:8px">
+        <h3 style="margin:0;font-size:14px;flex:1">Lighting</h3>
+        <button id="lt-close" class="btn-ghost" title="Close (Esc)" style="padding:2px 7px">&#10005;</button>
+      </div>
+      <p style="margin:3px 0 0;font-size:11px;color:var(--muted);line-height:1.4">Brightness and Environment shape the <b>rendered</b> view; the workshop light lifts the matte one. Remembered in this browser.</p>
+      <div id="lt-off" style="display:none;margin-top:9px"><button id="lt-render-on" class="btn-primary" style="font-size:11px;width:100%;justify-content:center">Turn the rendered view on to see these</button></div>
+      ${LIGHT_ROWS.map(row).join('')}
+      <div style="margin-top:13px;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-2)">Presets</div>
+      <div id="lt-presets" style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)">
+        <button id="lt-reset" class="btn-ghost" style="font-size:11px" title="Back to the shipped defaults, and forget the stored setting">Reset</button>
+        <button id="lt-done" class="btn-primary" style="font-size:11px">Done</button>
+      </div>`;
+    document.body.appendChild(ov);
+    for(const p of LIGHT_PRESETS){
+      const b=document.createElement('button');
+      b.className='btn-ghost'; b.dataset.preset=p.name; b.textContent=p.name;
+      b.style.cssText='font-size:11px;padding:4px 9px';
+      b.addEventListener('click',()=>{ setLighting(p.v); setHint(p.name+' lighting'); });
+      ov.querySelector('#lt-presets').appendChild(b);
+    }
+    /* `input`, not `change`: the viewport has to follow the thumb */
+    ov.querySelectorAll('input[data-lt]').forEach(s=>{
+      s.addEventListener('input',()=>{ const p={}; p[s.dataset.lt]=s.value; setLighting(p); });
+    });
+    ov.querySelector('#lt-reset').addEventListener('click',resetLighting);
+    ov.querySelector('#lt-done').addEventListener('click',closeLighting);
+    ov.querySelector('#lt-close').addEventListener('click',closeLighting);
+    ov.querySelector('#lt-render-on').addEventListener('click',()=>setRenderedView(true));
+    ov._esc=e=>{ if(e.key==='Escape'){ e.stopPropagation(); closeLighting(); } };
+    document.addEventListener('keydown',ov._esc,true);
+    const b=document.getElementById('btn-light'); if(b)b.classList.add('active');
+    syncLightDlg();
+  }
+  function closeLighting(){
+    const ov=document.getElementById('lightdlg'); if(!ov)return;
+    if(ov._esc)document.removeEventListener('keydown',ov._esc,true);
+    ov.remove();
+    const b=document.getElementById('btn-light'); if(b)b.classList.remove('active');
+  }
+  /* A view of `lighting`, never a second copy of it. Safe to call from
+     anywhere — with no panel open it does nothing. */
+  function syncLightDlg(){
+    const ov=document.getElementById('lightdlg'); if(!ov)return;
+    for(const r of LIGHT_ROWS){
+      const s=ov.querySelector('#lt-'+r.k);
+      if(s&&+s.value!==lighting[r.k])s.value=lighting[r.k];
+      const v=ov.querySelector('#lt-v-'+r.k);
+      if(v)v.textContent=lighting[r.k].toFixed(2);
+    }
+    const off=ov.querySelector('#lt-off'); if(off)off.style.display=renderedView?'none':'';
+    ov.querySelectorAll('#lt-presets button').forEach(b=>{
+      const p=LIGHT_PRESETS.find(x=>x.name===b.dataset.preset);
+      b.classList.toggle('active',!!p&&Object.keys(p.v).every(k=>Math.abs(lighting[k]-p.v[k])<1e-6));
+    });
+  }
+
   /* Serialize the document Save would write, without downloading it.
      Documents save one at a time, the SolidWorks way. A .drawing is a sheet
      ABOUT a model: it stores the sheet and the NAME of the model file it
@@ -11146,6 +11335,7 @@ const CSG = (function(){
                  dyn:()=>orthoOn?'Perspective':'Orthographic'},
     v_render :{ic:'render',label:'Rendered view',fn:()=>setRenderedView(!renderedView),
                  dyn:()=>renderedView?'Workshop view':'Rendered view'},
+    v_light  :{ic:'light', label:'Lighting…',fn:()=>openLighting()},
     a_pcolor :{ic:'paint', label:'Part colour…',   fn:()=>pickPartColor(),need:'solid'},
     a_bcolor :{ic:'paint', label:'Body colour…',   fn:()=>startBodyColorPick(),need:'solid'},
     a_fcolor :{ic:'paint', label:'Surface colour…',fn:()=>startFaceColorPick(),need:'solid'},
@@ -11168,7 +11358,7 @@ const CSG = (function(){
     r_axis   :{ic:'daxis',  label:'Add axis', fn:()=>addFeature('daxis')}
   };
   const DEFAULT_MODEL_LAYOUT=[
-    {name:'View',     ids:['normal','iso','fit','proj','v_render']},
+    {name:'View',     ids:['normal','iso','fit','proj','v_render','v_light']},
     {name:'Features', ids:['sketch','f_extrude','f_cut','f_revolve','f_rcut','f_sweep','f_swcut','f_gfbin','f_gfplate','f_text','f_fillet','f_chamfer','t_mirror','t_lpat','t_cpat']},
     {name:'Appearance',ids:['a_pcolor','a_bcolor','a_fcolor']},
     {name:'Reference',ids:['r_plane','r_axis']}
@@ -12672,8 +12862,9 @@ const CSG = (function(){
        clutter. */
     $('tb-draw-main').style.display='none';
     // and nothing that drives a 3D view belongs above a sheet of paper
-    ['btn-normal','btn-iso','btn-fitall','btn-proj','btn-render','btn-print']
+    ['btn-normal','btn-iso','btn-fitall','btn-proj','btn-render','btn-light','btn-print']
       .forEach(id=>{ const el=$(id); if(el)el.style.display=isD?'none':''; });
+    if(isD)closeLighting();          // nor does a panel about the 3D lights
     /* The Demo control used to be a part-only toggle, so it hid itself in an
        assembly or a drawing. It is a menu of documents now — one of them an
        assembly — and hiding it left no way back out of an assembly demo. It
@@ -13994,6 +14185,8 @@ const CSG = (function(){
   $('btn-iso').addEventListener('click',viewIso);
   $('btn-fitall').addEventListener('click',fitAll);
   $('btn-render').addEventListener('click',()=>setRenderedView(!renderedView));
+  $('btn-light').addEventListener('click',()=>{
+    if(document.getElementById('lightdlg'))closeLighting(); else openLighting(); });
   try{ if(localStorage.getItem('fcad-render')==='1')setRenderedView(true,true); }catch(_){ }
   $('btn-proj').addEventListener('click',()=>setProjection(!orthoOn));
   $('btn-customise').addEventListener('click',openCustomise);
@@ -14597,6 +14790,13 @@ const CSG = (function(){
     get appearance(){ return appearance; }, set appearance(v){ appearance=normApp(v); },
     bumpAppearance, applyAppearance, setRenderedView, faceSig, sigMatch,
     get renderedView(){ return renderedView; },
+    setExposure, setLighting, resetLighting, openLighting, closeLighting,
+    get lighting(){ return Object.assign({},lighting); },
+    set lighting(v){ setLighting(v); },
+    get lightDefaults(){ return Object.assign({},LIGHT_DEF); },
+    get lightLimits(){ return JSON.parse(JSON.stringify(LIGHT_LIM)); },
+    get lightPresets(){ return LIGHT_PRESETS.map(p=>({name:p.name,v:Object.assign({},p.v)})); },
+    get hemiLight(){ return hemiLight; },
     entSpin, coupledEnt, entSeg, segAlign,
     libPut, libGet, libList, libDelete, openLibrary, saveProject,
     dimHit, dimResolve, dimApply, polyCorners, cornerAt, applyCorner,

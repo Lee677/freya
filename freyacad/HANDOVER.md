@@ -1110,3 +1110,130 @@ Shots and harness: `scratchpad/lamp/glim-1..4.png` (four orbit angles),
 by `scratchpad/newdemos/glim.js` and `pano.js`. Suites after the change: verify
 12/12, verify-live allOk, `facesel-lane.js` 14/14, `brepsel-lane.js` pins
 unchanged, no page errors.
+
+## The Lighting tool
+
+The rendered view came with a fixed exposure and a fixed environment, and the
+workshop view came with a hemisphere lamp nobody could reach. All three are now
+under a small panel — the sun beside the Render button, `Lighting…` in the
+right-click **View** section, `__C.openLighting()` from a test.
+
+**The state is one object and one key.**
+
+```js
+const LIGHT_KEY='fcad-lighting';
+const LIGHT_DEF={brightness:1.45, env:1.00, workshop:0.40};
+const LIGHT_LIM={brightness:[0.2,3], env:[0,2], workshop:[0.1,1.2]};
+const lighting=Object.assign({},LIGHT_DEF);        // the whole of it
+```
+
+`localStorage['fcad-lighting']` is that object as JSON and nothing else —
+`{"brightness":1.45,"env":1,"workshop":0.4}`. Every value clamps through
+`lightClamp` on the way in, so a hand-edited or out-of-date key cannot put the
+renderer somewhere it cannot come back from. It is display-only: not in the
+part file, not in the rebuild signature, not sent anywhere.
+
+**Everything goes through `setLighting(partial, quiet)`.** It clamps, calls
+`applyLighting()`, re-syncs the panel and writes the key. `quiet` skips the
+write, which is what `loadLighting()` on boot uses — a session that never opens
+the tool leaves **no key**, so "no stored key" stays a state that means
+something (the byte-identical test below depends on it). `resetLighting()` puts
+the defaults back and `removeItem`s the key.
+
+**`applyLighting` is deliberately three uniform writes.**
+
+```js
+hemiLight.intensity = lighting.workshop;
+setExposure(lighting.brightness);                     // the seam, unchanged
+if(renderedView) eachBodyMaterial(m=>{ m.envMapIntensity = lighting.env; });
+```
+
+In r128 all three are plain uniforms refreshed from the material every frame,
+so dragging a slider costs one redraw — no `needsUpdate`, no shader rebuild
+and above all no PMREM pass. The expensive change is the tone-mapping *type*,
+and that is still only `setRenderedView`'s business. Do not add a
+`needsUpdate` here "for safety": it turns a smooth drag into a recompile
+storm across every cached material.
+
+`setExposure` stays the only writer of `renderer.toneMappingExposure` and is
+now also the only writer of `lighting.brightness` — the old `renderExposure`
+variable is gone rather than mirrored, because a mirror of a slider drifts.
+`eachBodyMaterial(fn)` is new and is the single list of what the two looks are
+applied to (`solidMat`, both material caches, `resultMeshes`, `asmMeshes`);
+`setRenderedView` was rewritten to walk it too, so the live sliders and the
+view toggle can never reach different sets.
+
+**The hemisphere is the honest one.** It is still the scene's only real light,
+so `workshop` changes the matte view AND fills the rendered one (the enamel
+rule leaves 30% diffuse on dark colours). That is the point: a user who finds
+the workshop dim now has the slider for it. Measured on the lamp, the workshop
+frame mean runs 6.3 → 54.7 across 0.1–1.2, with 0.4 (19.8) unchanged as the
+default.
+
+**Presets** are conveniences, not modes — a preset writes all three and then
+gets out of the way, and moving a slider afterwards just unlights the button.
+
+| | brightness | env | workshop |
+|---|---|---|---|
+| **Studio** (default) | 1.45 | 1.00 | 0.40 |
+| **Bright** | 2.00 | 1.40 | 0.80 |
+| **Soft** | 1.20 | 0.65 | 0.75 |
+| **Moody** | 0.85 | 1.20 | 0.15 |
+
+**The default exposure was raised, and it was measured first.**
+`scratchpad/newdemos/lightprobe.js` walks exposure at four orbit poses and
+prints the gold's median, p99, and the share that has gone cream (r and g both
+past 235):
+
+```
+ exp   p50   p99   cream   clipped
+ 1.00  105   235   0.018   0
+ 1.15  113   237   0.049   0        <- what the studio shipped with
+ 1.45  126   240   0.053   0.0001   <- now
+ 1.85  140   240   0.043   0.0001
+ 2.20  150   240   0.055   0.0001
+```
+
+The filmic curve pins p99 at ~240 across the whole span, so nothing here is a
+clipping decision — it is taste, and the taste is that past about 1.7 the
+lid's gradient flattens to pale yellow (`scratchpad/lamp/expcmp-*.png` are the
+four candidates side by side). 1.45 is a ~12% lift on the mid-tones for free.
+The top of the range is left to the slider.
+
+**The workshop view is untouched, and that is tested rather than asserted.**
+`scratchpad/newdemos/lighttool.js` check 8 asks git for `HEAD:freyacad/index.html`
+(read-only, `git show` of a blob), serves those bytes in place of the file on a
+second port, loads the lamp in both, and compares the workshop frame: **0 of
+315,000 pixels differ, max channel delta 0**, with no stored key present. That
+check is the one to keep green — it is what lets the next person change the
+lighting defaults without wondering whether they moved somebody's baseline.
+
+**Three sliders, not four.** A warm/cool tint was considered and dropped: the
+only thing that could carry it is the panorama, and tinting that means a PMREM
+rebuild on every drag — the one cost this design is built to avoid. A
+directional key light would have been the other candidate, but at the intensity
+0 it would need to ship at (to keep the workshop view identical) it is a slider
+that does nothing until you touch it, and shadows on top. The probe shows all
+three shipped sliders move the picture monotonically and independently, which
+is the bar a fourth would have had to clear.
+
+**The top bar.** Measured before the button went in: at 1400px the bar is
+already 41px wider than the window — the spacer is collapsed to 0 and
+Print/Export loses letters. So Lighting is **icon-only** (33px, the width of
+Undo/Redo), and `.tb-gap` — the decorative 26px before Save/Print — was made
+shrinkable (`flex:0 1 auto;min-width:6px`) so it gives that space back only
+when the bar is over budget and looks unchanged when it isn't. Net cost at
+1400px is about 20px. The bar being over budget at all is older than this
+change and still wants solving.
+
+**`__C` gained** `setExposure`, `setLighting`, `resetLighting`, `openLighting`,
+`closeLighting`, `lighting` (a copy, settable), `lightDefaults`, `lightLimits`,
+`lightPresets` and `hemiLight`.
+
+Suites after the change: verify 12/12 (identical to `ver-lamp2.json` ignoring
+ms), verify-live allOk, `facesel-lane.js` 14/14, `brepsel-lane.js` pins
+unchanged (47/21/2, 48/48), `lighttool.js` 10/10, no page errors. The only
+thing that moved anywhere is the model menu's entry count — 29→30 and 28→29 in
+facesel's two menu assertions — which is `v_light` arriving. Shots:
+`scratchpad/lamp/light-default.png`, `light-bright.png`, `light-moody.png`,
+`light-workshop.png`, `light-dialog.png`.
