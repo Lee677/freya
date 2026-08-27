@@ -59,3 +59,9 @@
 # only by tools/og.py, so a week of staleness is the worst case.
 /og/*
   Cache-Control: public, max-age=604800
+
+# The service worker script must never be served stale, or a fix cannot reach
+# the browsers running the broken version. Browsers revalidate it anyway; this
+# makes it explicit.
+/freyacad/sw.js
+  Cache-Control: no-cache
