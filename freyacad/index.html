@@ -141,7 +141,17 @@ if(!window.THREE){
   @keyframes tw-b{0%,100%{opacity:.8}45%{opacity:.34}}
   .sep{width:1px;height:22px;background:var(--line);flex:0 0 auto}
   .tb-spacer{flex:1}
-  .tb-gap{width:26px;flex:0 0 auto}
+  /* the gap before Save/Print is breathing room, not structure — so it is the
+     first thing to give when the bar runs out of width (at 1400px it already
+     does: the spacer is at 0 and Print/Export loses letters). It keeps its
+     full 26px whenever there is room, and never shrinks past 6. */
+  .tb-gap{width:26px;flex:0 1 auto;min-width:6px}
+  /* The labelled bar outgrows a window below ~1500px — Print/Export was the
+     casualty, clipped at the right edge on a 1400px screen. Under that width
+     the toolbar's icon buttons drop their labels automatically: the same look
+     the Aa button chooses, applied only where the space isn't there. Buttons
+     whose text IS their face (Open, Save, Print/Export…) are untouched. */
+  @media (max-width:1500px){ .toolbar button .lbl{display:none} }
   .tb-group{display:flex;align-items:center;gap:7px}
   
   button{font-family:var(--sans);font-size:11.5px;color:var(--text);background:var(--panel-2);
@@ -356,6 +366,15 @@ if(!window.THREE){
   input[type=number]:disabled{opacity:0.5}
   .num-unit{display:flex;align-items:center;gap:7px}
   .num-unit span{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .props select{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:6px;
+    color:var(--text);font-family:var(--mono);font-size:12.5px;padding:6px 8px;outline:none;cursor:pointer}
+  .props select:focus{border-color:var(--g-blue);box-shadow:0 0 8px rgba(66,133,244,0.3)}
+  /* An ordered list of picks: the row number carries the order, and the three
+     square buttons beside it are the only way to change it. */
+  .ord{display:flex;flex-direction:column;gap:6px}
+  .ord-row{display:flex;align-items:center;gap:6px}
+  .ord-n{font-family:var(--mono);font-size:11px;color:var(--muted);width:15px;flex:0 0 auto;text-align:right}
+  .ord-row button{padding:5px 7px;flex:0 0 auto;font-family:var(--mono);font-size:11px;line-height:1}
   .check{display:flex;align-items:center;gap:9px;cursor:pointer;font-size:12.5px;color:var(--text)}
   .check .box{width:16px;height:16px;border:1px solid var(--line);border-radius:4px;display:grid;place-items:center;flex:0 0 auto;transition:all 0.2s}
   .check.on .box{background:rgba(52,168,83,.2);border-color:var(--g-green);box-shadow:0 0 8px rgba(52,168,83,0.3)}
@@ -385,6 +404,10 @@ if(!window.THREE){
     color:var(--g-yellow);text-transform:uppercase;margin-bottom:5px}
   .help-panel b{color:var(--text);font-weight:600}
   .toolbar button.active{background:rgba(66,133,244,.2);border-color:var(--g-blue)}
+  /* the Lighting panel: a lit preset button reads like a lit toolbar button,
+     and the sliders take the app's blue instead of the browser's default */
+  #lightdlg button.active{background:rgba(66,133,244,.2);border-color:var(--g-blue);color:#fff}
+  #lightdlg input[type=range]{accent-color:var(--g-blue)}
   .demo-btn{position:absolute;bottom:58px;left:50%;transform:translateX(-50%);z-index:8;
     background:rgba(13,17,23,.85);backdrop-filter:blur(6px);border:1px solid var(--g-blue);border-radius:999px;
     padding:8px 16px;font-size:12px;box-shadow:0 0 15px rgba(66,133,244,.2)}
@@ -694,6 +717,11 @@ if(!window.THREE){
       <button id="btn-fitall" class="btn-ghost" title="Fit everything in view (F)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg><span class="lbl">Fit</span></button>
       <button id="btn-proj" class="btn-ghost" title="Perspective — converging, depth-cued (Ctrl+5)"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.2 3.2h11.6L11.6 12.8H4.4z"/><path d="M4.4 12.8 2.2 3.2M11.6 12.8 13.8 3.2"/></svg><span class="lbl">Persp</span></button>
       <button id="btn-render" class="btn-ghost" title="Rendered view — part, body and surface colours with a satin finish and no edge lines"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M4.6 5.6a4.4 4.4 0 0 1 3-1.8" stroke-linecap="round"/><path d="M11.9 10.6a10 10 0 0 1-7.8 0" opacity=".55"/></svg><span class="lbl">Render</span></button>
+      <!-- Lighting is icon-only, and measured rather than guessed: at 1400px
+           the bar is already 41px wider than the window (the spacer is at 0
+           and Print/Export is clipped), so a labelled button here would cost
+           another ~78px. The glyph is 33. -->
+      <button id="btn-light" class="btn-ghost" title="Lighting — brightness, environment and the workshop light"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="2.6"/><path d="M8 1.3v1.8M8 12.9v1.8M1.3 8h1.8M12.9 8h1.8M3.3 3.3l1.3 1.3M11.4 11.4l1.3 1.3M12.7 3.3l-1.3 1.3M4.6 11.4l-1.3 1.3"/></svg></button>
       <button id="btn-del" class="btn-ghost" title="Delete the selection">✕</button>
       <button id="btn-undo" class="btn-ghost" title="Undo (Ctrl+Z)" disabled>↶</button>
       <button id="btn-redo" class="btn-ghost" title="Redo (Ctrl+Y)" disabled>↷</button>
@@ -777,6 +805,8 @@ if(!window.THREE){
     <button data-add="rcut" data-ic="rcut">Revolve cut</button>
     <button data-add="sweep" data-ic="sweep">Swept boss</button>
     <button data-add="swcut" data-ic="swcut">Swept cut</button>
+    <button data-add="loft" data-ic="loft">Lofted boss</button>
+    <button data-add="loftcut" data-ic="loftcut">Lofted cut</button>
     <button data-add="gfbin" data-ic="gfbin">Gridfinity bin</button>
     <button data-add="gfplate" data-ic="gfplate">Gridfinity baseplate</button>
     <button data-add="fillet" data-ic="fillet">Fillet</button>
@@ -1120,6 +1150,140 @@ const CSG = (function(){
   const solidMat = new THREE.MeshStandardMaterial({color:0xe8f0f8, roughness:0.9, metalness:0.0, side:THREE.DoubleSide});
   const edgeMat = new THREE.LineBasicMaterial({color:0x34A853, transparent:true, opacity:0.9});
 
+  /* ---- the studio: a room for the rendered view to reflect ----
+     Metal is very nearly nothing but what it reflects, and this scene has
+     nothing to reflect: one hemisphere light and a grid. Gold under that is
+     yellow plastic, which is exactly what the rendered view used to look
+     like. So it brings its own room. An equirectangular panorama is painted
+     in a canvas — dark floor, graded sky, a low ceiling and a ring of strip
+     lights at believable studio heights — then prefiltered by PMREMGenerator
+     and hung on scene.environment. Nothing is fetched: the room is 2D
+     drawing.
+
+     The lights are the whole point. A polished surface reflects a tall bright
+     strip as a long bright streak, and that streak SLIDES across the body as
+     the camera orbits — the thing that separates metal from paint. The six
+     strips give the travelling highlights; the one wider key panel gives the
+     broad sheen the shape of the part is read by.
+
+     A canvas is 8-bit and a studio is not: a real softbox is tens of times
+     the sky, not twice it. So the painted panorama is read back as a CURVE
+     rather than as colour — each byte raised to a power and scaled into a
+     float texture. That is also what lets PMREM keep the highlights bright
+     instead of clamping them flat. STUDIO_GAIN is the brightest thing in the
+     room, STUDIO_CURVE how fast everything else falls away from it. */
+  const STUDIO_GAIN=5.0, STUDIO_CURVE=2.35;
+  function studioPanorama(){
+    const W=1024, H=512, cv=document.createElement('canvas');
+    cv.width=W; cv.height=H;
+    const g=cv.getContext('2d');
+    // row 0 is straight up: sky down to the horizon at mid-height, then floor
+    const sky=g.createLinearGradient(0,0,0,H*0.5);
+    sky.addColorStop(0,'#4d545e'); sky.addColorStop(0.55,'#363c44'); sky.addColorStop(1,'#2f343c');
+    g.fillStyle=sky; g.fillRect(0,0,W,H*0.5);
+    const flr=g.createLinearGradient(0,H*0.5,0,H);
+    flr.addColorStop(0,'#1a1c20'); flr.addColorStop(0.30,'#101215'); flr.addColorStop(1,'#090a0c');
+    g.fillStyle=flr; g.fillRect(0,H*0.5,W,H*0.5);
+    /* A narrow, quarter-strength ceiling. It was the first thing tuned down: a
+       wide bright one turns every upward-facing face into one flat cream
+       patch, which is the blown-out version of the same dull problem. */
+    const ceil=g.createLinearGradient(0,0,0,H*0.12);
+    ceil.addColorStop(0,'rgba(150,158,172,0.22)'); ceil.addColorStop(1,'rgba(150,158,172,0)');
+    g.fillStyle=ceil; g.fillRect(0,0,W,H*0.12);
+    /* One source, drawn three times so one sitting on the u=0 seam comes out
+       whole. Fading rings added over the sky, then a hard core laid straight
+       on top: PMREM does the real softening per roughness, and a crisp core
+       is what gives a streak an end you can watch move.
+
+       peak is the byte the core is painted at, and it is the whole difference
+       between gold and cream. The narrow strips go to 255 and blow white,
+       which is the sparkle; the wide boxes stop well short, because a big
+       source at full gain turns a whole upward face into one white patch —
+       bright, and no more like metal than the dull version was. Gold only
+       stays gold while its sheen sits below the point where red and green
+       both saturate. */
+    const box=(u,v,w,h,peak,halo)=>{
+      const bw=w*W, bh=h*H, y=v*H;
+      for(const dx of [-W,0,W]){
+        const x=u*W+dx;
+        g.globalCompositeOperation='lighter';
+        for(let i=14;i>=1;i--){
+          const t=i/14, pad=t*Math.min(bw,bh)*1.1;
+          g.fillStyle='rgba(255,251,242,'+(halo*(1-t)*(1-t)/3).toFixed(4)+')';
+          g.fillRect(x-bw/2-pad, y-bh/2-pad, bw+2*pad, bh+2*pad);
+        }
+        g.globalCompositeOperation='source-over';
+        g.fillStyle='rgb('+peak+','+Math.round(peak*0.99)+','+Math.round(peak*0.95)+')';
+        g.fillRect(x-bw/2, y-bh/2, bw, bh);
+      }
+    };
+    /* The lights: strip lights standing round the subject and one wider key
+       panel, all in the band a flat upward face reflects at ordinary camera
+       heights. This is the glimmer — white-hot streaks travelling across the
+       lid as the view orbits, instead of one even wash. Uneven on purpose:
+       evenly spaced identical strips read as a pattern rather than as a room.
+
+       Seven, and only because the sky came down to meet them. What makes a
+       streak read is the darkness beside it: against the brighter sky this
+       started with, anything past five had its prefiltered blur close the
+       gaps and the whole band went back to one bright smear. Same reason the
+       key panel is small — a wide soft source standing in the same band
+       washes out everything it is meant to be lighting. Their spacing is not
+       decoration either: an azimuth with no light in it shows up as a lid
+       that has gone dull from one particular orbit angle.
+         u,v  where in the room       w,h   how big     peak  how bright
+                                                        halo  how soft */
+    const LIGHTS=[[0.06,0.30,0.032,0.32,255,0.16],
+                  [0.17,0.26,0.070,0.15,176,0.09],   // the key panel
+                  [0.31,0.35,0.026,0.30,232,0.14],
+                  [0.42,0.33,0.028,0.30,255,0.15],
+                  [0.53,0.27,0.022,0.24,214,0.13],
+                  [0.64,0.23,0.026,0.26,232,0.14],
+                  [0.86,0.29,0.032,0.32,255,0.16]];
+    for(const s of LIGHTS)box(s[0],s[1],s[2],s[3],s[4],s[5]);
+    g.globalCompositeOperation='source-over';
+    return cv;
+  }
+  function studioEnvTexture(){
+    const cv=studioPanorama(), W=cv.width, H=cv.height;
+    const px=cv.getContext('2d').getImageData(0,0,W,H).data;
+    const data=new Float32Array(W*H*4);
+    for(let y=0;y<H;y++){
+      /* The panorama was painted sky-up, but an equirect texture reads v=0 as
+         straight DOWN and a DataTexture never flips — so the rows go in the
+         other way up. */
+      const src=y*W*4, dst=(H-1-y)*W*4;
+      for(let x=0;x<W*4;x+=4){
+        for(let k=0;k<3;k++)
+          data[dst+x+k]=Math.pow(px[src+x+k]/255,STUDIO_CURVE)*STUDIO_GAIN;
+        data[dst+x+3]=1;
+      }
+    }
+    const t=new THREE.DataTexture(data,W,H,THREE.RGBAFormat,THREE.FloatType);
+    t.mapping=THREE.EquirectangularReflectionMapping;
+    t.minFilter=THREE.LinearFilter; t.magFilter=THREE.LinearFilter;
+    t.needsUpdate=true;
+    return t;
+  }
+  /* Built once, on the first trip into the rendered view: a session that never
+     leaves the workshop look never pays for it. The generator is kept rather
+     than disposed — in r128 PMREMGenerator.dispose() takes the shared lod
+     planes with it, so disposing it here would break the NEXT panorama anyone
+     wants to build. What is disposed is what we own: the source texture, once
+     its radiance map exists, and any radiance map being replaced. */
+  let studioPMREM=null, studioRT=null;
+  function studioEnvMap(){
+    if(studioRT)return studioRT.texture;
+    const src=studioEnvTexture();
+    if(!studioPMREM){
+      studioPMREM=new THREE.PMREMGenerator(renderer);
+      studioPMREM.compileEquirectangularShader();
+    }
+    studioRT=studioPMREM.fromEquirectangular(src);
+    src.dispose();
+    return studioRT.texture;
+  }
+
   /* ---- appearance: part, body and surface colours ----
      Display-only state: it never touches geometry or the rebuild signature.
      part      one colour for every body without its own,
@@ -1137,12 +1301,62 @@ const CSG = (function(){
   function appearanceEmpty(){ return !appearance.part
     && !Object.keys(appearance.bodies).length && !appearance.faces.length; }
   function bodyColorOf(i){ return appearance.bodies[i]||appearance.part||null; }
-  /* Rendered view: same scene, product-photo materials — colours with a
-     satin finish and no edge lines. The workshop look is the matte default. */
+  /* ---- lighting: the three numbers the user is given ---------------------
+     Brightness is the rendered view's exposure, Environment is how much of
+     the studio panorama the metal picks up, and Workshop light is the
+     hemisphere lamp — the only real light in the scene, which is why that one
+     changes the matte view as well as filling the shadows in the rendered
+     one. Display-only: none of it reaches geometry, the rebuild signature or
+     a saved file. One localStorage key holds all three.
+
+     The defaults ARE the shipped look, so a session that never opens the tool
+     renders exactly as if the tool did not exist — except for brightness,
+     which was deliberately raised. Measured on the demo lamp (gold pixels,
+     four orbit poses, scratchpad/newdemos/lightprobe.js): exposure 1.15 put
+     the gold's median at 113 and 1.45 puts it at 126, while the filmic curve
+     holds p99 at 240 and the clipped share at 0.0001 either way. 1.45 is
+     therefore a free ~12% lift, and the render ships brighter than it did.
+     Past about 1.7 the lid's gradient starts flattening to pale yellow —
+     that is taste, not clipping, and it is why the top of the range is left
+     to the slider rather than made the default. */
+  const LIGHT_KEY='fcad-lighting';
+  const LIGHT_DEF={brightness:1.45, env:1.00, workshop:0.40};
+  const LIGHT_LIM={brightness:[0.2,3], env:[0,2], workshop:[0.1,1.2]};
+  /* Conveniences, not modes: a preset writes all three and then gets out of
+     the way — move a slider afterwards and nothing snaps back. Studio is the
+     default state, so clicking it is the same as Reset without clearing the
+     stored key. */
+  const LIGHT_PRESETS=[
+    {name:'Studio', v:{brightness:1.45, env:1.00, workshop:0.40}},
+    {name:'Bright', v:{brightness:2.00, env:1.40, workshop:0.80}},
+    {name:'Soft',   v:{brightness:1.20, env:0.65, workshop:0.75}},
+    {name:'Moody',  v:{brightness:0.85, env:1.20, workshop:0.15}}
+  ];
+  const lighting=Object.assign({},LIGHT_DEF);
+  function lightClamp(k,v){
+    const r=LIGHT_LIM[k], n=+v;
+    return isFinite(n)?Math.max(r[0],Math.min(r[1],n)):LIGHT_DEF[k];
+  }
+  /* Rendered view: same scene, product-photo materials — polished metal under
+     the studio above, and no edge lines. The workshop look is the matte
+     default and stays exactly that: envMapIntensity 0 keeps the studio out of
+     it entirely, even after the panorama has been built. */
   let renderedView=false;
+  /* One rule for what a colour is made of. Plate is bright — gold, steel,
+     bare aluminium — and takes the full metal treatment. A dark or deep
+     colour reads as enamel over metal instead: a little more roughness and
+     short of full metalness, so the demo lamp's teal stays enamelled while
+     its gold turns to plate. Rec.601 luma, threshold set by eye on the lamp. */
+  const ENAMEL_LUMA=0.5;
   function applyRenderLook(m){
-    m.roughness=renderedView?0.42:0.9;
-    m.metalness=renderedView?0.06:0.0;
+    if(renderedView){
+      const c=m.color, enamel=(0.299*c.r+0.587*c.g+0.114*c.b)<ENAMEL_LUMA;
+      m.roughness=enamel?0.44:0.18;
+      m.metalness=enamel?0.70:0.96;
+      m.envMapIntensity=lighting.env;
+    } else {
+      m.roughness=0.9; m.metalness=0.0; m.envMapIntensity=0;
+    }
     m.needsUpdate=true;
   }
   const matCache=new Map();
@@ -1160,15 +1374,99 @@ const CSG = (function(){
       applyRenderLook(m); faceMatCache.set(hex,m); }
     return m;
   }
+  /* Exposure is the one number the studio is finally judged by, so it goes
+     through a single function rather than through call sites: the lighting
+     tool drives the slider through setExposure and never touches
+     renderer.toneMappingExposure itself. Workshop view is always exposure
+     1 — that is the r128 default, and the matte look has to come back
+     unchanged.
+
+     Worth knowing: r128's ACES curve starts with
+     `color *= toneMappingExposure / 0.6`, so 1.45 is really a gain of about
+     2.4, not of 1.45. The panorama was balanced against 1.15 and takes the
+     lift without complaint. The 0.2–3 clamp is a fence rather than a cliff —
+     measured on the lamp the gold's median runs 84 to 174 across that span
+     and the filmic curve holds the hue at both ends, so the whole range is
+     safe to hand to a user. */
+  function setExposure(v){
+    lighting.brightness=lightClamp('brightness',v);
+    renderer.toneMappingExposure=renderedView?lighting.brightness:1;
+    return lighting.brightness;
+  }
+  /* Every material the two looks are applied to, in one place, so a live
+     slider reaches exactly what setRenderedView reaches and the two cannot
+     drift apart. */
+  function eachBodyMaterial(fn){
+    fn(solidMat);
+    matCache.forEach(fn); faceMatCache.forEach(fn);
+    resultMeshes.forEach(m=>fn(m.material));
+    asmMeshes.flat().forEach(m=>fn(m.material));
+  }
+  /* Push the whole of `lighting` at the scene. Deliberately cheap: exposure,
+     envMapIntensity and a light's intensity are all plain uniforms in r128,
+     refreshed from the material every frame, so dragging a slider costs a
+     redraw and nothing else — no shader rebuild, and above all no PMREM
+     pass. (Changing the tone mapping TYPE is the expensive one; that is
+     setRenderedView's business, not this function's.) */
+  function applyLighting(){
+    hemiLight.intensity=lighting.workshop;
+    setExposure(lighting.brightness);
+    if(renderedView)eachBodyMaterial(m=>{ m.envMapIntensity=lighting.env; });
+  }
+  function saveLighting(){
+    try{ localStorage.setItem(LIGHT_KEY,JSON.stringify(lighting)); }catch(_){ }
+  }
+  /* The one way in — a partial {brightness,env,workshop}. `quiet` skips the
+     write, which is what the restore on boot wants: a session that never
+     touches the tool must leave no key behind, so that "no stored key" stays
+     a meaningful state. */
+  function setLighting(p,quiet){
+    if(p)for(const k in LIGHT_DEF)if(p[k]!=null)lighting[k]=lightClamp(k,p[k]);
+    applyLighting(); syncLightDlg();
+    if(!quiet)saveLighting();
+    return Object.assign({},lighting);
+  }
+  function resetLighting(){
+    Object.assign(lighting,LIGHT_DEF);
+    applyLighting(); syncLightDlg();
+    try{ localStorage.removeItem(LIGHT_KEY); }catch(_){ }
+    setHint('Lighting back to the Studio default');
+  }
+  /* Restored before the first frame: the hemisphere light and the exposure
+     are set here, and the environment intensity rides in on applyRenderLook
+     the moment the rendered view is entered. A stored value out of range, or
+     a key someone hand-edited into nonsense, clamps back to the default
+     rather than throwing. */
+  function loadLighting(){
+    let s=null;
+    try{ s=JSON.parse(localStorage.getItem(LIGHT_KEY)); }catch(_){ }
+    if(s&&typeof s==='object')
+      for(const k in LIGHT_DEF)if(s[k]!=null)lighting[k]=lightClamp(k,s[k]);
+    applyLighting();
+  }
+  loadLighting();
   function setRenderedView(on,quiet){
     renderedView=!!on;
-    applyRenderLook(solidMat);
-    matCache.forEach(applyRenderLook); faceMatCache.forEach(applyRenderLook);
+    if(renderedView&&!scene.environment)scene.environment=studioEnvMap();
+    /* Filmic in the rendered view, so a studio highlight rolls off instead of
+       clipping to a flat white patch; straight back to the r128 default in the
+       workshop view. r128 compiles the curve INTO each shader and never
+       notices that the renderer's has changed, so every material in the scene
+       has to be told to rebuild — once, on the toggle. */
+    const tm=renderedView?THREE.ACESFilmicToneMapping:THREE.NoToneMapping;
+    if(renderer.toneMapping!==tm){
+      renderer.toneMapping=tm;
+      scene.traverse(o=>{ const mm=o.material; if(!mm)return;
+        if(Array.isArray(mm))mm.forEach(x=>{x.needsUpdate=true;}); else mm.needsUpdate=true; });
+    }
+    setExposure(lighting.brightness);
+    eachBodyMaterial(applyRenderLook);
     const edgeVis=c=>{ if(c.isLineSegments&&!(c.userData&&c.userData.faceCol))c.visible=!renderedView; };
-    resultMeshes.forEach(m=>{ applyRenderLook(m.material); m.children.forEach(edgeVis); });
-    asmMeshes.flat().forEach(m=>{ applyRenderLook(m.material); m.children.forEach(edgeVis); });
+    resultMeshes.forEach(m=>m.children.forEach(edgeVis));
+    asmMeshes.flat().forEach(m=>m.children.forEach(edgeVis));
     const b=document.getElementById('btn-render'); if(b)b.classList.toggle('active',renderedView);
     try{ localStorage.setItem('fcad-render',renderedView?'1':'0'); }catch(_){ }
+    syncLightDlg();          // the panel's "turn the rendered view on" note
     if(!quiet)setHint(renderedView?'Rendered view — colours and materials, no edge lines'
                                   :'Workshop view — matte with edges');
   }
@@ -3001,6 +3299,67 @@ const CSG = (function(){
     if(!solids.length) throw new Error('no contour selected');
     return OCK.unionOne(solids);
   };
+  /* ---- loft ------------------------------------------------------------
+     A skin through a run of profiles, in the order given.
+     BRepOffsetAPI_ThruSections built as a solid caps the two ends with planar
+     faces, so what comes back is closed and can be fused or cut like any other
+     tool. `ruled` gives straight sides section to section; smooth (the default)
+     fits one B-spline surface down the whole run, which is what makes three
+     circles read as a neck rather than as two cones stacked.
+
+     ONE CONTOUR PER SECTION, and deliberately so: a loft pairs its sections up
+     by wire, and a sketch with two loops gives no answer to "which one pairs
+     with which". The biggest region of each sketch is the section, holes and
+     further regions are left out, and the panel says so. Two loops that both
+     want lofting are two lofts.
+
+     WINDING is OCCT's, and that was measured rather than assumed. Every outer
+     wire this app builds runs CCW about its OWN sketch normal, so a section
+     drawn on a plane that faces BACK down the run arrives wound the opposite
+     way to its neighbours — which is what folds a square-to-circle loft into
+     the bowtie the feature is famous for. ThruSections still gets it right:
+     the compatibility pass reverses such a wire before pairing anything up.
+     Seventeen configurations were built with a winding correction in place and
+     again with it taken out — square to circle, square to square, circle to
+     circle, a flipped middle section of three, sections on tilted planes along
+     a rising curve, ruled and smooth — and every volume agreed to the last
+     digit. The correction is not here because it never once changed an answer.
+
+     That same compatibility pass is what lets a four-edge square meet a
+     one-edge circle at all: it splits both to a common edge count and picks a
+     shared origin. It is on by default and must stay on. */
+  OCK.loft = function(sections, opt){
+    const oc = OC(); opt = opt || {};
+    if(!sections || sections.length < 2) throw new Error('a loft needs at least two profiles');
+    const wires = sections.map((sk, i)=>{
+      let regs;
+      try{ regs = OCK.regions(sk, 0); }
+      catch(_){ regs = []; }
+      if(!regs.length)
+        throw new Error('profile '+(i+1)+' has no closed contour — every loft section has to be a closed shape');
+      return regs[0].outer.mk(false);          // biggest region: one contour per section
+    });
+    let mk;
+    try{
+      mk = new oc.BRepOffsetAPI_ThruSections(true, !!opt.ruled, 1e-6);
+      for(const w of wires) mk.AddWire(w);
+      mk.Build(new oc.Message_ProgressRange_1());
+    }catch(err){
+      throw new Error('the loft failed in the kernel — sections that cross each other, '+
+        'or one that doubles back on the run, are the usual cause'+
+        (err && err.message ? ' ('+err.message+')' : ''));
+    }
+    if(!mk.IsDone())
+      throw new Error('the loft failed — check the profiles are in the order the shape runs, '+
+        'and that no two of them sit on the same plane');
+    const shp = mk.Shape();
+    /* Same lesson as the sweep: IsDone says yes on a shape with no volume.
+       Two identical sections on the SAME plane skin to nothing at all and
+       reach the tree as a feature that silently does nothing. Measure it. */
+    if(solidVolume(oc, shp) <= 1e-9)
+      throw new Error('the loft came out empty — two sections on the same plane have nothing to skin between');
+    return shp;
+  };
   OCK.commonAll = function(shape, tools){
     if(!tools.length) return shape;
     const oc = OC();
@@ -4241,7 +4600,7 @@ const CSG = (function(){
   /* Only a feature that contributes a shape can be copied. The fillet is the
      interesting exclusion: it rounds edges of the body rather than adding
      anything, so there is no tool to hand a pattern. */
-  const SCOPEABLE={extrude:1,cut:1,revolve:1,sweep:1,gfbin:1,gfplate:1,import:1,mirror:1,lpattern:1,cpattern:1};
+  const SCOPEABLE={extrude:1,cut:1,revolve:1,sweep:1,loft:1,loftcut:1,gfbin:1,gfplate:1,import:1,mirror:1,lpattern:1,cpattern:1};
   const isScoped=f=>Array.isArray(f.scope)&&f.scope.length>0;
   function scopeCands(f){
     const i=features.findIndex(x=>x.id===f.id);
@@ -4343,6 +4702,30 @@ const CSG = (function(){
       const shp=OCK.sweep(prof,path,{contours:f.contours});
       noteTool(f,f.operation==='cut'?'cut':'merge',shp);
       if(f.operation==='cut'){
+        if(!resultShapes.length)throw new Error('nothing to cut');
+        pendOp('cut',shp,f);
+      }
+      else if(f.merge && resultShapes.length) pendOp('merge',shp,f);
+      else { flushPending(); resultShapes.push(shp); }
+      return;
+    }
+    /* The profile list is ORDERED and the order is the shape: the skin runs
+       through the sections as the panel lists them, so moving one up or down
+       is a different solid, not a tidier recipe. */
+    if(f.type==='loft'||f.type==='loftcut'){
+      const ids=Array.isArray(f.profiles)?f.profiles:[];
+      if(ids.length<2)throw new Error('a loft needs at least two profiles — add them in the panel');
+      const secs=ids.map((id,i)=>{
+        if(id==null)throw new Error('profile '+(i+1)+' has not been picked yet');
+        if(i&&ids[i-1]===id)throw new Error('profiles '+i+' and '+(i+1)+' are the same sketch — a loft has to move between two of them');
+        const sd=sketchData[id];
+        if(!sd)throw new Error('the sketch for profile '+(i+1)+' is missing — deleted, or suppressed');
+        return {entities:sd.sk.entities,fillet:sd.sk.fillet,chamfer:sd.sk.chamfer,
+                corners:sd.sk.corners,frame:sd.frame};
+      });
+      const shp=OCK.loft(secs,{ruled:!!f.ruled});
+      noteTool(f,f.type==='loftcut'?'cut':'merge',shp);
+      if(f.type==='loftcut'){
         if(!resultShapes.length)throw new Error('nothing to cut');
         pendOp('cut',shp,f);
       }
@@ -8000,6 +8383,9 @@ const CSG = (function(){
     const i=ids.indexOf(id);
     return i>0?ids[i-1]:(ids.length&&ids[0]!==id?ids[0]:null);
   }
+  /* The tools that cannot start without a sketch to work from. One list, so
+     the Add menu greys the same entries the command itself refuses. */
+  const NEEDS_SKETCH={extrude:1,cut:1,revolve:1,rcut:1,sweep:1,swcut:1,loft:1,loftcut:1};
   function defaults(type){
     const sid=lastSketchId();
     if(type==='extrude')return {id:nextId(),type:'extrude',name:'Extrude'+cnt('extrude'),sketchId:sid,depth:3,symmetric:false,flip:false,merge:true,suppressed:false};
@@ -8024,6 +8410,18 @@ const CSG = (function(){
       name:(type==='sweep'?'Sweep':'SweepCut')+cnt('sweep'),
       sketchId:sid, pathId:prevSketchId(sid),
       operation:(type==='swcut'?'cut':'add'), merge:true, suppressed:false};
+    /* Two profiles to start with, in the order they were drawn — the earlier
+       sketch first, because a loft is nearly always built bottom upwards. One
+       sketch on its own gives a one-row list and an honest error until a
+       second is picked. */
+    if(type==='loft'||type==='loftcut'){
+      const prev=prevSketchId(sid), f={id:nextId(),type:(type==='loftcut'?'loftcut':'loft'),
+        name:(type==='loftcut'?'LoftCut':'Loft')+cnt(type==='loftcut'?'loftcut':'loft'),
+        profiles:(prev!=null&&sid!=null)?[prev,sid]:(sid!=null?[sid]:[]),
+        ruled:false, suppressed:false};
+      if(type!=='loftcut')f.merge=true;
+      return f;
+    }
     if(type==='dplane')return {id:nextId(),type:'dplane',name:'Plane'+cnt('dplane'),base:'Top',about:'u',angle:30,suppressed:false};
     if(type==='daxis')return {id:nextId(),type:'daxis',name:'Axis'+cnt('daxis'),method:'planes',pa:'Top',pb:'Front',dir:'Y',px:0,py:0,pz:0,suppressed:false};
     if(type==='mirror')return {id:nextId(),type:'mirror',name:'Mirror'+cnt('mirror'),plane:'Right',merge:true,suppressed:false};
@@ -8048,9 +8446,15 @@ const CSG = (function(){
       setHint('Click a flat face for the text');
       return;
     }
-    if(type==='extrude'||type==='cut'||type==='revolve'||type==='rcut'||type==='sweep'||type==='swcut'){ if(!sketchId&&!lastSketchId()){setHint('Create a sketch first');return;} }
+    if(NEEDS_SKETCH[type]){ if(!sketchId&&!lastSketchId()){setHint('Create a sketch first');return;} }
     const f=defaults(type); f._isNew=true;
     if(sketchId!=null&&'sketchId' in f)f.sketchId=sketchId;
+    /* A loft has no single sketch, so "use this one" means end the run on it,
+       starting from the sketch drawn before it. */
+    else if(sketchId!=null&&Array.isArray(f.profiles)){
+      const p=prevSketchId(sketchId);
+      f.profiles=(p!=null&&p!==sketchId)?[p,sketchId]:[sketchId];
+    }
     if(type==='fillet'||type==='chamfer'){ selectedEdges=[]; redrawEdgeSel(); }
     insertFeature(f); selectFeature(f.id); openProps(f);
   }
@@ -8082,6 +8486,7 @@ const CSG = (function(){
   const _B='#a9c2e8',_Y='#FBBC05',_G='#34A853',_R='#f28b82',_U='#4285F4';
   const ICONS={
     render:_sw(`<circle cx="12" cy="12" r="8.4" stroke="${_B}"/><path d="M7.2 8.6a5.6 5.6 0 0 1 3.6-2.3" stroke="${_Y}" stroke-linecap="round"/><path d="M17.6 14.8a13 13 0 0 1-11.2 0" stroke="${_B}" opacity=".5"/>`),
+    light:_sw(`<circle cx="12" cy="12" r="3.9" stroke="${_Y}"/><path d="M12 2.2v2.6M12 19.2v2.6M2.2 12h2.6M19.2 12h2.6M5.1 5.1l1.9 1.9M17 17l1.9 1.9M18.9 5.1 17 7M7 17l-1.9 1.9" stroke="${_B}"/>`),
     paint:_sw(`<path d="M12 3.6c-2.6 3.4-5.4 6.6-5.4 9.6a5.4 5.4 0 0 0 10.8 0c0-3-2.8-6.2-5.4-9.6z" stroke="${_B}"/><path d="M9.6 13.8a2.6 2.6 0 0 0 2 2.5" stroke="${_Y}" stroke-linecap="round"/>`),
     line:_sw(`<path d="M5 19 19 5" stroke="${_B}"/><circle cx="5" cy="19" r="1.8" fill="${_Y}"/><circle cx="19" cy="5" r="1.8" fill="${_Y}"/>`),
     move:_sw(`<path d="M12 3v18M3 12h18" stroke="${_B}"/><path d="M9.8 5.2 12 3l2.2 2.2M9.8 18.8 12 21l2.2-2.2M5.2 9.8 3 12l2.2 2.2M18.8 9.8 21 12l-2.2 2.2" stroke="${_Y}"/>`),
@@ -8111,6 +8516,8 @@ const CSG = (function(){
     text:_sw(`<rect x="3" y="5" width="18" height="14" rx="2" stroke="${_B}" opacity=".55"/><path d="M8 9h8M12 9v7" stroke="${_Y}" stroke-width="2"/>`),
     sweep:_sw(`<path d="M3.5 19c0-7 5.5-8.5 8.5-8.5s8.5-1.5 8.5-8" stroke="${_Y}" stroke-dasharray="3.4 2"/><rect x="1.6" y="15.6" width="6.4" height="6.4" rx="1" stroke="${_B}"/><rect x="16.8" y="1.6" width="6.4" height="6.4" rx="1" stroke="${_B}" opacity=".55"/>`),
     swcut:_sw(`<path d="M3.5 19c0-7 5.5-8.5 8.5-8.5s8.5-1.5 8.5-8" stroke="${_R}" stroke-dasharray="3.4 2"/><rect x="1.6" y="15.6" width="6.4" height="6.4" rx="1" stroke="${_B}"/><path d="M17.2 2.2 22.8 7.8M22.8 2.2 17.2 7.8" stroke="${_R}"/>`),
+    loft:_sw(`<path d="M3 18.6l9 2.8 9-2.8-9-2.8z" stroke="${_B}"/><ellipse cx="12" cy="4.6" rx="4.8" ry="1.9" stroke="${_B}" opacity=".55"/><path d="M3 18.6C3 12.4 7.2 9.6 7.2 4.6M21 18.6C21 12.4 16.8 9.6 16.8 4.6" stroke="${_Y}"/>`),
+    loftcut:_sw(`<path d="M3 18.6l9 2.8 9-2.8-9-2.8z" stroke="${_B}"/><path d="M3 18.6C3 12.4 7.2 9.6 7.2 4.6M21 18.6C21 12.4 16.8 9.6 16.8 4.6" stroke="${_R}"/><path d="M9.2 1.8 14.8 7.4M14.8 1.8 9.2 7.4" stroke="${_R}"/>`),
     revolve:_sw(`<path d="M5 3v18" stroke="${_B}" stroke-dasharray="4.5 2 1.2 2"/><path d="M9 6.5c6 0 10 2.2 10 5.5s-4 5.5-10 5.5z" stroke="${_B}"/><path d="M8 3.5c5 .2 8.6 1 10.2 2.4M15.5 6.5l2.7-.6-.5-2.7" stroke="${_Y}"/>`),
     rcut:_sw(`<path d="M5 3v18" stroke="${_B}" stroke-dasharray="4.5 2 1.2 2"/><path d="M9 6.5c6 0 10 2.2 10 5.5s-4 5.5-10 5.5z" stroke="${_B}"/><path d="M9 10h5.5v4H9z" stroke="${_Y}"/>`),
     fillet:_sw(`<path d="M4 4v16h16" stroke="${_B}" stroke-dasharray="3 2.4" opacity=".45"/><path d="M4 4v6a10 10 0 0 0 10 10h6" stroke="${_Y}" stroke-width="1.9"/>`),
@@ -8273,7 +8680,21 @@ const CSG = (function(){
       mat.emissive.setHex(0x3a2c00);
     }
   }
-  function sketchConsumedBy(f){ return features.find(x=>x.sketchId===f.id)||null; }
+  /* Every sketch a feature consumes, in the order the feature reads them: one
+     for an extrude, the profile and then the path for a sweep, and a loft's
+     whole ordered run of sections. The tree nesting, the collapse control and
+     the "is this sketch still on show" rule all ask this one question, so they
+     cannot drift apart — which they had, leaving a sweep's path nested under
+     its feature in the tree and still drawn in the viewport. */
+  function consumedIds(f){
+    const out=[];
+    if(f.sketchId!=null)out.push(f.sketchId);
+    if(f.type==='sweep'&&f.pathId!=null)out.push(f.pathId);
+    if((f.type==='loft'||f.type==='loftcut')&&Array.isArray(f.profiles))
+      for(const id of f.profiles) if(id!=null)out.push(id);
+    return out;
+  }
+  function sketchConsumedBy(f){ return features.find(x=>consumedIds(x).indexOf(f.id)>=0)||null; }
   function sketchVisible(f){
     if(editing&&editing.id===f.id) return true;      // open for editing
     if(f.show) return true;                          // shown from the tree menu
@@ -8369,17 +8790,16 @@ const CSG = (function(){
     tree.appendChild(sect2);
 
     /* A feature owns every sketch it consumes — for a sweep that is TWO, the
-       profile and the path, and both draw nested under it. */
+       profile and the path, and for a loft the whole run of sections. All of
+       them draw nested under it, each one once however often it is listed. */
     const nested=new Set();
-    features.forEach(f=>{
-      if(f.sketchId!=null)nested.add(f.sketchId);
-      if(f.type==='sweep'&&f.pathId!=null)nested.add(f.pathId);
-    });
+    features.forEach(f=>{ for(const id of consumedIds(f))nested.add(id); });
     const kidsOf=f=>{
-      const out=[];
-      if(f.sketchId!=null){ const k=features.find(x=>x.id===f.sketchId); if(k)out.push(k); }
-      if(f.type==='sweep'&&f.pathId!=null&&f.pathId!==f.sketchId){
-        const k=features.find(x=>x.id===f.pathId); if(k)out.push(k); }
+      const out=[], seen=new Set();
+      for(const id of consumedIds(f)){
+        if(seen.has(id))continue; seen.add(id);
+        const k=features.find(x=>x.id===id); if(k)out.push(k);
+      }
       return out;
     };
     /* The rollback bar thinks in ARRAY indices but the tree displays groups —
@@ -8406,7 +8826,7 @@ const CSG = (function(){
     const cb=$('tree-collapse');
     if(cb)cb.textContent=anyExpanded()?'⌄':'›';
   }
-  function parentsWithSketches(){ return features.filter(f=>f.sketchId!=null); }
+  function parentsWithSketches(){ return features.filter(f=>consumedIds(f).length>0); }
   function anyExpanded(){ return parentsWithSketches().some(f=>!collapsed.has(f.id)); }
   function esc(s){return (s+'').replace(/"/g,'&quot;');}
   function showErrorDialog(f){
@@ -8590,6 +9010,56 @@ const CSG = (function(){
     const seg=document.createElement('div');seg.className='seg';
     opts.forEach(o=>{const b=document.createElement('button');b.textContent=o.l;b.className=(o.v===val?'active':'');b.addEventListener('click',()=>{on(o.v);[...seg.children].forEach(c=>c.classList.remove('active'));b.classList.add('active');});seg.appendChild(b);});
     w.appendChild(seg);return w;
+  }
+  /* An ORDERED list of picks, one drop-down per row. A segmented control says
+     "one of these"; this says "these, in this order", which is a different
+     question and the only one a loft asks. The three buttons beside each row
+     are up, down and remove; the row number is the order, so it is never in
+     doubt which section the skin runs through first. */
+  function fieldOrderedList(label,vals,opts,addLabel,on){
+    const w=document.createElement('div');w.className='field';
+    w.innerHTML=`<span class="field-label">${label}</span>`;
+    const box=document.createElement('div');box.className='ord';
+    const emit=v=>on(v.slice());
+    vals.forEach((val,i)=>{
+      const row=document.createElement('div');row.className='ord-row';
+      const n=document.createElement('span');n.className='ord-n';n.textContent=(i+1)+'.';
+      row.appendChild(n);
+      const sel=document.createElement('select');
+      opts.forEach(o=>{const op=document.createElement('option');
+        op.value=String(o.v);op.textContent=o.l;if(o.v===val)op.selected=true;sel.appendChild(op);});
+      if(opts.every(o=>o.v!==val)){         // its sketch was deleted: say so, don't guess
+        const op=document.createElement('option');
+        op.value='';op.textContent='(deleted sketch)';op.selected=true;sel.appendChild(op);
+      }
+      sel.addEventListener('change',()=>{
+        const o=opts.find(x=>String(x.v)===sel.value); if(!o)return;
+        const nv=vals.slice(); nv[i]=o.v; emit(nv);
+      });
+      row.appendChild(sel);
+      const btn=(txt,title,dis,fn)=>{
+        const b=document.createElement('button');b.className='btn-ghost';
+        b.textContent=txt;b.title=title;b.disabled=dis;
+        b.addEventListener('click',fn);row.appendChild(b);
+      };
+      btn('↑','Earlier in the run',i===0,()=>{
+        const nv=vals.slice();nv[i-1]=vals[i];nv[i]=vals[i-1];emit(nv);});
+      btn('↓','Later in the run',i===vals.length-1,()=>{
+        const nv=vals.slice();nv[i+1]=vals[i];nv[i]=vals[i+1];emit(nv);});
+      btn('×','Remove this one',vals.length<=1,()=>{
+        const nv=vals.slice();nv.splice(i,1);emit(nv);});
+      box.appendChild(row);
+    });
+    const addb=document.createElement('button');addb.className='btn-ghost';
+    addb.textContent=addLabel;addb.disabled=!opts.length;
+    addb.addEventListener('click',()=>{
+      /* A new row defaults to a sketch not already in the run, so adding one
+         is a real section rather than an instant duplicate. */
+      const free=opts.find(o=>vals.indexOf(o.v)<0)||opts[opts.length-1];
+      emit(vals.concat([free.v]));
+    });
+    box.appendChild(addb);
+    w.appendChild(box);return w;
   }
   function fieldText(label,val,placeholder,on){
     const w=document.createElement('div');w.className='field';
@@ -8800,6 +9270,29 @@ const CSG = (function(){
       const nt2=document.createElement('div'); nt2.className='note';
       nt2.textContent='The profile is swept from where you drew it, staying square to the path as it travels. Draw the path so it starts on the profile\u2019s plane, and round any corner in the path sketch for a proper bend.';
       add(nt2);
+    } else if(f.type==='loft'||f.type==='loftcut'){
+      /* The list IS the shape. Rearranging it is not tidying — the skin runs
+         through the sections in this order, so the buttons that move a row are
+         modelling controls, not housekeeping. */
+      const sks=features.filter(x=>x.type==='sketch').map(x=>({l:x.name,v:x.id}));
+      const list=Array.isArray(f.profiles)?f.profiles.filter(id=>id!=null):[];
+      if(sks.length<2){
+        const nt=document.createElement('div'); nt.className='note';
+        nt.textContent='A loft needs at least two sketches to run between. Draw the second section on another plane, then come back.';
+        add(nt);
+      }
+      add(fieldOrderedList('Profiles, in order',list,sks,'+ Add a profile',v=>{
+        f.profiles=v; openProps(propsFeat);      // openProps rebuilds; the rows moved
+      }));
+      add(fieldCheck('Ruled (straight between sections)',!!f.ruled,v=>{f.ruled=v;rerun();}));
+      if(f.type==='loft')
+        add(fieldCheck('Merge with body',f.merge,v=>{f.merge=v;rerun();}));
+      const nl=document.createElement('div'); nl.className='note';
+      nl.textContent='One closed contour per sketch — the biggest, if a sketch holds more than one. '+
+        'Sections are skinned in the order listed, so put them in the order the shape runs. '+
+        'Ruled joins them with flat sides; leave it off for one smooth surface down the whole run. '+
+        'No guide curve and no twist yet.';
+      add(nl);
     } else if(f.type==='fillet'){
       add(fieldSeg('Type',[{l:'Fillet',v:'fillet'},{l:'Chamfer',v:'chamfer'}],f.kind,v=>{f.kind=v;f.name=(v==='fillet'?'Fillet':'Chamfer')+f.name.replace(/\D+/,''); propsEl.querySelector('h3').textContent=f.name; rerun(); openProps(propsFeat); }));
       /* Chamfers get SolidWorks' three shapes. `cmode` is absent on parts made
@@ -9967,6 +10460,93 @@ const CSG = (function(){
     document.body.appendChild(ov);
   }
 
+  /* ---- the Lighting tool -------------------------------------------------
+     Non-modal, and that is the whole design: you are judging the model while
+     you drag, so there is no dimming scrim over the viewport and no overlay
+     swallowing the orbit. The panel parks under the toolbar on the right,
+     out of the way of the part, and the model stays live behind it —
+     rotate, then keep dragging.
+
+     The panel owns no state. Every control writes through setLighting and
+     every control reads back through syncLightDlg, so the sliders, the
+     numbers, the lit preset and the stored key can never disagree. */
+  const LIGHT_ROWS=[
+    {k:'brightness',   label:'Brightness',     note:'exposure — how bright the rendered view is overall'},
+    {k:'env',          label:'Environment',    note:'how much of the studio the metal picks up'},
+    {k:'workshop',     label:'Workshop light', note:'the lamp the matte view is lit by'}
+  ];
+  function openLighting(){
+    closeLighting();
+    const ov=document.createElement('div'); ov.id='lightdlg';
+    ov.style.cssText='position:fixed;top:50px;right:14px;z-index:100000;width:min(310px,92vw);'
+      +'background:var(--panel);border:1px solid var(--g-blue);border-radius:12px;'
+      +'padding:13px 15px 11px;box-shadow:0 24px 60px -12px rgba(0,0,0,.9)';
+    const row=r=>`<div style="margin-top:11px">
+        <div style="display:flex;align-items:baseline;gap:8px">
+          <label for="lt-${r.k}" style="font-size:12px;flex:1">${r.label}</label>
+          <span id="lt-v-${r.k}" style="font-family:var(--mono);font-size:11px;color:var(--g-blue)"></span>
+        </div>
+        <input id="lt-${r.k}" data-lt="${r.k}" type="range" min="${LIGHT_LIM[r.k][0]}"
+          max="${LIGHT_LIM[r.k][1]}" step="0.05" style="width:100%;margin:2px 0 1px;vertical-align:middle">
+        <div style="font-size:10.5px;color:var(--muted-2);line-height:1.35">${r.note}</div>
+      </div>`;
+    ov.innerHTML=`<div style="display:flex;align-items:baseline;gap:8px">
+        <h3 style="margin:0;font-size:14px;flex:1">Lighting</h3>
+        <button id="lt-close" class="btn-ghost" title="Close (Esc)" style="padding:2px 7px">&#10005;</button>
+      </div>
+      <p style="margin:3px 0 0;font-size:11px;color:var(--muted);line-height:1.4">Brightness and Environment shape the <b>rendered</b> view; the workshop light lifts the matte one. Remembered in this browser.</p>
+      <div id="lt-off" style="display:none;margin-top:9px"><button id="lt-render-on" class="btn-primary" style="font-size:11px;width:100%;justify-content:center">Turn the rendered view on to see these</button></div>
+      ${LIGHT_ROWS.map(row).join('')}
+      <div style="margin-top:13px;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-2)">Presets</div>
+      <div id="lt-presets" style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)">
+        <button id="lt-reset" class="btn-ghost" style="font-size:11px" title="Back to the shipped defaults, and forget the stored setting">Reset</button>
+        <button id="lt-done" class="btn-primary" style="font-size:11px">Done</button>
+      </div>`;
+    document.body.appendChild(ov);
+    for(const p of LIGHT_PRESETS){
+      const b=document.createElement('button');
+      b.className='btn-ghost'; b.dataset.preset=p.name; b.textContent=p.name;
+      b.style.cssText='font-size:11px;padding:4px 9px';
+      b.addEventListener('click',()=>{ setLighting(p.v); setHint(p.name+' lighting'); });
+      ov.querySelector('#lt-presets').appendChild(b);
+    }
+    /* `input`, not `change`: the viewport has to follow the thumb */
+    ov.querySelectorAll('input[data-lt]').forEach(s=>{
+      s.addEventListener('input',()=>{ const p={}; p[s.dataset.lt]=s.value; setLighting(p); });
+    });
+    ov.querySelector('#lt-reset').addEventListener('click',resetLighting);
+    ov.querySelector('#lt-done').addEventListener('click',closeLighting);
+    ov.querySelector('#lt-close').addEventListener('click',closeLighting);
+    ov.querySelector('#lt-render-on').addEventListener('click',()=>setRenderedView(true));
+    ov._esc=e=>{ if(e.key==='Escape'){ e.stopPropagation(); closeLighting(); } };
+    document.addEventListener('keydown',ov._esc,true);
+    const b=document.getElementById('btn-light'); if(b)b.classList.add('active');
+    syncLightDlg();
+  }
+  function closeLighting(){
+    const ov=document.getElementById('lightdlg'); if(!ov)return;
+    if(ov._esc)document.removeEventListener('keydown',ov._esc,true);
+    ov.remove();
+    const b=document.getElementById('btn-light'); if(b)b.classList.remove('active');
+  }
+  /* A view of `lighting`, never a second copy of it. Safe to call from
+     anywhere — with no panel open it does nothing. */
+  function syncLightDlg(){
+    const ov=document.getElementById('lightdlg'); if(!ov)return;
+    for(const r of LIGHT_ROWS){
+      const s=ov.querySelector('#lt-'+r.k);
+      if(s&&+s.value!==lighting[r.k])s.value=lighting[r.k];
+      const v=ov.querySelector('#lt-v-'+r.k);
+      if(v)v.textContent=lighting[r.k].toFixed(2);
+    }
+    const off=ov.querySelector('#lt-off'); if(off)off.style.display=renderedView?'none':'';
+    ov.querySelectorAll('#lt-presets button').forEach(b=>{
+      const p=LIGHT_PRESETS.find(x=>x.name===b.dataset.preset);
+      b.classList.toggle('active',!!p&&Object.keys(p.v).every(k=>Math.abs(lighting[k]-p.v[k])<1e-6));
+    });
+  }
+
   /* Serialize the document Save would write, without downloading it.
      Documents save one at a time, the SolidWorks way. A .drawing is a sheet
      ABOUT a model: it stores the sheet and the NAME of the model file it
@@ -10966,6 +11546,7 @@ const CSG = (function(){
                  dyn:()=>orthoOn?'Perspective':'Orthographic'},
     v_render :{ic:'render',label:'Rendered view',fn:()=>setRenderedView(!renderedView),
                  dyn:()=>renderedView?'Workshop view':'Rendered view'},
+    v_light  :{ic:'light', label:'Lighting…',fn:()=>openLighting()},
     a_pcolor :{ic:'paint', label:'Part colour…',   fn:()=>pickPartColor(),need:'solid'},
     a_bcolor :{ic:'paint', label:'Body colour…',   fn:()=>startBodyColorPick(),need:'solid'},
     a_fcolor :{ic:'paint', label:'Surface colour…',fn:()=>startFaceColorPick(),need:'solid'},
@@ -10976,6 +11557,8 @@ const CSG = (function(){
     f_rcut   :{ic:'rcut',   label:'Revolve cut', fn:()=>addFeature('rcut'),   need:'sketch'},
     f_sweep  :{ic:'sweep',  label:'Swept boss',  fn:()=>addFeature('sweep'),  need:'sketch'},
     f_swcut  :{ic:'swcut',  label:'Swept cut',   fn:()=>addFeature('swcut'),  need:'sketch'},
+    f_loft   :{ic:'loft',   label:'Lofted boss', fn:()=>addFeature('loft'),   need:'sketch'},
+    f_loftcut:{ic:'loftcut',label:'Lofted cut',  fn:()=>addFeature('loftcut'),need:'sketch'},
     f_gfbin  :{ic:'gfbin',  label:'Gridfinity bin',      fn:()=>addFeature('gfbin')},
     f_gfplate:{ic:'gfplate',label:'Gridfinity baseplate',fn:()=>addFeature('gfplate')},
     f_text   :{ic:'text',   label:'Text on a face',      fn:()=>addFeature('text'),need:'solid'},
@@ -10988,9 +11571,9 @@ const CSG = (function(){
     r_axis   :{ic:'daxis',  label:'Add axis', fn:()=>addFeature('daxis')}
   };
   const DEFAULT_MODEL_LAYOUT=[
-    {name:'View',     ids:['normal','iso','fit','proj','v_render']},
-    {name:'Features', ids:['sketch','f_extrude','f_cut','f_revolve','f_rcut','f_sweep','f_swcut','f_gfbin','f_gfplate','f_text','f_fillet','f_chamfer','t_mirror','t_lpat','t_cpat']},
-    {name:'Appearance',ids:['a_pcolor','a_bcolor','a_fcolor']},
+    {name:'View',     ids:['normal','iso','fit','proj','v_light']},
+    {name:'Features', ids:['sketch','f_extrude','f_cut','f_revolve','f_rcut','f_sweep','f_swcut','f_loft','f_loftcut','f_gfbin','f_gfplate','f_text','f_fillet','f_chamfer','t_mirror','t_lpat','t_cpat']},
+    {name:'Appearance',ids:['v_render','a_pcolor','a_bcolor','a_fcolor']},
     {name:'Reference',ids:['r_plane','r_axis']}
   ];
   function openModelMenu(x,y){
@@ -11148,6 +11731,28 @@ const CSG = (function(){
       const vi=m.layout.findIndex(x=>x.name==='View');
       m.layout.splice(vi>=0?vi+1:0,0,{name:'Appearance',ids:[]});
       migrated=true;
+    }
+    /* One-off (Aug 2026): Rendered view moved from View into Appearance — it
+       changes how the model is painted, not where the camera sits. A stored
+       layout follows, from wherever the user had it; one they hid stays
+       hidden. */
+    if(saved){
+      let pulled=false;
+      for(const sec of m.layout){
+        if(sec.name==='Appearance')continue;
+        const i=sec.ids.indexOf('v_render');
+        if(i>=0){ sec.ids.splice(i,1); pulled=true; }
+      }
+      if(pulled){
+        let ap=m.layout.find(x=>x.name==='Appearance');
+        if(!ap){
+          const vi=m.layout.findIndex(x=>x.name==='View');
+          ap={name:'Appearance',ids:[]};
+          m.layout.splice(vi>=0?vi+1:0,0,ap);
+        }
+        if(ap.ids.indexOf('v_render')<0)ap.ids.unshift('v_render');
+        migrated=true;
+      }
     }
     const adopted=adoptNewCommands(m,savedHidden);
     markHidden(m);
@@ -11459,6 +12064,8 @@ const CSG = (function(){
       items.push({ic:'rcut',label:'Revolve cut',fn:()=>addFeature('rcut',f.id)});
       items.push({ic:'sweep',label:'Swept boss',fn:()=>addFeature('sweep',f.id)});
       items.push({ic:'swcut',label:'Swept cut',fn:()=>addFeature('swcut',f.id)});
+      items.push({ic:'loft',label:'Lofted boss',fn:()=>addFeature('loft',f.id)});
+      items.push({ic:'loftcut',label:'Lofted cut',fn:()=>addFeature('loftcut',f.id)});
     } else if(f.type==='dplane'){
       items.push({ic:'sketch',label:'Sketch on this plane',fn:()=>addSketchOnDPlane(f)});
       items.push({ic:'edit',label:'Edit plane',fn:()=>openProps(f)});
@@ -11997,9 +12604,11 @@ const CSG = (function(){
   /* Two materials for the whole session, not a clone per repaint. The offset
      sits deeper than the surface colours' -1.5 so a highlight still reads on a
      painted face, and depthWrite stays off so the tint never occludes the
-     edges drawn over it. */
+     edges drawn over it. toneMapped is off because these are UI, not surfaces:
+     the rendered view's filmic curve would desaturate the cyan and the blue
+     towards the metal they are meant to stand out against. */
   const faceHlMat=(hex,op,off)=>new THREE.MeshBasicMaterial({color:hex,transparent:true,
-    opacity:op,depthWrite:false,side:THREE.DoubleSide,
+    opacity:op,depthWrite:false,side:THREE.DoubleSide,toneMapped:false,
     polygonOffset:true,polygonOffsetFactor:off,polygonOffsetUnits:-3});
   const faceHovMat=faceHlMat(0x35d4e6,0.25,-2), faceSelMat=faceHlMat(0x4285F4,0.4,-2.5);
   /* The tint rides ON the body mesh so it inherits the body's transform and
@@ -12490,8 +13099,9 @@ const CSG = (function(){
        clutter. */
     $('tb-draw-main').style.display='none';
     // and nothing that drives a 3D view belongs above a sheet of paper
-    ['btn-normal','btn-iso','btn-fitall','btn-proj','btn-render','btn-print']
+    ['btn-normal','btn-iso','btn-fitall','btn-proj','btn-render','btn-light','btn-print']
       .forEach(id=>{ const el=$(id); if(el)el.style.display=isD?'none':''; });
+    if(isD)closeLighting();          // nor does a panel about the 3D lights
     /* The Demo control used to be a part-only toggle, so it hid itself in an
        assembly or a drawing. It is a menu of documents now — one of them an
        assembly — and hiding it left no way back out of an assembly demo. It
@@ -13812,6 +14422,8 @@ const CSG = (function(){
   $('btn-iso').addEventListener('click',viewIso);
   $('btn-fitall').addEventListener('click',fitAll);
   $('btn-render').addEventListener('click',()=>setRenderedView(!renderedView));
+  $('btn-light').addEventListener('click',()=>{
+    if(document.getElementById('lightdlg'))closeLighting(); else openLighting(); });
   try{ if(localStorage.getItem('fcad-render')==='1')setRenderedView(true,true); }catch(_){ }
   $('btn-proj').addEventListener('click',()=>setProjection(!orthoOn));
   $('btn-customise').addEventListener('click',openCustomise);
@@ -13905,7 +14517,7 @@ const CSG = (function(){
     const r=$('btn-add').getBoundingClientRect();
     menu.style.left=r.left+'px';menu.style.top=(r.bottom+6)+'px';menu.classList.toggle('open');
     const hasSketch=!!lastSketchId();
-    menu.querySelectorAll('[data-add]').forEach(b=>{const a=b.dataset.add;b.disabled=(['extrude','cut','revolve','rcut','sweep','swcut'].includes(a)&&!hasSketch);});
+    menu.querySelectorAll('[data-add]').forEach(b=>{const a=b.dataset.add;b.disabled=(!!NEEDS_SKETCH[a]&&!hasSketch);});
     e.stopPropagation();
   });
   document.addEventListener('click',e=>{if(!menu.contains(e.target)&&e.target.id!=='btn-add')menu.classList.remove('open');});
@@ -14415,6 +15027,13 @@ const CSG = (function(){
     get appearance(){ return appearance; }, set appearance(v){ appearance=normApp(v); },
     bumpAppearance, applyAppearance, setRenderedView, faceSig, sigMatch,
     get renderedView(){ return renderedView; },
+    setExposure, setLighting, resetLighting, openLighting, closeLighting,
+    get lighting(){ return Object.assign({},lighting); },
+    set lighting(v){ setLighting(v); },
+    get lightDefaults(){ return Object.assign({},LIGHT_DEF); },
+    get lightLimits(){ return JSON.parse(JSON.stringify(LIGHT_LIM)); },
+    get lightPresets(){ return LIGHT_PRESETS.map(p=>({name:p.name,v:Object.assign({},p.v)})); },
+    get hemiLight(){ return hemiLight; },
     entSpin, coupledEnt, entSeg, segAlign,
     libPut, libGet, libList, libDelete, openLibrary, saveProject,
     dimHit, dimResolve, dimApply, polyCorners, cornerAt, applyCorner,

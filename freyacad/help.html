@@ -91,6 +91,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line-soft);
   <a href="#gridfinity">Gridfinity</a>
   <a href="#views">Views &amp; projection</a>
   <a href="#appearance">Colours &amp; rendered view</a>
+  <a href="#lighting">Lighting</a>
   <div class="grp">Sketching</div>
   <a href="#sketch">Making a sketch</a>
   <a href="#draw">The drawing tools</a>
@@ -286,10 +287,36 @@ levels, each overriding the one above it:</p>
 inserted part arrives in its part colour, and each component also has its own colour swatch
 in its Position panel), and <b>carry through to the drawing's shaded isometric views</b> —
 the sheet tints each body's faces with its colour.</p>
-<p>The <b>Render</b> button in the toolbar (also in the right-click View section) swaps the
-workshop look — matte grey, green edge lines — for a rendered one: your colours with a satin
-finish and no edge lines. It's presentation only; nothing about the model changes, and the
-choice is remembered.</p>
+<p>The <b>Render</b> button in the toolbar (also in the right-click Appearance section) swaps the
+workshop look — matte grey, green edge lines — for a rendered one: your colours as polished
+metal in a studio, and no edge lines. It's presentation only; nothing about the model
+changes, and the choice is remembered. How bright that render is, and how much of the studio
+the metal picks up, are yours to set — see <b>Lighting</b> below.</p>
+
+<h3 id="lighting">Lighting</h3>
+<p>The small sun beside the Render button opens <b>Lighting</b> (it's also
+<b>Lighting…</b> in the right-click View section). The panel doesn't dim the viewport,
+because you're judging the model while you drag: move a slider and the picture follows the
+thumb.</p>
+<ul>
+  <li><b>Brightness</b> — the exposure of the rendered view, 0.2 to 3. This is the one to
+      reach for if a render looks dark. The curve is filmic, so turning it up lifts the
+      mid-tones and rolls the highlights off rather than burning them to white; the gold on
+      the demo lamp holds its colour across the whole range.</li>
+  <li><b>Environment</b> — how much of the studio the metal reflects, 0 to 2. At 0 the
+      rendered view has nothing to mirror and the part goes dark and plastic; turn it up for
+      more sheen and stronger highlight streaks as you orbit.</li>
+  <li><b>Workshop light</b> — the lamp the model is actually lit by, 0.1 to 1.2. This one
+      works in <em>both</em> views: if the matte workshop view reads too dim on your screen,
+      this is the slider that fixes it.</li>
+</ul>
+<p>Four <b>presets</b> set all three together — <b>Studio</b> (the default), <b>Bright</b>,
+<b>Soft</b> and <b>Moody</b>. They're conveniences, not modes: click one to get near what you
+want, then move any slider from there and nothing snaps back. <b>Reset</b> returns the
+shipped defaults and forgets the setting.</p>
+<p>Lighting is remembered in <em>this browser, on this computer</em> — not in the part file,
+so a model you send someone opens under their lighting, not yours. Clearing the browser's
+site data forgets it, and so does Reset.</p>
 
 <h2 id="sketch">Making a sketch</h2>
 <p>One tool, one click: pick <b>Sketch</b> (under Features, in the Add menu or the
@@ -696,6 +723,11 @@ sketch, or an existing solid — stay greyed out until it exists.</p>
     Pipework, handles, trim, cable runs, O-ring grooves.</td></tr>
   <tr><td><b>Swept cut</b></td><td>Two sketches + a solid</td><td>The same carry, subtracted.
     Channels and bores that do not run straight.</td></tr>
+  <tr><td><b>Lofted boss</b></td><td>Two or more sketches</td><td>Skins a surface through a
+    run of profiles in the order you list them. Transitions — square to round, a tapered
+    neck, a boat hull.</td></tr>
+  <tr><td><b>Lofted cut</b></td><td>Two or more sketches + a solid</td><td>The same skin,
+    subtracted. Tapered pockets and funnelled holes.</td></tr>
   <tr><td><b>Fillet</b></td><td>A solid</td><td>Rounds edges to a radius. Softens corners
     and removes stress risers.</td></tr>
   <tr><td><b>Chamfer</b></td><td>A solid</td><td>Cuts a flat bevel on an edge. Good for
@@ -786,7 +818,31 @@ feature.</p>
   <p>The path has to be <b>one connected run</b>. Several lines drawn end to end are joined
   automatically, but a gap, a fork or a stray second line is refused rather than guessed at.
   A sweep also cannot twist along its path or change section as it goes, and it takes one path
-  rather than a path plus guide curves.</p>
+  rather than a path plus guide curves. Where the section has to change, use a
+  <a href="#loft">loft</a>.</p>
+</div>
+<h3 id="loft">Lofting through profiles</h3>
+<p>A loft needs <b>two or more</b> sketches and skins a surface through them. Draw each
+section on its own plane — the origin planes, a datum plane, or a flat face of the model —
+then pick <b>Lofted boss</b> or <b>Lofted cut</b>. The panel's <b>Profiles</b> row is an
+<b>ordered list</b>: one drop-down per section, with <b>↑</b> and <b>↓</b> to move a section
+along the run, <b>×</b> to drop it and <b>+ Add a profile</b> for the next.</p>
+<p><b>The order is the shape.</b> The skin runs through the sections top to bottom of that
+list, so moving a row is not tidying up — it builds a different solid. The numbers down the
+left are the run.</p>
+<p><b>Ruled</b> joins each pair of sections with straight sides, so three circles come out as
+two cones stacked. Leave it off — the default — and one smooth surface is fitted down the
+whole run, which is what turns the same three circles into a waisted neck.</p>
+<p><b>One closed contour per sketch.</b> A loft pairs its sections up wire by wire, and a
+sketch holding two loops gives no answer to which loop pairs with which. The biggest closed
+region of each sketch is the section; anything else in that sketch, holes included, is left
+out. Two loops that both want lofting are two lofts.</p>
+<div class="note">
+  <span class="tag">Worth knowing</span>
+  <p>There are <b>no guide curves and no twist</b> yet, and no start or end tangency
+  condition — sections and their order are the whole control. Two sections on the same plane
+  have nothing to skin between and the feature says so rather than building an empty solid.
+  A loft can be mirrored and patterned like any other feature.</p>
 </div>
 <h3 id="text">Text on a face</h3>
 <p>Pick <b>Text on a face</b> from Add and click any <b>flat</b> face — or right-click a flat
@@ -1244,9 +1300,12 @@ three view keys — can all be changed under <b>Customise tools… → Keyboard<
       no notes or balloons, no section or detail views, and the sheet isn't saved with the
       part. Centre marks and centrelines <em>are</em> there — see
       <a href="#cmarks">Centre marks and centrelines</a>.</li>
-  <li><b>No loft, and no twist on a sweep.</b> A swept feature carries one profile along one
-      path at a constant section. There is no lofted boss between two profiles, no twist, and
-      no guide curves. See <a href="#sweep">Sweeping along a path</a>.</li>
+  <li><b>Neither sweep nor loft takes a guide curve.</b> A sweep carries one profile along
+      one path at a constant section, and cannot twist as it goes. A <b>loft</b> does exist —
+      an ordered run of two or more profiles, ruled or smooth — but it is driven by those
+      sections and their order alone: no guide curves, no twist, no start or end tangency,
+      and one closed contour per sketch. See <a href="#sweep">Sweeping along a path</a> and
+      <a href="#loft">Lofting through profiles</a>.</li>
   <li><b>A pattern can't copy a fillet or chamfer.</b> Bosses, cuts, revolves and imports
       can each be mirrored or patterned on their own; edge treatments can't, because they
       reshape the body rather than add a shape to it. Put the pattern before the fillet.</li>

@@ -1041,3 +1041,273 @@ the spout's cap), and the circular edge it clicks is still a **48**-chord circle
 Cold build of the reshaped lamp: **6.7–6.9 s** headless (it was 4.2 s), of which
 the construction is only ~1.6 s — the rest is the one batched fuse of hull +
 spout + handle + lid and the mesh that follows it.
+
+## Loft
+
+`loft` and `loftcut` are real features, and the pair is shaped like `extrude`/`cut` rather
+than like `sweep`/`swcut`: two distinct `type`s, no operation toggle in the panel.
+
+```
+{type:'loft'|'loftcut', name, profiles:[sketchId, ...], ruled:false,
+ merge:true (loft only), suppressed:false}
+```
+
+`OCK.loft(sections, {ruled})` is `BRepOffsetAPI_ThruSections(isSolid=true, ruled, 1e-6)`
+over one wire per section. Sections are plain sketch objects — the same
+`{entities,fillet,chamfer,corners,frame}` shape `applyFeature` hands to `OCK.sweep` — and each
+one's wire comes from `OCK.regions(sk,0)[0].outer.mk(false)`, so the loft, the sweep, the
+extrude and the contour picker are all reading the same builder.
+
+**One closed contour per section, and the biggest one.** `OCK.regions` sorts by area, so
+`regs[0]` is the outer region of the sketch; holes and any further region are left out. A loft
+pairs its sections up wire by wire and a sketch with two loops gives no answer to which loop
+pairs with which. Two loops that both want lofting are two lofts. The panel says so.
+
+**The winding correction is not there, and that was measured.** Every outer wire this app
+builds runs CCW about its own sketch normal, so a section on a plane that faces *back* down
+the run arrives wound the opposite way to its neighbours — the classic square-to-circle
+bowtie input. ThruSections' compatibility pass (on by default, and what also lets a four-edge
+square meet a one-edge circle at all) reverses such a wire before pairing anything up.
+Seventeen configurations were built with a normals-vs-travel-direction correction in place and
+again with it removed — square to circle, square to square, circle to circle, a flipped middle
+section of three, sections on tilted planes along a rising curve, ruled and smooth — and every
+volume agreed to the last digit. `$SP/newdemos/loftwind.js` and `lofttilt.js` are those two
+probes; `newdemos/loft.js` keeps the flipped-plane case (`sqcircFlipped`) as the standing pin.
+
+**Failure modes ThruSections actually has.** `IsDone()` returns true on a shape with no
+volume, exactly as `MakePipeShell` does — two sections on the same plane skin to nothing —
+so the volume is measured before the shape is returned. The kernel also throws (an emscripten
+number, no `.message`) rather than returning a bad status on some inputs, so the Build is
+wrapped and the throw becomes a sentence. Errors reach the feature's `error` field through the
+usual `markFeatureError`, one per cause: fewer than two profiles, a profile not picked, a
+deleted sketch, the same sketch twice in a row, an open contour, a kernel throw, an empty
+result.
+
+**Ruled and smooth are the same solid for two sections** — there is nothing to smooth
+between. The difference is real from three up: circle 3 → 6 → 3 over 12 mm measures 791.681
+ruled (exactly two cone frusta) and 972.637 smooth.
+
+**Ordered list in the panel.** `fieldOrderedList` is a new field builder beside
+`fieldSeg`/`fieldCheck`: one `<select>` per row, ↑ / ↓ / × per row, and an add button. The
+order is the shape, not housekeeping — reordering `[1,2,3]` to `[1,3,2]` on the three-circle
+case takes it from 972.637 to 199.944.
+
+**`consumedIds(f)`** is new and now answers "which sketches does this feature own" in one
+place: `f.sketchId`, then a sweep's `pathId`, then a loft's whole `profiles` run.
+`refreshTree`'s `nested`/`kidsOf`, `parentsWithSketches` and `sketchConsumedBy` all go through
+it. That last one closed a standing gap: a sweep's PATH sketch nested under its feature in the
+tree but was still drawn in the viewport, which both the tree section's own comment and
+help.html ("consumed and hidden") already claimed it was not. Consumed sketches of every kind
+are now hidden unless shown from the tree. `lastSketchId` was deliberately left alone —
+excluding consumed sketches from it would stop a sketch being used for a second feature, and
+every sketch in the lamp is consumed.
+
+**Not special-cased anywhere else.** Features serialise wholesale into `geomSignature` and the
+checkpoint keys, so edit, rebuild and rollback across a loft need no work; `scopeFloor` is
+about scoped patterns only and is untouched. `loft`/`loftcut` are in `SCOPEABLE`, so a mirror
+or pattern can copy one. `NEEDS_SKETCH` replaces the two hand-kept lists of "tools that need a
+sketch" (the Add menu's disabled set and `addFeature`'s guard), which had to agree and now
+cannot disagree.
+
+Tests: `$SP/newdemos/loft.js`, thirteen cases through `loadDocData` — cylinder against
+πr²h, square→circle bracketed by the two prism volumes, the flipped-plane repeat, three
+sections against two analytic frusta, a loftcut through a plate, a profile-sketch edit, a
+real mouse drag of the rollback bar across the loft and back, the refusals, the tree/panel,
+and the reorder. `adoptNewCommands` is pinned too: the harness seeds a pre-loft
+`fcad-model-layout` before the app script runs and checks both ids arrive in Features.
+
+## Rendered view: gold that glimmers
+
+The rendered view was `roughness 0.42 / metalness 0.06` under a single
+hemisphere light, and the demo lamp's gold came out as flat yellow plastic.
+Metal is almost entirely what it reflects, and this scene had nothing to
+reflect. So the rendered view now brings a room with it.
+
+**A procedural studio, generated in code.** `studioPanorama()` paints an
+equirectangular room into a 1024×512 canvas — graded sky, dark floor, a low
+ceiling, and seven lights: six tall strips standing round the subject plus one
+wider key panel. `studioEnvTexture()` reads it back through
+`pow(byte/255, STUDIO_CURVE) * STUDIO_GAIN` (2.35 and 5.0) into a `FloatType`
+`DataTexture`, because a canvas is 8-bit and a studio is not — without that
+curve PMREM clamps the lights flat and the metal goes back to looking painted.
+`studioEnvMap()` runs it through `PMREMGenerator` on the first trip into the
+rendered view and hangs the result on `scene.environment`. Nothing is fetched.
+
+The lights' placement is not decoration. An azimuth with no light in it shows up
+as a lid that has gone dull from one particular orbit angle, which is how the
+seventh strip earned its place — `scratchpad/newdemos/reflmap.js` mirrors rays
+off the lid and prints the panorama u,v they land on, which beats guessing.
+
+Two things that bit us here:
+
+- **Do not call `PMREMGenerator.dispose()` in r128.** It disposes the shared,
+  module-level lod planes, so the *next* generator anyone builds comes up with
+  broken geometry. The generator is kept in `studioPMREM` and reused; the source
+  texture is what gets disposed.
+- **r128 never notices that `renderer.toneMapping` changed.** The curve is a
+  `#define` compiled into every shader, and `setProgram`'s change detection
+  checks encoding, envMap, fog and clipping — not tone mapping. So
+  `setRenderedView` marks every material in the scene `needsUpdate` on the
+  toggle. Without it the grid and the overlays keep their old programs and the
+  frame comes out half tone-mapped.
+
+**The materials.** `applyRenderLook` is still the only place the two looks are
+decided. Rendered view: `envMapIntensity 1`, and one rule splits plate from
+enamel on Rec.601 luma — brighter than `ENAMEL_LUMA` (0.5) gets
+`roughness 0.18 / metalness 0.96`, darker gets `0.44 / 0.70`. The lamp's gold
+`#e7bb45` is luma 0.73 and turns to plate; its teal `#17909f` is 0.43 and stays
+enamelled, which is what stopped the teal washing out to pale blue when the
+whole part first went full metal. Workshop view: unchanged `0.9 / 0.0`, plus
+`envMapIntensity 0` so the studio cannot reach it once it exists. That last part
+is load-bearing and was checked rather than assumed — same lamp, same pose, the
+build before this change against the build after: **0 of 315,000 pixels differ**,
+both cold and after a round trip through the rendered view. Shadows are
+untouched (`shadowMap` still on; the scene's only light is still the hemisphere
+one, which casts none).
+
+**Exposure is the seam for the lighting tool.** `setExposure(v)` is the only
+thing that writes `renderer.toneMappingExposure`; `renderExposure` starts at
+1.15 and clamps to 0.2–3. It is deliberately not on `__C` yet — add it there
+when the slider is wired, and drive it through the function, not the renderer.
+Note r128's ACES opens with `color *= toneMappingExposure / 0.6`, so 1.15 is a
+gain of about 1.9, and the panorama was balanced against that. The clamp is a
+fence, not a cliff: across 0.2–3 the lamp's gold median runs 84 → 174 and the
+filmic curve holds the hue at both ends, so the whole span is safe to expose
+(`scratchpad/newdemos/expo.js` walks it and prints the numbers).
+
+**Highlights over metal.** `faceHovMat` / `faceSelMat` gained `toneMapped:false`
+— they are UI, not surfaces, and the filmic curve was pulling the cyan and the
+blue back towards the metal they have to stand out against.
+
+Shots and harness: `scratchpad/lamp/glim-1..4.png` (four orbit angles),
+`glim-workshop.png` (the matte control) and `pano.png` (the room itself), driven
+by `scratchpad/newdemos/glim.js` and `pano.js`. Suites after the change: verify
+12/12, verify-live allOk, `facesel-lane.js` 14/14, `brepsel-lane.js` pins
+unchanged, no page errors.
+
+## The Lighting tool
+
+The rendered view came with a fixed exposure and a fixed environment, and the
+workshop view came with a hemisphere lamp nobody could reach. All three are now
+under a small panel — the sun beside the Render button, `Lighting…` in the
+right-click **View** section, `__C.openLighting()` from a test.
+
+**The state is one object and one key.**
+
+```js
+const LIGHT_KEY='fcad-lighting';
+const LIGHT_DEF={brightness:1.45, env:1.00, workshop:0.40};
+const LIGHT_LIM={brightness:[0.2,3], env:[0,2], workshop:[0.1,1.2]};
+const lighting=Object.assign({},LIGHT_DEF);        // the whole of it
+```
+
+`localStorage['fcad-lighting']` is that object as JSON and nothing else —
+`{"brightness":1.45,"env":1,"workshop":0.4}`. Every value clamps through
+`lightClamp` on the way in, so a hand-edited or out-of-date key cannot put the
+renderer somewhere it cannot come back from. It is display-only: not in the
+part file, not in the rebuild signature, not sent anywhere.
+
+**Everything goes through `setLighting(partial, quiet)`.** It clamps, calls
+`applyLighting()`, re-syncs the panel and writes the key. `quiet` skips the
+write, which is what `loadLighting()` on boot uses — a session that never opens
+the tool leaves **no key**, so "no stored key" stays a state that means
+something (the byte-identical test below depends on it). `resetLighting()` puts
+the defaults back and `removeItem`s the key.
+
+**`applyLighting` is deliberately three uniform writes.**
+
+```js
+hemiLight.intensity = lighting.workshop;
+setExposure(lighting.brightness);                     // the seam, unchanged
+if(renderedView) eachBodyMaterial(m=>{ m.envMapIntensity = lighting.env; });
+```
+
+In r128 all three are plain uniforms refreshed from the material every frame,
+so dragging a slider costs one redraw — no `needsUpdate`, no shader rebuild
+and above all no PMREM pass. The expensive change is the tone-mapping *type*,
+and that is still only `setRenderedView`'s business. Do not add a
+`needsUpdate` here "for safety": it turns a smooth drag into a recompile
+storm across every cached material.
+
+`setExposure` stays the only writer of `renderer.toneMappingExposure` and is
+now also the only writer of `lighting.brightness` — the old `renderExposure`
+variable is gone rather than mirrored, because a mirror of a slider drifts.
+`eachBodyMaterial(fn)` is new and is the single list of what the two looks are
+applied to (`solidMat`, both material caches, `resultMeshes`, `asmMeshes`);
+`setRenderedView` was rewritten to walk it too, so the live sliders and the
+view toggle can never reach different sets.
+
+**The hemisphere is the honest one.** It is still the scene's only real light,
+so `workshop` changes the matte view AND fills the rendered one (the enamel
+rule leaves 30% diffuse on dark colours). That is the point: a user who finds
+the workshop dim now has the slider for it. Measured on the lamp, the workshop
+frame mean runs 6.3 → 54.7 across 0.1–1.2, with 0.4 (19.8) unchanged as the
+default.
+
+**Presets** are conveniences, not modes — a preset writes all three and then
+gets out of the way, and moving a slider afterwards just unlights the button.
+
+| | brightness | env | workshop |
+|---|---|---|---|
+| **Studio** (default) | 1.45 | 1.00 | 0.40 |
+| **Bright** | 2.00 | 1.40 | 0.80 |
+| **Soft** | 1.20 | 0.65 | 0.75 |
+| **Moody** | 0.85 | 1.20 | 0.15 |
+
+**The default exposure was raised, and it was measured first.**
+`scratchpad/newdemos/lightprobe.js` walks exposure at four orbit poses and
+prints the gold's median, p99, and the share that has gone cream (r and g both
+past 235):
+
+```
+ exp   p50   p99   cream   clipped
+ 1.00  105   235   0.018   0
+ 1.15  113   237   0.049   0        <- what the studio shipped with
+ 1.45  126   240   0.053   0.0001   <- now
+ 1.85  140   240   0.043   0.0001
+ 2.20  150   240   0.055   0.0001
+```
+
+The filmic curve pins p99 at ~240 across the whole span, so nothing here is a
+clipping decision — it is taste, and the taste is that past about 1.7 the
+lid's gradient flattens to pale yellow (`scratchpad/lamp/expcmp-*.png` are the
+four candidates side by side). 1.45 is a ~12% lift on the mid-tones for free.
+The top of the range is left to the slider.
+
+**The workshop view is untouched, and that is tested rather than asserted.**
+`scratchpad/newdemos/lighttool.js` check 8 asks git for `HEAD:freyacad/index.html`
+(read-only, `git show` of a blob), serves those bytes in place of the file on a
+second port, loads the lamp in both, and compares the workshop frame: **0 of
+315,000 pixels differ, max channel delta 0**, with no stored key present. That
+check is the one to keep green — it is what lets the next person change the
+lighting defaults without wondering whether they moved somebody's baseline.
+
+**Three sliders, not four.** A warm/cool tint was considered and dropped: the
+only thing that could carry it is the panorama, and tinting that means a PMREM
+rebuild on every drag — the one cost this design is built to avoid. A
+directional key light would have been the other candidate, but at the intensity
+0 it would need to ship at (to keep the workshop view identical) it is a slider
+that does nothing until you touch it, and shadows on top. The probe shows all
+three shipped sliders move the picture monotonically and independently, which
+is the bar a fourth would have had to clear.
+
+**The top bar.** Measured before the button went in: at 1400px the bar is
+already 41px wider than the window — the spacer is collapsed to 0 and
+Print/Export loses letters. So Lighting is **icon-only** (33px, the width of
+Undo/Redo), and `.tb-gap` — the decorative 26px before Save/Print — was made
+shrinkable (`flex:0 1 auto;min-width:6px`) so it gives that space back only
+when the bar is over budget and looks unchanged when it isn't. Net cost at
+1400px is about 20px. The bar being over budget at all is older than this
+change and still wants solving.
+
+**`__C` gained** `setExposure`, `setLighting`, `resetLighting`, `openLighting`,
+`closeLighting`, `lighting` (a copy, settable), `lightDefaults`, `lightLimits`,
+`lightPresets` and `hemiLight`.
+
+Suites after the change: verify 12/12 (identical to `ver-lamp2.json` ignoring
+ms), verify-live allOk, `facesel-lane.js` 14/14, `brepsel-lane.js` pins
+unchanged (47/21/2, 48/48), `lighttool.js` 10/10, no page errors. The only
+thing that moved anywhere is the model menu's entry count — 29→30 and 28→29 in
+facesel's two menu assertions — which is `v_light` arriving. Shots:
+`scratchpad/lamp/light-default.png`, `light-bright.png`, `light-moody.png`,
+`light-workshop.png`, `light-dialog.png`.
