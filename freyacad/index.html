@@ -1579,6 +1579,822 @@ const CSG = (function(){
                                   :'Workshop view — matte with edges');
   }
 
+  /* ---- the document's own lights ----------------------------------------
+     The three sliders above are a PREFERENCE: they live in localStorage and
+     follow the browser, so a model you send someone opens under their
+     lighting. These are the opposite — lamps the user places in the scene,
+     saved INSIDE the .part file and travelling with it, the way the colours
+     do. The panel says which is which, because the difference is the whole
+     point.
+
+     A light is plain JSON and nothing else. No three.js object, no matrix, no
+     shadow camera is ever stored, so a file written by one build opens in any
+     other and a light can be hand-edited without breaking anything:
+
+       {id, name, type:'point'|'spot'|'directional',
+        pos:[x,y,z], dir:[x,y,z], color:'#rrggbb', intensity,
+        distance, angle, penumbra, shadow, on}
+
+     `dir` is the direction the light SHINES, a unit vector — not a target
+     point, so moving a light never changes where it aims. A point light has
+     no aim at all; its dir is kept (swapping type and back must not lose it)
+     but neither used nor shown.
+
+     Display only, all of it: no light reaches geometry, the rebuild
+     signature, STL/3MF/STEP, a drawing view or a print. */
+  const LIGHT_TYPES=[{v:'point',l:'Point'},{v:'spot',l:'Spot'},{v:'directional',l:'Sun'}];
+  const LIGHT_NEW={type:'spot',intensity:0.9,color:'#ffffff',distance:0,
+                   angle:0.6,penumbra:0.35,shadow:true,on:true};
+  /* Every shadow-casting light is one more full render of the model into a
+     depth map — SIX more for a point light, which draws a cube — and one more
+     map for the body shader to sample per fragment, which turns out to be the
+     bigger half. Measured on the demo lamp at 1400x900 on the suites'
+     software rasteriser (ratios, not milliseconds: a real GPU is an order of
+     magnitude quicker): the empty frame is 1.0, one shadow-casting lamp 1.6,
+     two 2.1, four 3.6. Lamps with their shadow OFF are nearly free — eight of
+     them cost 1.7. Each shadow map also spends a texture unit in the body
+     shader. Four is where it stops being free, so four is the cap — and it is
+     a CAP, not a silent drop: lamps past it still light the scene, and the
+     panel names them and says why. */
+  const LIGHT_SHADOW_CAP=4;
+  /* A light near the horizon throws the model's shadow towards infinity, and
+     a shadow frustum that wide has no resolution left for the model itself.
+     Past this many model-radii from the centre the shadow simply stops rather
+     than being drawn as mush. */
+  const LIGHT_SHADOW_SPAN=6;
+  const LIGHT_INT_LIM=[0,8], LIGHT_DIST_LIM=[0,4000];
+  const LIGHT_ANG_LIM=[0.05,1.4];
+  let lights=[];            // the records — this IS the document's lighting
+  let lightUid=1;
+  let lightSel=null;        // id of the light the gizmo is on, or null
+  let lightShadowSkipped=[];// names the cap turned down, for the panel to say
+  const lightObj=new Map(); // id -> {light,target,type} — the scene side
+  const groundShadowMat=ground.material;   // the shipped invisible floor
+  let groundLitMat=null;
+  /* Dark enough to stay a backdrop, matte enough to show a soft shadow edge,
+     and barely reflective so the rendered view's studio does not turn it into
+     a mirror the part is standing on. Built on first use: a session with no
+     lamps never makes it. */
+  function groundLit(){
+    if(!groundLitMat){
+      groundLitMat=new THREE.MeshStandardMaterial({color:0x171f28,roughness:0.97,metalness:0});
+      groundLitMat.envMapIntensity=0.15;
+    }
+    return groundLitMat;
+  }
+
+  const ltNum=(v,d)=>{ const n=+v; return isFinite(n)?n:d; };
+  const ltClamp=(v,r)=>Math.max(r[0],Math.min(r[1],v));
+  const ltHex=(c,d)=>(typeof c==='string'&&/^#[0-9a-fA-F]{6}$/.test(c))?c.toLowerCase():d;
+  function ltVec(a,d){
+    if(!Array.isArray(a))return d.slice();
+    return [ltNum(a[0],d[0]),ltNum(a[1],d[1]),ltNum(a[2],d[2])];
+  }
+  function ltUnit(a,d){
+    const v=ltVec(a,d), L=Math.hypot(v[0],v[1],v[2]);
+    if(!(L>1e-9))return d.slice();
+    return [+(v[0]/L).toFixed(6),+(v[1]/L).toFixed(6),+(v[2]/L).toFixed(6)];
+  }
+  /* Every record that reaches the app goes through here, whether it came from
+     a file, an autosave, a test or the panel. Anything unrecognised falls back
+     to the shipped default rather than throwing — a hand-edited file must open
+     with a dull light in it, not a blank page. */
+  function normLight(l,i){
+    l=l||{};
+    const t=LIGHT_TYPES.some(x=>x.v===l.type)?l.type:LIGHT_NEW.type;
+    return {
+      id: ltNum(l.id,0)||(lightUid++),
+      name: (typeof l.name==='string'&&l.name.trim())?l.name.slice(0,40)
+            :('Light '+((i|0)+1)),
+      type: t,
+      pos: ltVec(l.pos,[0,10,0]),
+      dir: ltUnit(l.dir,[0,-1,0]),
+      color: ltHex(l.color,LIGHT_NEW.color),
+      intensity: ltClamp(ltNum(l.intensity,LIGHT_NEW.intensity),LIGHT_INT_LIM),
+      distance: ltClamp(ltNum(l.distance,LIGHT_NEW.distance),LIGHT_DIST_LIM),
+      angle: ltClamp(ltNum(l.angle,LIGHT_NEW.angle),LIGHT_ANG_LIM),
+      penumbra: ltClamp(ltNum(l.penumbra,LIGHT_NEW.penumbra),[0,1]),
+      shadow: l.shadow!==false,
+      on: l.on!==false
+    };
+  }
+  const lightClone=l=>JSON.parse(JSON.stringify(l));
+  const lightById=id=>lights.find(l=>l.id===id)||null;
+  const lightsEmpty=()=>lights.length===0;
+  /* Shadow maps are re-rendered only when something that casts one moves —
+     orbiting the camera does not change a shadow, and paying for four extra
+     passes a frame to prove that is the difference between smooth and not.
+     Every mutation below ends here; so does the rebuild tail. */
+  function lightDirty(){ renderer.shadowMap.needsUpdate=true; }
+  renderer.shadowMap.autoUpdate=false;   // see lightDirty
+  lightDirty();
+
+  /* ---- the scene side ---- */
+  function lightMake(rec){
+    let L;
+    if(rec.type==='directional')L=new THREE.DirectionalLight(0xffffff,1);
+    else if(rec.type==='spot')L=new THREE.SpotLight(0xffffff,1);
+    else L=new THREE.PointLight(0xffffff,1);
+    L.name='userLight';
+    L.userData.userLight=rec.id;
+    L.castShadow=false;
+    L.shadow.mapSize.set(1024,1024);
+    /* A spot's and a sun's target is an Object3D three.js reads matrixWorld
+       from. It does NOT have to be in the scene as long as somebody keeps
+       that matrix current — which we do, on every move — and keeping it out
+       leaves the scene graph exactly as tidy as it was. */
+    const target=(L.isSpotLight||L.isDirectionalLight)?new THREE.Object3D():null;
+    if(target)L.target=target;
+    scene.add(L);
+    return {light:L,target,type:rec.type};
+  }
+  function lightDrop(o){
+    if(o.light.parent)o.light.parent.remove(o.light);
+    if(o.light.shadow&&o.light.shadow.map){ o.light.shadow.map.dispose(); o.light.shadow.map=null; }
+    o.light.dispose&&o.light.dispose();
+  }
+  function lightApply(rec,o,castsShadow){
+    const L=o.light;
+    L.color.set(rec.color);
+    L.intensity=rec.intensity;
+    L.visible=!!rec.on;                 // an invisible light is skipped entirely
+    L.position.set(rec.pos[0],rec.pos[1],rec.pos[2]);
+    if(L.isPointLight||L.isSpotLight){
+      /* decay 1 with distance 0 is three.js's "no falloff" — a lamp you drag
+         across a 300 mm baseplate keeps the brightness you set it to. Give it
+         a Reach and it fades out linearly to nothing at that radius. */
+      L.distance=rec.distance||0; L.decay=1;
+    }
+    if(L.isSpotLight){ L.angle=rec.angle; L.penumbra=rec.penumbra; }
+    if(o.target){
+      o.target.position.set(rec.pos[0]+rec.dir[0],rec.pos[1]+rec.dir[1],rec.pos[2]+rec.dir[2]);
+      o.target.updateMatrixWorld(true);
+    }
+    L.castShadow=!!(rec.on&&rec.shadow&&castsShadow);
+    if(L.castShadow)lightFitShadow(rec,L);
+  }
+  /* The whole scene reconciled against the records: build what is new, drop
+     what is gone, rebuild a light whose TYPE changed (a spot cannot become a
+     sun in place), and hand out the shadow budget in list order. */
+  function lightSync(){
+    for(const [id,o] of [...lightObj])
+      if(!lights.some(l=>l.id===id)){ lightDrop(o); lightObj.delete(id); }
+    let left=LIGHT_SHADOW_CAP;
+    lightShadowSkipped=[];
+    for(const rec of lights){
+      let o=lightObj.get(rec.id);
+      if(o&&o.type!==rec.type){ lightDrop(o); lightObj.delete(rec.id); o=null; }
+      if(!o){ o=lightMake(rec); lightObj.set(rec.id,o); }
+      const wants=!!(rec.on&&rec.shadow), grant=wants&&left>0;
+      if(wants&&!grant)lightShadowSkipped.push(rec.name);
+      if(grant)left--;
+      lightApply(rec,o,grant);
+    }
+    /* Two floors, one plane — and this is the change that makes a shadow
+       worth casting. With no lamps the floor is the ShadowMaterial it has
+       always been: invisible, and only ever a darkening. That is fine when
+       nothing casts. The moment a lamp does, an invisible floor is the WRONG
+       floor — a 30% black wash over a near-black backdrop is a shadow nobody
+       can see, which is exactly what the first build of this did. So the
+       floor becomes a real matte surface for the lamps to light, and the
+       shadow is the part of it they do not reach. It goes straight back to
+       the ShadowMaterial when the last lamp goes, which is part of what keeps
+       a document with no lights pixel-identical to the build before any of
+       this landed. */
+    ground.material=lights.some(l=>l.on)?groundLit():groundShadowMat;
+    lightDirty();
+  }
+
+  /* ---- fitting the shadow camera to the model ----------------------------
+     The requirement is "the shadow covers the WHOLE model", and the classic
+     way to fail it is to size the frustum to the model's own bounding box. A
+     shadow map records the CASTERS, but the shader only darkens a RECEIVER
+     whose position falls inside that same map — so a model-sized frustum
+     leaves the shadow on the ground cut off at the model's footprint, with a
+     hard straight edge where the frustum ended.
+
+     So the set of points the camera has to contain is the model's eight
+     corners AND where each of those corners lands on the ground under THIS
+     light. Nothing here is hardcoded: measured, the demo lamp gets a 51-unit
+     sun frustum and a Gridfinity baseplate five times its size gets 285. */
+  function lightCover(rec){
+    const box=partBox(); if(!box)return null;
+    const c=box.getCenter(new THREE.Vector3());
+    const r=Math.max(0.25,box.getSize(new THREE.Vector3()).length()*0.5);
+    const pts=[];
+    for(let i=0;i<8;i++)pts.push(new THREE.Vector3(
+      (i&1)?box.max.x:box.min.x,(i&2)?box.max.y:box.min.y,(i&4)?box.max.z:box.min.z));
+    const gy=ground.position.y;
+    const lp=new THREE.Vector3(rec.pos[0],rec.pos[1],rec.pos[2]);
+    const dv=new THREE.Vector3(rec.dir[0],rec.dir[1],rec.dir[2]);
+    if(dv.lengthSq()<1e-12)dv.set(0,-1,0); else dv.normalize();
+    const lim=r*LIGHT_SHADOW_SPAN, d=new THREE.Vector3();
+    const all=pts.slice();
+    for(const p of pts){
+      if(rec.type==='directional')d.copy(dv);
+      else { d.copy(p).sub(lp); if(d.lengthSq()<1e-12)continue; d.normalize(); }
+      if(d.y>-1e-4)continue;                     // this ray never reaches the floor
+      const t=(gy-p.y)/d.y; if(t<=0)continue;    // the floor is behind it
+      const g=p.clone().addScaledVector(d,t), off=g.sub(c); off.y=0;
+      if(off.length()>lim)off.setLength(lim);    // see LIGHT_SHADOW_SPAN
+      all.push(new THREE.Vector3(c.x+off.x,gy,c.z+off.z));
+    }
+    return {pts:all,c,r};
+  }
+  const _ltInv=new THREE.Matrix4(), _ltV=new THREE.Vector3(), _ltAx=new THREE.Vector3();
+  function lightFitShadow(rec,L){
+    const cov=lightCover(rec); if(!cov)return;   // nothing modelled yet
+    const sh=L.shadow, cam=sh.camera;
+    /* Acne scales with the model: a 400 mm plate and a 3 mm boss cannot share
+       one constant. normalBias pushes the lookup along the surface normal,
+       which is the one that survives a grazing light. */
+    sh.normalBias=Math.max(0.008,cov.r*0.02);
+    sh.bias=-0.0004;
+    if(L.isDirectionalLight){
+      /* Replicate exactly what DirectionalLightShadow.updateMatrices will do
+         at draw time — camera at the light, lookAt the target, r128's default
+         up — then measure the cover points in THAT camera's space. Sizing
+         from a bounding sphere about the model centre instead leaves the
+         frustum off-axis and clips one side of the shadow. */
+      cam.position.copy(L.position);
+      cam.lookAt(L.target.position);
+      cam.updateMatrixWorld();
+      _ltInv.copy(cam.matrixWorld).invert();
+      let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity,z0=Infinity,z1=-Infinity;
+      for(const p of cov.pts){
+        _ltV.copy(p).applyMatrix4(_ltInv);
+        if(_ltV.x<x0)x0=_ltV.x; if(_ltV.x>x1)x1=_ltV.x;
+        if(_ltV.y<y0)y0=_ltV.y; if(_ltV.y>y1)y1=_ltV.y;
+        if(_ltV.z<z0)z0=_ltV.z; if(_ltV.z>z1)z1=_ltV.z;
+      }
+      const pad=Math.max(0.05,cov.r*0.06);
+      cam.left=x0-pad; cam.right=x1+pad; cam.bottom=y0-pad; cam.top=y1+pad;
+      /* a camera looks down its own -Z, so the NEAR plane is the least
+         negative z the model reaches */
+      cam.near=Math.max(0.02,-z1-pad);
+      cam.far=Math.max(cam.near+0.1,-z0+pad);
+      cam.updateProjectionMatrix();
+      return;
+    }
+    /* Spot and point: the frustum's shape is the cone (three.js sets the fov
+       from light.angle) or the cube, so only the depth range is ours. */
+    const lp=L.position;
+    if(L.isSpotLight){ _ltAx.copy(L.target.position).sub(lp);
+      if(_ltAx.lengthSq()<1e-12)_ltAx.set(0,-1,0); _ltAx.normalize(); }
+    let dn=Infinity,df=-Infinity;
+    for(const p of cov.pts){
+      _ltV.copy(p).sub(lp);
+      const t=L.isSpotLight?_ltV.dot(_ltAx):_ltV.length();
+      if(t<dn)dn=t; if(t>df)df=t;
+    }
+    const pad=Math.max(0.05,cov.r*0.08);
+    cam.near=Math.max(0.02,dn-pad);
+    cam.far=Math.max(cam.near+0.1,df+pad);
+    /* three.js overrides far with light.distance when there is one, and that
+       is right — a lamp that reaches 50 mm casts nothing at 60. */
+    cam.updateProjectionMatrix();
+  }
+  /* The model changed shape, or was rolled back, or a demo landed: every
+     shadow frustum is now the wrong size. Called from the rebuild tail. */
+  function lightRefit(){
+    if(!lights.length)return;
+    for(const rec of lights){
+      const o=lightObj.get(rec.id);
+      if(o&&o.light.castShadow)lightFitShadow(rec,o.light);
+    }
+    lightDirty();
+  }
+
+  /* ---- the one way in ---- */
+  function setLights(arr,quiet){
+    lights=(Array.isArray(arr)?arr:[]).map((l,i)=>normLight(l,i));
+    /* ids must be unique and the counter has to clear them, or a light added
+       after a load would collide with one from the file */
+    const seen=new Set();
+    for(const l of lights){
+      while(seen.has(l.id))l.id=lightUid++;
+      seen.add(l.id); if(l.id>=lightUid)lightUid=l.id+1;
+    }
+    if(!lights.some(l=>l.id===lightSel))lightSel=null;
+    lightSync(); lightGizBuild(); lightRows();
+    if(!quiet&&typeof scheduleAutosave==='function')scheduleAutosave();
+    return lights.map(lightClone);
+  }
+  function resetLights(){ lights=[]; lightSel=null; lightSync(); lightGizBuild(); lightRows(); }
+  /* Somewhere sensible RELATIVE TO THE MODEL, never at the origin inside it,
+     and never on top of the last one: successive lights walk a ring above and
+     around the part, alternating height, and aim at its centre. */
+  function lightPlaceNew(){
+    const box=partBox();
+    const c=box?box.getCenter(new THREE.Vector3()):new THREE.Vector3(0,2,0);
+    const r=box?Math.max(0.5,box.getSize(new THREE.Vector3()).length()*0.5):6;
+    const n=lights.length;
+    const a=n*2.399963+0.9;              // golden angle: no two land together
+    const R=r*1.45, h=c.y+r*(1.0+0.3*(n%3));
+    const pos=[+(c.x+Math.cos(a)*R).toFixed(3),+h.toFixed(3),+(c.z+Math.sin(a)*R).toFixed(3)];
+    const d=c.clone().sub(new THREE.Vector3(pos[0],pos[1],pos[2]));
+    if(d.lengthSq()<1e-9)d.set(0,-1,0);
+    d.normalize();
+    return {pos,dir:[+d.x.toFixed(6),+d.y.toFixed(6),+d.z.toFixed(6)]};
+  }
+  /* "Light 3" twice over is confusing, and deleting the middle of three used
+     to produce exactly that. Count up until the name is free. */
+  function lightFreeName(){
+    let n=lights.length+1;
+    while(lights.some(l=>l.name==='Light '+n))n++;
+    return 'Light '+n;
+  }
+  function addLight(type){
+    const p=lightPlaceNew();
+    const rec=normLight(Object.assign({},LIGHT_NEW,p,
+      {type:LIGHT_TYPES.some(x=>x.v===type)?type:LIGHT_NEW.type,
+       id:lightUid++,name:lightFreeName()}),lights.length);
+    lights.push(rec);
+    lightSel=rec.id;
+    lightSync(); lightGizBuild(); lightRows();
+    if(typeof scheduleAutosave==='function')scheduleAutosave();
+    return lightClone(rec);
+  }
+  function removeLight(id){
+    const i=lights.findIndex(l=>l.id===id); if(i<0)return false;
+    lights.splice(i,1);
+    if(lightSel===id)lightSel=lights.length?lights[Math.min(i,lights.length-1)].id:null;
+    lightSync(); lightGizBuild(); lightRows();
+    if(typeof scheduleAutosave==='function')scheduleAutosave();
+    return true;
+  }
+  /* A partial patch, clamped through normLight so the panel, a drag and a
+     test all reach the record the same way. `live` is a drag mid-flight: the
+     scene follows the hand, the row and the autosave wait for the drop. */
+  function updateLight(id,patch,live){
+    const i=lights.findIndex(l=>l.id===id); if(i<0)return null;
+    lights[i]=normLight(Object.assign({},lights[i],patch||{}),i);
+    lights[i].id=id;
+    lightSync();
+    /* mid-drag only the transform moved, so the gizmo is nudged; off-drag the
+       type, the colour or the switch may have changed what it is made of */
+    if(live)lightGizTick(); else lightGizBuild();
+    if(!live){ lightRows(); if(typeof scheduleAutosave==='function')scheduleAutosave(); }
+    return lightClone(lights[i]);
+  }
+  function selectLight(id){
+    lightSel=lightById(id)?id:null;
+    lightGizBuild(); lightRows();
+    /* the panel is taller than the viewport once a lamp is open, so bring
+       the one just picked into view rather than leaving it below the fold */
+    const b=document.getElementById('lt-lprops');
+    if(b&&b.scrollIntoView)try{ b.scrollIntoView({block:'nearest'}); }catch(_){ }
+    return lightSel;
+  }
+
+  /* ---- the viewport gizmo ------------------------------------------------
+     CONTRACT: nothing below is in the scene unless the Lights section is
+     open. Fourteen suites take screenshots and count scene objects, and a
+     stray marker would break them — and, worse, would show up in the user's
+     renders and drawing views. So the whole group is ADDED on open and
+     REMOVED (not hidden) on close, and every piece of it carries
+     userData.lightGiz and castShadow:false, the way userData.faceCol and
+     userData.faceHl already mark the overlays every sweep in the app skips.
+
+     r128 core has no TransformControls and vendoring one is not on the table
+     (the offline service worker and the preload hints would both have to
+     learn about a new file), so the handles are hand-rolled. */
+  let lightGiz=null, lightGizOn=false, lightPick=[], lightDrag=null;
+  const LT_AXCOL=[0xc0584f,0x5a9e6f,0x4f86c0];   // X/Y/Z, the origin-axis colours
+  const LT_AIMCOL=0xFBBC05;
+  let _ltGeo=null;
+  function ltGeo(){
+    if(!_ltGeo)_ltGeo={
+      ball:new THREE.SphereGeometry(0.38,18,12),
+      grip:new THREE.SphereGeometry(0.30,14,10),
+      cone:new THREE.ConeGeometry(0.26,0.72,14),
+      rod:new THREE.CylinderGeometry(0.055,0.055,1,8),
+      /* A unit beam: apex at the origin, rim at y=1 radius 1, drawn as the
+         ring plus four ribs so it reads as a cone from any angle. Scaled
+         non-uniformly at draw time — x,z by tan(angle)*len, y by len — so a
+         change of cone angle never rebuilds a buffer. */
+      beam:(()=>{ const N=40, p=[];
+        const rimPt=i=>{ const a=i/N*Math.PI*2; return new THREE.Vector3(Math.cos(a),1,Math.sin(a)); };
+        for(let i=0;i<N;i++){ p.push(rimPt(i),rimPt(i+1)); }
+        for(let i=0;i<4;i++)p.push(new THREE.Vector3(0,0,0),rimPt(i*N/4));
+        return new THREE.BufferGeometry().setFromPoints(p); })()
+    };
+    return _ltGeo;
+  }
+  const ltMat=(hex,op)=>new THREE.MeshBasicMaterial({color:hex,transparent:true,
+    opacity:op==null?0.95:op,depthTest:false,depthWrite:false});
+  /* One place that stamps the contract on every piece: no shadow either way,
+     drawn over the solid (a handle you cannot see is a handle you cannot
+     grab), and tagged so nothing else in the app touches it. */
+  function ltPiece(parent,o,tag){
+    o.castShadow=false; o.receiveShadow=false;
+    o.renderOrder=12; o.userData.lightGiz=true;
+    if(tag){ o.userData.ltPick=tag; lightPick.push(o); }
+    parent.add(o);
+    return o;
+  }
+  const _ltUp=new THREE.Vector3(0,1,0);
+  const ltAim=(o,v)=>o.quaternion.setFromUnitVectors(_ltUp,v);  // point a Y-up primitive
+  /* Rebuilt from scratch whenever the list or the selection changes — a
+     couple of dozen small meshes over shared geometry. The per-frame work is
+     lightGizTick, which only moves and scales what is already here. */
+  function lightGizBuild(){
+    if(lightGiz){
+      if(lightGiz.parent)lightGiz.parent.remove(lightGiz);
+      lightGiz.traverse(o=>{ if(o.material)o.material.dispose(); });  // geometry is shared
+      lightGiz=null;
+    }
+    lightPick=[];
+    if(!lightGizOn||docMode!=='part'||!lights.length)return;
+    const G=ltGeo();
+    lightGiz=new THREE.Group();
+    lightGiz.userData.lightGiz=true; lightGiz.name='lightGizmo';
+    for(const rec of lights){
+      const sel=rec.id===lightSel;
+      /* a lamp that is switched off still has to be findable, so it greys
+         rather than disappearing */
+      const col=new THREE.Color(rec.color);
+      const body=(rec.on?col:col.lerp(new THREE.Color(0x39434e),0.78)).getHex();
+      const g=new THREE.Group(); g.userData.lightGiz=true;
+      g.userData.lightId=rec.id; lightGiz.add(g);
+      ltPiece(g,new THREE.Mesh(G.ball,ltMat(body,sel?1:0.85)),{kind:'marker',id:rec.id});
+      if(sel){   // a halo, so which lamp the handles belong to is never in doubt
+        const halo=ltPiece(g,new THREE.Mesh(G.ball,new THREE.MeshBasicMaterial({color:0xffffff,
+          transparent:true,opacity:0.2,depthTest:false,depthWrite:false})));
+        halo.scale.setScalar(1.6); halo.renderOrder=11;
+      }
+      if(rec.type!=='point'){
+        g.userData.rod=ltPiece(g,new THREE.Mesh(G.rod,ltMat(body,0.8)));
+        g.userData.head=ltPiece(g,new THREE.Mesh(G.cone,ltMat(body,0.9)));
+        if(rec.type==='spot')
+          g.userData.beam=ltPiece(g,new THREE.LineSegments(G.beam,new THREE.LineBasicMaterial(
+            {color:body,transparent:true,opacity:0.45,depthTest:false})));
+      }
+      if(!sel)continue;
+      for(let a=0;a<3;a++){                       // the three translate handles
+        const ax=new THREE.Vector3(); ax.setComponent(a,1);
+        const tag={kind:'axis',axis:a,id:rec.id};
+        const rod=ltPiece(g,new THREE.Mesh(G.rod,ltMat(LT_AXCOL[a])),tag);
+        rod.scale.set(1.5,1.7,1.5); rod.position.copy(ax).multiplyScalar(1.5); ltAim(rod,ax);
+        const tip=ltPiece(g,new THREE.Mesh(G.cone,ltMat(LT_AXCOL[a])),tag);
+        tip.position.copy(ax).multiplyScalar(2.65); ltAim(tip,ax);
+        /* An arrow drawn thin enough to see past is an arrow ten pixels wide,
+           and ten pixels is a fiddly thing to catch. So each one carries an
+           invisible sleeve around it that the ray hits: three.js raycasts an
+           object handed to it directly whether or not it is visible, so this
+           costs nothing to draw and makes the whole shaft grabbable. */
+        const fat=ltPiece(g,new THREE.Mesh(G.rod,ltMat(LT_AXCOL[a])),tag);
+        fat.visible=false; fat.scale.set(5.5,3.3,5.5);
+        fat.position.copy(ax).multiplyScalar(1.75); ltAim(fat,ax);
+      }
+      if(rec.type!=='point'){                     // and the aim handle
+        g.userData.grip=ltPiece(g,new THREE.Mesh(G.grip,ltMat(LT_AIMCOL)),
+          {kind:'aim',id:rec.id});
+        const fatg=ltPiece(g,new THREE.Mesh(G.grip,ltMat(LT_AIMCOL)),{kind:'aim',id:rec.id});
+        fatg.visible=false; fatg.scale.setScalar(2.1); g.userData.gripFat=fatg;
+      }
+    }
+    scene.add(lightGiz);
+    lightGizTick();
+  }
+  /* Positions and one scale, every frame the gizmo is up. The scale follows
+     the orbit radius, so a handle is the same size on screen whether you are
+     looking at a 3 mm boss or a 400 mm baseplate — a gizmo you cannot grab at
+     a baseplate's zoom is no gizmo at all. */
+  const _ltD=new THREE.Vector3();
+  function lightGizTick(){
+    if(!lightGiz)return;
+    const k=Math.max(0.05,controls.sph.radius*0.024);
+    for(const g of lightGiz.children){
+      const rec=lightById(g.userData.lightId); if(!rec)continue;
+      g.position.set(rec.pos[0],rec.pos[1],rec.pos[2]);
+      g.scale.setScalar(k);
+      _ltD.set(rec.dir[0],rec.dir[1],rec.dir[2]);
+      if(_ltD.lengthSq()<1e-12)_ltD.set(0,-1,0); else _ltD.normalize();
+      const u=g.userData;
+      if(u.rod){ u.rod.scale.set(1,1.5,1); u.rod.position.copy(_ltD).multiplyScalar(1.3); ltAim(u.rod,_ltD); }
+      if(u.head){ u.head.position.copy(_ltD).multiplyScalar(2.3); ltAim(u.head,_ltD); }
+      if(u.beam){ const L=3.0, R=Math.max(0.04,Math.tan(rec.angle)*L);
+        ltAim(u.beam,_ltD); u.beam.scale.set(R,L,R); }
+      if(u.grip)u.grip.position.copy(_ltD).multiplyScalar(3.3);
+      if(u.gripFat)u.gripFat.position.copy(_ltD).multiplyScalar(3.3);
+    }
+  }
+  function lightGizOpen(){ lightGizOn=true; lightGizBuild(); }
+  function lightGizClose(){ lightGizOn=false; lightDrag=null; controls.enableRotate=true; lightGizBuild(); }
+
+  /* ---- pointer ----
+     While the Lights section is open the gizmo gets first refusal on a left
+     click, ahead of edge and face picking — but only when it is actually hit,
+     so a click anywhere else still selects geometry exactly as before, and
+     the app's own selection state is never written by any of this. */
+  function ltNdc(e){
+    const r=canvas.getBoundingClientRect();
+    ndc.x=((e.clientX-r.left)/r.width)*2-1;
+    ndc.y=-((e.clientY-r.top)/r.height)*2+1;
+  }
+  /* A handle beats a marker whatever is nearer: the handles are the reason
+     the gizmo is on screen, and one of them always overlaps its own lamp. */
+  function lightHit(e){
+    if(!lightGizOn||!lightGiz||!lightPick.length)return null;
+    ltNdc(e); raycaster.setFromCamera(ndc,camera);
+    const hits=raycaster.intersectObjects(lightPick,false);
+    if(!hits.length)return null;
+    for(const h of hits){ const u=h.object.userData.ltPick;
+      if(u&&u.kind!=='marker')return u; }
+    return hits[0].object.userData.ltPick||null;
+  }
+  /* One step of the aim trackball: how far the pointer moved on screen turns
+     into how far the aim turns, and which way it moved turns into the axis.
+
+     The obvious mapping — screen point onto a virtual sphere — was tried
+     first and is WRONG here, because it saturates: past the sphere's own
+     silhouette there is no more ball to hold, so a long drag stops turning
+     and the aim sticks. This one has no edge to run off. The axis is the one
+     that carries the near side of the ball along the drag, which in camera
+     space is perpendicular to the movement and lying in the screen plane —
+     cross((0,0,1),(dx,-dy,0)) — and the angle is the path length, one full
+     turn per canvas height. Poles are not special to any of it: straight up
+     and straight down are two ordinary points on a great circle. */
+  function lightTurn(dx,dy,v){
+    const len=Math.hypot(dx,dy);
+    if(len<1e-9)return v;
+    const ax=new THREE.Vector3(dy,dx,0).normalize().applyQuaternion(camera.quaternion);
+    const ang=len/Math.max(1,canvas.clientHeight)*Math.PI*2;
+    return v.clone().applyAxisAngle(ax,ang).normalize();
+  }
+  /* How far along `ax` the pointer is. The drag plane is the one that
+     CONTAINS the axis and faces the camera most squarely: take the camera's
+     look direction and strip the part running along the axis. Edge on — the
+     camera staring straight down the axis — that vector vanishes and the drag
+     is meaningless anyway, so fall back to any perpendicular rather than hand
+     out a NaN position. */
+  function lightAxisT(e,origin,ax){
+    ltNdc(e); raycaster.setFromCamera(ndc,camera);
+    const view=camera.getWorldDirection(new THREE.Vector3());
+    const n=view.clone().addScaledVector(ax,-view.dot(ax));
+    if(n.lengthSq()<1e-6)n.set(ax.y,ax.z,ax.x).cross(ax);
+    if(n.lengthSq()<1e-9)return null;
+    n.normalize();
+    const hit=new THREE.Vector3();
+    if(!raycaster.ray.intersectPlane(
+        new THREE.Plane().setFromNormalAndCoplanarPoint(n,origin),hit))return null;
+    return hit.sub(origin).dot(ax);
+  }
+  function lightPointerDown(e){
+    if(!lightGizOn||docMode!=='part'||e.button!==0)return false;
+    const u=lightHit(e); if(!u)return false;
+    controls._s=0; controls.enableRotate=false;
+    try{canvas.setPointerCapture(e.pointerId);}catch(_){ }
+    if(u.kind==='marker'){
+      if(u.id!==lightSel)selectLight(u.id);
+      lightDrag={kind:'tap',id:u.id};
+      return true;
+    }
+    const rec=lightById(u.id);
+    if(!rec){ lightDrag={kind:'tap'}; return true; }
+    if(u.kind==='aim'){
+      lightDrag={kind:'aim',id:rec.id,px:e.clientX,py:e.clientY,dir:rec.dir.slice()};
+      setHint('Aiming '+rec.name+' — the whole sphere, straight up and straight down included');
+    }else{
+      const ax=new THREE.Vector3(); ax.setComponent(u.axis,1);
+      const pos=new THREE.Vector3(rec.pos[0],rec.pos[1],rec.pos[2]);
+      const t=lightAxisT(e,pos,ax);
+      lightDrag={kind:'axis',id:rec.id,ax,pos0:pos,t0:t==null?0:t};
+      setHint('Moving '+rec.name+' along '+'XYZ'[u.axis]);
+    }
+    return true;
+  }
+  function lightPointerMove(e){
+    if(!lightDrag)return false;
+    if(lightDrag.kind==='tap')return true;
+    const rec=lightById(lightDrag.id); if(!rec){ lightDrag=null; return false; }
+    if(lightDrag.kind==='axis'){
+      const t=lightAxisT(e,lightDrag.pos0,lightDrag.ax);
+      if(t==null)return true;
+      const p=lightDrag.pos0.clone().addScaledVector(lightDrag.ax,t-lightDrag.t0);
+      updateLight(rec.id,{pos:[+p.x.toFixed(3),+p.y.toFixed(3),+p.z.toFixed(3)]},true);
+    }else{
+      const dx=e.clientX-lightDrag.px, dy=e.clientY-lightDrag.py;
+      lightDrag.px=e.clientX; lightDrag.py=e.clientY;
+      const d=lightTurn(dx,dy,new THREE.Vector3(
+        lightDrag.dir[0],lightDrag.dir[1],lightDrag.dir[2]));
+      lightDrag.dir=[d.x,d.y,d.z];
+      updateLight(rec.id,{dir:[+d.x.toFixed(6),+d.y.toFixed(6),+d.z.toFixed(6)]},true);
+    }
+    return true;
+  }
+  function lightPointerUp(){
+    if(!lightDrag)return false;
+    const {id,kind}=lightDrag;
+    lightDrag=null; controls.enableRotate=true;
+    lightRows(); lightDirty();
+    if(kind!=='tap'&&typeof scheduleAutosave==='function')scheduleAutosave();
+    if(kind==='axis'){ const r=lightById(id);
+      if(r)setHint(r.name+' at '+r.pos.map(v=>v.toFixed(1)).join(', ')); }
+    return true;
+  }
+
+  /* ---- the Lights section of the Lighting panel --------------------------
+     It lives under the three sliders because that is where a user looks for
+     light, but it is a different KIND of thing and the panel says so in as
+     many words: the sliders follow the browser, the lamps follow the
+     document. Everything here writes through addLight / updateLight /
+     removeLight and reads back through lightRows, so the list, the scene and
+     the file can never disagree — the same rule the sliders already keep with
+     setLighting and syncLightDlg. */
+  const ltEl=(tag,css,txt)=>{ const e=document.createElement(tag);
+    if(css)e.style.cssText=css; if(txt!=null)e.textContent=txt; return e; };
+  const LT_SUB='font-size:10px;color:var(--muted-2);line-height:1.35;margin-top:2px';
+  const LT_LBL='font-size:11px;color:var(--muted);flex:1';
+  function ltSlider(host,label,val,min,max,step,fmt,on){
+    const row=ltEl('div','display:flex;align-items:baseline;gap:8px;margin-top:7px');
+    row.appendChild(ltEl('label',LT_LBL,label));
+    const v=ltEl('span','font-family:var(--mono);font-size:10.5px;color:var(--g-blue)',fmt(val));
+    row.appendChild(v); host.appendChild(row);
+    const s=document.createElement('input');
+    s.type='range'; s.min=min; s.max=max; s.step=step; s.value=val;
+    s.style.cssText='width:100%;margin:1px 0 0;vertical-align:middle';
+    s.addEventListener('input',()=>{ v.textContent=fmt(+s.value); on(+s.value,true); });
+    s.addEventListener('change',()=>on(+s.value,false));
+    host.appendChild(s);
+    return s;
+  }
+  function ltNumBox(host,rec,axis){
+    const w=ltEl('div','flex:1;min-width:0');
+    w.appendChild(ltEl('div','font-family:var(--mono);font-size:9.5px;color:'
+      +['#c0584f','#5a9e6f','#4f86c0'][axis],'XYZ'[axis]));
+    const inp=document.createElement('input');
+    inp.type='number'; inp.step='0.5'; inp.className='lt-pos';
+    inp.dataset.axis=String(axis);
+    inp.value=String(+rec.pos[axis].toFixed(2));
+    inp.style.cssText='width:100%;font-size:11px;padding:3px 4px';
+    inp.addEventListener('keydown',ev=>ev.stopPropagation());
+    inp.addEventListener('input',()=>{
+      const v=parseFloat(inp.value); if(!isFinite(v))return;
+      const p=lightById(rec.id).pos.slice(); p[axis]=v;
+      updateLight(rec.id,{pos:p},true);
+    });
+    inp.addEventListener('change',()=>{ lightRows(); if(typeof scheduleAutosave==='function')scheduleAutosave(); });
+    w.appendChild(inp); host.appendChild(w);
+  }
+  /* Azimuth/elevation is a READOUT, not the model: the aim is stored as a
+     vector precisely so it never has to pass through angles that go singular
+     pointing straight up. */
+  function ltAimText(rec){
+    const d=rec.dir;
+    const el=Math.asin(Math.max(-1,Math.min(1,-d[1])))*180/Math.PI;
+    const az=Math.atan2(d[0],-d[2])*180/Math.PI;
+    return 'az '+az.toFixed(0)+'° · down '+el.toFixed(0)+'°';
+  }
+  const LT_TYPE_LABEL={point:'Point',spot:'Spot',directional:'Sun'};
+  const LT_TYPE_NOTE={
+    point:'a bare bulb — throws light every way at once, so it has no aim',
+    spot:'a cone aimed where you point it, with a soft edge',
+    directional:'a sun: parallel rays, so only the aim matters, not the distance'
+  };
+  function lightRows(){
+    const host=document.getElementById('lt-lights'); if(!host)return;
+    host.innerHTML='';
+    const cnt=document.getElementById('lt-l-count');
+    if(cnt)cnt.textContent=lights.length?(lights.length+(lights.length===1?' lamp':' lamps')):'none';
+    if(docMode!=='part'){
+      host.appendChild(ltEl('div',LT_SUB+';margin-top:7px',
+        'Lights belong to a part document — open or start a part to place them.'));
+      return;
+    }
+    if(!lights.length)
+      host.appendChild(ltEl('div',LT_SUB+';margin-top:7px',
+        'No lamps yet. The workshop light above lights the model from everywhere at once; '
+        +'a lamp you place lights it from somewhere, and casts a shadow.'));
+    for(const rec of lights){
+      const sel=rec.id===lightSel;
+      const row=ltEl('div','display:flex;align-items:center;gap:7px;margin-top:6px;padding:5px 6px;'
+        +'border-radius:7px;cursor:pointer;border:1px solid '+(sel?'var(--g-blue)':'transparent')
+        +';background:'+(sel?'rgba(66,133,244,.10)':'transparent'));
+      row.className='lt-row'; row.dataset.lid=String(rec.id);
+      const dot=ltEl('span','width:11px;height:11px;border-radius:50%;flex:none;background:'
+        +rec.color+';opacity:'+(rec.on?1:0.28)+';box-shadow:0 0 6px '+(rec.on?rec.color:'transparent'));
+      row.appendChild(dot);
+      const nm=ltEl('span','flex:1;min-width:0;font-size:11.5px;white-space:nowrap;overflow:hidden;'
+        +'text-overflow:ellipsis;opacity:'+(rec.on?1:0.5),rec.name);
+      row.appendChild(nm);
+      const kind=ltEl('span','font-family:var(--mono);font-size:9.5px;color:var(--muted-2)',
+        (LT_TYPE_LABEL[rec.type]||rec.type).toLowerCase());
+      row.appendChild(kind);
+      const pw=document.createElement('button');
+      pw.className='btn-ghost lt-on'; pw.dataset.lid=String(rec.id);
+      pw.style.cssText='padding:2px 6px;font-size:10px';
+      pw.textContent=rec.on?'on':'off';
+      pw.title=rec.on?'Switch this lamp off':'Switch this lamp on';
+      pw.addEventListener('click',ev=>{ ev.stopPropagation(); updateLight(rec.id,{on:!rec.on}); });
+      row.appendChild(pw);
+      const del=document.createElement('button');
+      del.className='btn-ghost btn-danger lt-del'; del.dataset.lid=String(rec.id);
+      del.style.cssText='padding:2px 6px;font-size:11px'; del.textContent='×';
+      del.title='Remove this lamp';
+      del.addEventListener('click',ev=>{ ev.stopPropagation();
+        removeLight(rec.id); setHint('Lamp removed'); });
+      row.appendChild(del);
+      row.addEventListener('click',()=>selectLight(sel?null:rec.id));
+      host.appendChild(row);
+      if(!sel)continue;
+      /* --- the selected lamp's own controls --- */
+      const box=ltEl('div','margin:2px 0 4px;padding:8px 9px 10px;border-radius:8px;'
+        +'background:rgba(255,255,255,.03);border:1px solid var(--line)');
+      box.id='lt-lprops';
+      const nmi=document.createElement('input');
+      nmi.type='text'; nmi.id='lt-lname'; nmi.value=rec.name;
+      nmi.style.cssText='width:100%;font-size:11.5px;padding:3px 5px';
+      nmi.addEventListener('keydown',ev=>ev.stopPropagation());
+      nmi.addEventListener('change',()=>updateLight(rec.id,{name:nmi.value}));
+      box.appendChild(nmi);
+      const seg=ltEl('div','display:flex;gap:4px;margin-top:7px');
+      for(const t of LIGHT_TYPES){
+        const b=document.createElement('button');
+        b.className='btn-ghost lt-type'+(t.v===rec.type?' active':'');
+        b.dataset.ltype=t.v; b.textContent=t.l;
+        b.style.cssText='flex:1;font-size:10.5px;padding:3px 0;justify-content:center';
+        b.addEventListener('click',()=>updateLight(rec.id,{type:t.v}));
+        seg.appendChild(b);
+      }
+      box.appendChild(seg);
+      box.appendChild(ltEl('div',LT_SUB,LT_TYPE_NOTE[rec.type]));
+      const crow=ltEl('div','display:flex;align-items:center;gap:8px;margin-top:8px');
+      crow.appendChild(ltEl('label',LT_LBL,'Colour'));
+      const ci=document.createElement('input');
+      ci.type='color'; ci.id='lt-lcolor'; ci.value=rec.color;
+      ci.style.cssText='width:44px;height:22px;padding:0;border:1px solid var(--line);'
+        +'border-radius:4px;background:none;cursor:pointer';
+      ci.addEventListener('input',()=>updateLight(rec.id,{color:ci.value},true));
+      ci.addEventListener('change',()=>updateLight(rec.id,{color:ci.value}));
+      crow.appendChild(ci);
+      box.appendChild(crow);
+      ltSlider(box,'Brightness',rec.intensity,LIGHT_INT_LIM[0],LIGHT_INT_LIM[1],0.05,
+        v=>v.toFixed(2),(v,live)=>updateLight(rec.id,{intensity:v},live)).id='lt-lint';
+      if(rec.type!=='directional'){
+        ltSlider(box,'Reach',rec.distance,0,Math.max(60,LIGHT_DIST_LIM[1]/8),1,
+          v=>v?v.toFixed(0)+' mm':'unlimited',
+          (v,live)=>updateLight(rec.id,{distance:v},live)).id='lt-ldist';
+        box.appendChild(ltEl('div',LT_SUB,'how far the light carries — at 0 it never fades, '
+          +'which is usually what you want on a part'));
+      }
+      if(rec.type==='spot'){
+        ltSlider(box,'Cone',rec.angle,LIGHT_ANG_LIM[0],LIGHT_ANG_LIM[1],0.01,
+          v=>(v*180/Math.PI).toFixed(0)+'°',(v,live)=>updateLight(rec.id,{angle:v},live)).id='lt-lang';
+        ltSlider(box,'Soft edge',rec.penumbra,0,1,0.02,v=>v.toFixed(2),
+          (v,live)=>updateLight(rec.id,{penumbra:v},live)).id='lt-lpen';
+      }
+      const prow=ltEl('div','display:flex;gap:6px;margin-top:9px');
+      for(let a=0;a<3;a++)ltNumBox(prow,rec,a);
+      box.appendChild(prow);
+      box.appendChild(ltEl('div',LT_SUB,'drag the red, green and blue arrows in the viewport, '
+        +'or type a position here'));
+      if(rec.type!=='point'){
+        const arow=ltEl('div','display:flex;align-items:center;gap:8px;margin-top:8px');
+        arow.appendChild(ltEl('label',LT_LBL,'Aim'));
+        const at=ltEl('span','font-family:var(--mono);font-size:10px;color:var(--g-blue)',
+          ltAimText(rec));
+        at.id='lt-laim'; arow.appendChild(at);
+        const ab=document.createElement('button');
+        ab.className='btn-ghost'; ab.id='lt-laimat'; ab.textContent='at the model';
+        ab.style.cssText='font-size:10px;padding:2px 6px';
+        ab.title='Point this lamp at the middle of the model';
+        ab.addEventListener('click',()=>{
+          const bx=partBox(); if(!bx)return setHint('Nothing modelled to aim at yet');
+          const c=bx.getCenter(new THREE.Vector3())
+            .sub(new THREE.Vector3(rec.pos[0],rec.pos[1],rec.pos[2]));
+          if(c.lengthSq()<1e-9)return;
+          c.normalize(); updateLight(rec.id,{dir:[c.x,c.y,c.z]});
+        });
+        arow.appendChild(ab);
+        box.appendChild(arow);
+        box.appendChild(ltEl('div',LT_SUB,'drag the amber ball on the end of the arrow — '
+          +'it turns the aim anywhere on the sphere, poles included'));
+      }
+      const sh=document.createElement('label');
+      sh.className='check'+(rec.shadow?' on':''); sh.id='lt-lshadow';
+      sh.style.cssText='margin-top:10px;font-size:11.5px';
+      sh.innerHTML='<span class="box"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" '
+        +'stroke="currentColor" stroke-width="2"><path d="M2 6l3 3 5-6"/></svg></span>Casts a shadow';
+      sh.addEventListener('click',()=>updateLight(rec.id,{shadow:!lightById(rec.id).shadow}));
+      box.appendChild(sh);
+      host.appendChild(box);
+    }
+    if(lightShadowSkipped.length)
+      host.appendChild(ltEl('div','font-size:10px;color:var(--g-yellow);line-height:1.35;margin-top:7px',
+        'Shadows are capped at '+LIGHT_SHADOW_CAP+' lamps — '+lightShadowSkipped.join(', ')
+        +' still light the model but throw no shadow. Switch one of the others’ shadows off to free a slot.'));
+    const add=document.createElement('button');
+    add.className='btn-ghost'; add.id='lt-ladd'; add.textContent='+ Add light';
+    add.style.cssText='margin-top:9px;font-size:11px;width:100%;justify-content:center';
+    add.addEventListener('click',()=>{
+      const r=addLight();
+      setHint(r.name+' added — drag its arrows to move it, the amber ball to aim it');
+    });
+    host.appendChild(add);
+  }
+
   /* ---- planes / frames ---- */
   const V=(x,y,z)=>new THREE.Vector3(x,y,z);
   const DATUM={
@@ -2360,6 +3176,10 @@ const CSG = (function(){
     resetAppearance();
     if(d.app)appearance=normApp(d.app);
     appearanceRev++;
+    /* Demos ship no lamps — deliberately. The shipped models have to render
+       exactly as they always did, and models/*.sketchcad stays byte-for-byte
+       what it was. */
+    resetLights();
     rebuild();
     controls.target.set(d.cam.t[0],d.cam.t[1],d.cam.t[2]);
     controls.sph.set(d.cam.s[0],d.cam.s[1],d.cam.s[2]);
@@ -5283,6 +6103,7 @@ const CSG = (function(){
     if(typeof updateHelp==='function')updateHelp();
     if(typeof scheduleAutosave==='function')scheduleAutosave();
     syncZoomRange();   // the model may have grown or shrunk; the zoom cap follows
+    lightRefit();      // and so did every shadow frustum fitted to it
     drawTextHandle();  // the open text panel's move handle rides every rebuild
   }
 
@@ -9605,6 +10426,7 @@ const CSG = (function(){
               data:{type:'assembly',components:asm.components,mates:asm.mates}};
     const p={mode:'part', demo:demoActive||0, data:features};
     if(!appearanceEmpty())p.app=appearance;
+    if(!lightsEmpty())p.lights=lights.map(lightClone);
     return p;
   }
   function autosaveNow(){
@@ -9645,6 +10467,7 @@ const CSG = (function(){
     try{
       loadDocData(p.data);
       if(p.app){ appearance=normApp(p.app); bumpAppearance(); }
+      if(p.lights)setLights(p.lights,true);
       if(p.demo)demoActive=p.demo;
       setHint('Restored your unsaved work — Save it to a file to keep it for good');
       return true;
@@ -10595,6 +11418,7 @@ const CSG = (function(){
     closeLighting();
     const ov=document.createElement('div'); ov.id='lightdlg';
     ov.style.cssText='position:fixed;top:50px;right:14px;z-index:100000;width:min(310px,92vw);'
+      +'max-height:calc(100vh - 66px);overflow-y:auto;'
       +'background:var(--panel);border:1px solid var(--g-blue);border-radius:12px;'
       +'padding:13px 15px 11px;box-shadow:0 24px 60px -12px rgba(0,0,0,.9)';
     const row=r=>`<div style="margin-top:11px">
@@ -10622,6 +11446,14 @@ const CSG = (function(){
       </div>
       <input id="lt-detail" type="range" min="1" max="3" step="0.25" style="width:100%;margin:2px 0 1px;vertical-align:middle">
       <div style="font-size:10.5px;color:var(--muted-2);line-height:1.35">how finely curved faces are meshed — finer looks smoother and exports finer, rebuilds take longer; applies when you let go</div>
+      <div style="margin-top:15px;padding-top:12px;border-top:1px solid var(--line)">
+        <div style="display:flex;align-items:baseline;gap:8px">
+          <div style="font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-2);flex:1">Lights &middot; in the document</div>
+          <span id="lt-l-count" style="font-family:var(--mono);font-size:10px;color:var(--g-blue)"></span>
+        </div>
+        <div style="font-size:10.5px;color:var(--muted-2);line-height:1.4;margin-top:4px">Everything above is remembered in <b>this browser</b>. Lamps you place here are saved <b>in the document</b> and travel with the file &mdash; and they are the only things in the scene that cast a shadow.</div>
+        <div id="lt-lights"></div>
+      </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;padding-top:10px;border-top:1px solid var(--line)">
         <button id="lt-reset" class="btn-ghost" style="font-size:11px" title="Back to the shipped defaults, and forget the stored setting">Reset</button>
         <button id="lt-done" class="btn-primary" style="font-size:11px">Done</button>
@@ -10658,12 +11490,16 @@ const CSG = (function(){
     ov._esc=e=>{ if(e.key==='Escape'){ e.stopPropagation(); closeLighting(); } };
     document.addEventListener('keydown',ov._esc,true);
     const b=document.getElementById('btn-light'); if(b)b.classList.add('active');
+    /* the markers and handles exist only while this section does — see the
+       gizmo's contract note */
+    lightGizOpen(); lightRows();
     syncLightDlg();
   }
   function closeLighting(){
     const ov=document.getElementById('lightdlg'); if(!ov)return;
     if(ov._esc)document.removeEventListener('keydown',ov._esc,true);
     ov.remove();
+    lightGizClose();          // nothing of ours is left in the viewport
     const b=document.getElementById('btn-light'); if(b)b.classList.remove('active');
   }
   /* A view of `lighting`, never a second copy of it. Safe to call from
@@ -10708,11 +11544,16 @@ const CSG = (function(){
       if(m==='asm')
         return {fname:docName+'.assembly',
                 data:JSON.stringify({type:'assembly',components:asm.components,mates:asm.mates})};
-      /* colours ride in the file; a part without any keeps the bare-array
-         format every earlier build wrote and reads */
-      return {fname:docName+'.part',
-              data:appearanceEmpty()?JSON.stringify(features)
-                  :JSON.stringify({type:'part',appearance,features})};
+      /* Colours AND lights ride in the file; a part with neither keeps the
+         bare-array format every earlier build wrote and reads, so adding this
+         feature does not churn a single document that never used it. */
+      if(appearanceEmpty()&&lightsEmpty())
+        return {fname:docName+'.part', data:JSON.stringify(features)};
+      const o={type:'part'};
+      if(!appearanceEmpty())o.appearance=appearance;
+      if(!lightsEmpty())o.lights=lights.map(lightClone);
+      o.features=features;
+      return {fname:docName+'.part', data:JSON.stringify(o)};
   }
   /* ---- the document library: files saved IN the browser -----------------
      Save keeps documents in IndexedDB — on the user's machine, inside the
@@ -10822,12 +11663,14 @@ const CSG = (function(){
     return row;
   }
 
-  /* a .part is a bare feature array, or {type:'part',appearance,features}
-     once colours are set — every reader of part files goes through this */
+  /* a .part is a bare feature array, or {type:'part',appearance,lights,features}
+     once colours or lamps are set — every reader of part files goes through
+     this, and either key may be absent in a file written before it existed */
   function partFileData(d){
-      if(Array.isArray(d))return {features:d,appearance:null};
+      if(Array.isArray(d))return {features:d,appearance:null,lights:null};
       if(d&&d.type==='part'&&Array.isArray(d.features))
-          return {features:d.features,appearance:d.appearance||null};
+          return {features:d.features,appearance:d.appearance||null,
+                  lights:Array.isArray(d.lights)?d.lights:null};
       return null;
   }
   function loadProject(file) {
@@ -10848,11 +11691,14 @@ const CSG = (function(){
      `name` is the file's base name when one exists; the autosave restore has
      none and the document keeps its current name. */
   function loadDocData(data, name){
-              /* a part with colours saves as an object; unwrap it here so the
-                 array branch below stays the one code path for parts */
-              let app=null;
+              /* a part with colours or lamps saves as an object; unwrap it
+                 here so the array branch below stays the one code path for
+                 parts */
+              let app=null, lts=null;
               if (data && data.type==='part' && Array.isArray(data.features)) {
-                  app=data.appearance||null; data=data.features;
+                  app=data.appearance||null;
+                  lts=Array.isArray(data.lights)?data.lights:null;
+                  data=data.features;
               }
               if (Array.isArray(data)) {                    // a part file
                   if (docMode==='asm') { clearAsm(); setDocMode('part'); }
@@ -10861,9 +11707,13 @@ const CSG = (function(){
                   rollbackIndex = features.length;
                   if(name)docName=name;
                   appearance=normApp(app); appearanceRev++;
+                  /* the document's lamps travel with it — a file without any
+                     opens with none, which is what every older file is */
+                  setLights(lts||[],true);
                   selId = null; demoActive=false; closeProps(); rebuild(); refreshDemoTgl();
               } else if (data && data.type==='assembly') {  // an assembly file
                   if(name)docName=name;
+                  resetLights();          // lamps belong to a part document
                   dropAllCheckpoints();
                   features=[];rollbackIndex=0;selId=null;editing=null;demoActive=false;
                   clearAsm();
@@ -11090,11 +11940,14 @@ const CSG = (function(){
 
   /* ============================ POINTER (viewport) ============================ */
   let downX=0,downY=0,downBtn=-1;
-  let dragLight = null;
-  let dragPlane = new THREE.Plane();
-  
+
   canvas.addEventListener('pointerdown',e=>{
       downX=e.clientX; downY=e.clientY; downBtn=e.button;
+      /* A light handle under the cursor wins over everything else, but only
+         when it is actually hit — a click anywhere else picks edges and faces
+         exactly as it always did, and nothing here writes the app's own
+         selection state. */
+      if(lightPointerDown(e))return;
       if(docMode==='asm'){ asmPointerDown(e); return; }
       if(mode==='model'&&e.button===0&&(textRotHit(e)||textHandleHit(e))){
         const p0=textPlanePoint(e);
@@ -11151,6 +12004,7 @@ const CSG = (function(){
   canvas.addEventListener('pointermove',e=>{
     const r=canvas.getBoundingClientRect();ndc.x=((e.clientX-r.left)/r.width)*2-1;ndc.y=-((e.clientY-r.top)/r.height)*2+1;
     if(boxDrag){ boxDrag.x1=e.clientX; boxDrag.y1=e.clientY; drawBox(); return; }
+    if(lightPointerMove(e))return;         // a light handle in hand owns the gesture
     if(docMode==='asm'){
       if(asmDrag){ asmPointerMove(e); return; }
       if(mateSel){
@@ -11219,13 +12073,6 @@ const CSG = (function(){
       liveSketchRedraw();
       return;
     }
-    if (dragLight) {
-        raycaster.setFromCamera(ndc, camera);
-        dragPlane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()), dragLight.position);
-        const target = new THREE.Vector3();
-        if(raycaster.ray.intersectPlane(dragPlane, target)) dragLight.position.copy(target);
-        return;
-    }
     if(textDrag){
       const f=draftFeat;
       if(!f||f.type!=='text'){ textDrag=null; controls.enableRotate=true; return; }
@@ -11264,6 +12111,15 @@ const CSG = (function(){
       drawSnapMark();
       redrawDraft(p);
     } else if(mode==='model'&&!pendingFaceSketch){
+      /* A light handle under the cursor is what a click would take, so it
+         owns both the cursor and the hover — an edge lit up promising a
+         selection the click will not make is worse than no highlight. */
+      if(lightGizOn&&lightHit(e)){
+        canvas.style.cursor='move';
+        if(hoveredEdge){ hoveredEdge=null; redrawEdgeSel(); }
+        if(hoveredFace){ hoveredFace=null; drawFaceHl(); }
+        return;
+      }
       if(textRotHit(e)){ canvas.style.cursor='grab'; return; }
       if(textHandleHit(e)){ canvas.style.cursor='move'; return; }
       if(datumGroup.visible){
@@ -11288,6 +12144,7 @@ const CSG = (function(){
     }
   });
   canvas.addEventListener('pointerup',e=>{
+    if(lightPointerUp())return;
     if(docMode==='asm'){
       if(asmDrag){ asmPointerUp(); return; }
       if(Math.hypot(e.clientX-downX,e.clientY-downY)>5)return;
@@ -11365,7 +12222,6 @@ const CSG = (function(){
       }
       dragJoins=null; dragVtx=null; dragSnapPt=null; rebuild(); redrawHandles(); return;
     }
-    if(dragLight){ dragLight = null; controls.enableRotate = true; return; }
     if(textDrag){
       textDrag=null; controls.enableRotate=true;
       try{canvas.releasePointerCapture(e.pointerId);}catch(_){}
@@ -11488,6 +12344,7 @@ const CSG = (function(){
       if(snap){ applyState(snap); refreshUndoUI(); }
       dragVtx=null; dragSnapPt=null; dragJoins=null; redrawHandles();
     }
+    if(lightDrag){ lightDrag=null; controls.enableRotate=true; lightRows(); }
     if(boxDrag){ boxDrag=null; drawBox(); }
     if(typeof asmDrag!=='undefined'&&asmDrag&&typeof asmPointerUp==='function')asmPointerUp();
     if(typeof sheetDrag!=='undefined'&&sheetDrag)sheetDrag=null;
@@ -13258,6 +14115,12 @@ const CSG = (function(){
     resultMeshes.forEach(mm=>mm.visible=!isD&&modelHost!=='asm');
     if(pickLines)pickLines.visible=!isD&&modelHost!=='asm';
     cancelMate(true);
+    /* Lamps belong to a part document. Stepping into an assembly leaves them
+       behind rather than lighting somebody else's components from a file
+       they are not saved in; a DRAWING keeps its model — and its lamps —
+       alive underneath, so it is only 'asm' that clears. */
+    if(isA&&lights.length)resetLights();
+    lightDirty(); lightGizBuild(); lightRows();
     asmMeshes.flat().forEach(mm=>mm.visible=!isD&&modelHost==='asm');
     closeProps();closeEdgeMenu();
     if(isD){
@@ -14886,6 +15749,7 @@ const CSG = (function(){
     dropAllCheckpoints();
     docName='project';
     resetAppearance(); appearanceRev++;
+    resetLights();
     features=[];rollbackIndex=0;selId=null;editing=null;selectedEdges=[];hoveredEdge=null;
     hoveredFace=null;selectedFace=null;drawFaceHl();
     closeEdgeMenu();closeProps();setMode('model');controls.unlock();demoActive=false;rebuild();refreshDemoTgl();
@@ -15136,6 +16000,7 @@ const CSG = (function(){
       scene.fog.far=Math.max(150,fd*4);
     }
     updateDimLabels();candyTick(now||0);tickOrigin(now||0);
+    if(lightGiz)lightGizTick();   // handles keep their on-screen size at any zoom
     if(traceGroup.visible)tickLabelScale();
     updateTraceLabels();
     if(cubeRenderer){cubeMesh.quaternion.copy(camera.quaternion).invert();cubeRenderer.render(cubeScene,cubeCam);}
@@ -15175,6 +16040,29 @@ const CSG = (function(){
     get lightLimits(){ return JSON.parse(JSON.stringify(LIGHT_LIM)); },
     get lightPresets(){ return LIGHT_PRESETS.map(p=>({name:p.name,v:Object.assign({},p.v)})); },
     get hemiLight(){ return hemiLight; },
+    get lights(){ return lights.map(lightClone); },
+    setLights, addLight, removeLight, updateLight, selectLight, resetLights,
+    get lightSel(){ return lightSel; },
+    get lightShadowCap(){ return LIGHT_SHADOW_CAP; },
+    get lightShadowSkipped(){ return lightShadowSkipped.slice(); },
+    get lightObjects(){ return lights.map(l=>{
+      const o=lightObj.get(l.id); if(!o)return null;
+      const L=o.light, c=L.shadow&&L.shadow.camera;
+      return {id:l.id, type:L.type, visible:L.visible, castShadow:L.castShadow,
+        intensity:L.intensity, color:'#'+L.color.getHexString(),
+        pos:[L.position.x,L.position.y,L.position.z],
+        target:o.target?[o.target.position.x,o.target.position.y,o.target.position.z]:null,
+        shadowCam:c?{near:c.near, far:c.far,
+          left:c.left, right:c.right, top:c.top, bottom:c.bottom, fov:c.fov}:null};
+    }); },
+    get lightGizmo(){ return lightGiz; },
+    get lightGizmoOn(){ return lightGizOn; },
+    get lightGizmoPicks(){ return lightPick.map(o=>({kind:o.userData.ltPick.kind,
+      axis:o.userData.ltPick.axis, id:o.userData.ltPick.id,
+      at:(()=>{ o.updateWorldMatrix(true,false);
+        const v=new THREE.Vector3().setFromMatrixPosition(o.matrixWorld);
+        return [v.x,v.y,v.z]; })()})); },
+    lightGizBuild, lightRows, lightCover,
     entSpin, coupledEnt, entSeg, segAlign,
     libPut, libGet, libList, libDelete, openLibrary, saveProject,
     dimHit, dimResolve, dimApply, polyCorners, cornerAt, applyCorner,

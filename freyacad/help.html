@@ -44,6 +44,7 @@ h2{font-size:21px;margin:44px 0 12px;padding-top:14px;border-top:1px solid var(-
   letter-spacing:-.01em;scroll-margin-top:14px}
 h2:first-of-type{border-top:0;margin-top:26px}
 h3{font-size:15.5px;margin:24px 0 7px;color:var(--text)}
+h4{font-size:13px;margin:17px 0 5px;color:var(--text);font-weight:600}
 p{margin:0 0 12px;color:#c9cdd2}
 ul,ol{margin:0 0 12px;padding-left:22px;color:#c9cdd2}
 li{margin-bottom:5px}
@@ -92,6 +93,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line-soft);
   <a href="#views">Views &amp; projection</a>
   <a href="#appearance">Colours &amp; rendered view</a>
   <a href="#lighting">Lighting</a>
+  <a href="#lights">Lights you place</a>
   <div class="grp">Sketching</div>
   <a href="#sketch">Making a sketch</a>
   <a href="#draw">The drawing tools</a>
@@ -120,7 +122,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line-soft);
 <main>
 <h1>freyacad</h1>
 <p class="tagline">Parametric solid modelling that runs entirely in your browser.</p>
-<p class="stamp" id="stamp">Manual — last revised 25 August 2026</p>
+<p class="stamp" id="stamp">Manual — last revised 27 August 2026</p>
 
 <h2 id="start">Start here</h2>
 <p class="lede">freyacad is a small CAD program with a real geometry kernel. You sketch on a
@@ -323,9 +325,70 @@ geometry itself stays exact either way — dimensions and volumes don't move —
 finer mesh feeds <b>Print/Export</b>, so a higher Detail also means smoother curved walls
 on the printed part. It can only refine: there's deliberately no coarser-than-default
 setting, so a print can never quietly come out rougher than the shipped look.</p>
-<p>Lighting is remembered in <em>this browser, on this computer</em> — not in the part file,
-so a model you send someone opens under their lighting, not yours. Clearing the browser's
-site data forgets it, and so does Reset.</p>
+<p>Everything above is remembered in <em>this browser, on this computer</em> — not in the part
+file, so a model you send someone opens under their sliders, not yours. Clearing the
+browser's site data forgets it, and so does Reset. The <b>lights</b> at the bottom of the
+same panel are the opposite: they belong to the document. That difference is the whole
+point of the two sections, and the panel says so where they meet.</p>
+
+<h3 id="lights">Lights you place</h3>
+<p>At the bottom of the Lighting panel is <b>Lights &middot; in the document</b>. These are
+lamps you put in the scene yourself — as many as you like, anywhere in 3D, each with its
+own colour and brightness. Unlike the sliders above them they are <em>saved inside the
+part file</em> and travel with it, exactly the way your colours do: send someone the file
+and it opens lit the way you lit it.</p>
+<p>They are also the only things in the scene that cast a <b>shadow</b>. Until you place
+one, the model is lit by a workshop lamp that shines from everywhere at once, and nothing
+in freyacad has ever thrown a shadow. Add a light and the floor turns into a real surface
+for it to fall on.</p>
+<ul>
+  <li><b>+ Add light</b> drops a lamp above and to one side of the model — never inside
+      it — aimed at the middle. Add another and it lands somewhere else, so they never
+      pile up.</li>
+  <li><b>Click a row</b> to open that lamp's controls and put its handles in the viewport.
+      Click it again to close it. The row's <b>on</b> button switches a lamp off without
+      losing it; <b>×</b> removes it.</li>
+  <li><b>Point, Spot</b> or <b>Sun</b>. A point light is a bare bulb, throwing light every
+      way at once, so it has no aim. A spot is a cone you point, with a cone angle and a
+      soft edge. A sun is parallel rays from far away — only its aim matters, not how far
+      out you drag it.</li>
+  <li><b>Reach</b> (point and spot) is how far the light carries. At 0 it never fades,
+      which is usually what you want on a part: drag the lamp closer or further and the
+      brightness you set stays the brightness you get.</li>
+</ul>
+<h4>Moving a light</h4>
+<p>Select a lamp and three arrows appear on it — <span style="color:#c0584f">red for X</span>,
+<span style="color:#5a9e6f">green for Y</span>, <span style="color:#4f86c0">blue for Z</span>,
+the same colours as the origin axes in the tree. <b>Drag an arrow</b> and the lamp slides
+along that one axis; the picture follows your hand, shadows and all, and the move is
+banked when you let go. The arrows stay the same size on screen however far out you are,
+so they are just as easy to grab on a 400 mm baseplate as on a 3 mm boss. If you would
+rather be exact, the <b>X, Y and Z</b> boxes in the panel take typed numbers.</p>
+<h4>Aiming a light</h4>
+<p>A spot and a sun carry an <b>amber ball</b> on the end of their arrow. Drag it and the
+aim turns — the whole sphere, in any direction, with no limit and nothing special about
+straight up or straight down. Keep dragging and it keeps turning, right round through the
+far side, so you never have to orbit the view to reach an angle. The panel shows where it
+is pointing as an azimuth and a downward angle, and <b>at the model</b> snaps the aim back
+to the middle of the part.</p>
+<h4>Shadows</h4>
+<p>Each lamp has a <b>Casts a shadow</b> tick. The model is the only thing that ever casts
+one — the lamp markers, arrows and handles never do, and they vanish from the viewport the
+moment you close the panel, so they are never in a render or a drawing view. The shadow
+always covers the <em>whole</em> model and the whole of where it falls on the floor,
+whatever size the part is: freyacad measures the model every time it rebuilds and fits
+each lamp's shadow to what it finds, so a bin and a baseplate an order of magnitude apart
+both get a shadow with no edge cut across it. A lamp very near the horizon is the one
+exception — its shadow would stretch towards infinity and go to mush, so it fades out at
+about six model-widths instead.</p>
+<p>Shadows are not free: each one is another full pass over the model, six for a point
+light. <b>Four lamps at a time cast them</b>; past that a lamp still lights the model but
+throws no shadow, and the panel says which ones and why rather than quietly ignoring them.
+Turn one of the others' shadows off to free a slot.</p>
+<p>Lights are display only. Nothing about them reaches the geometry, a dimension, a
+Print/Export, an STL or a drawing sheet — a part lit by six lamps prints exactly the same
+as one lit by none. A document with no lamps in it renders exactly as freyacad always
+did.</p>
 
 <h3 id="offline">Working offline</h3>
 <p>After freyacad has loaded once on a computer, it keeps working there with no
@@ -1348,7 +1411,7 @@ framework.</p>
 rel="noopener">github.com/Lee677/freya</a></p>
 
 <footer>
-  freyacad manual · revised 25 August 2026 · part of <a href="https://freya.co.nz">freya.co.nz</a><br>
+  freyacad manual · revised 27 August 2026 · part of <a href="https://freya.co.nz">freya.co.nz</a><br>
   This manual is kept in step with the application; if something here doesn't match what
   you see, the manual is the thing that's wrong.
 </footer>

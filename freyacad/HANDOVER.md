@@ -1445,3 +1445,225 @@ it. The fix is not a test accommodation: on a first visit the worker has
 nothing to offer, and interposing there only adds another place for a 13 MB
 download to fail while buying nothing. First-visit caching still happens, via
 the explicit `freyacad-cache-kernel` message from the page.
+
+## Lights you place (per document)
+
+The owner's ask, verbatim: *"add as many lights as the user would like that they
+can move around in 3d space to light up the model"*, settled as — **per
+document**, **the model is the only shadow caster and the shadow has to cover
+the whole model**, **drag in x/y/z with the mouse**, **aim anywhere on the full
+sphere with a handle**.
+
+Before this, `hemiLight` was the scene's only light. A hemisphere light casts no
+shadows, so **nothing in freyacad had ever cast one** — the 600×600
+`ShadowMaterial` floor had been sitting there waiting since the beginning. These
+lamps are the first things to use it.
+
+### The record
+
+Plain JSON, flat, nothing derived:
+
+```js
+{ id, name,
+  type: 'point' | 'spot' | 'directional',
+  pos:  [x, y, z],          // where the lamp is
+  dir:  [x, y, z],          // unit vector: the way it SHINES
+  color: '#rrggbb', intensity,
+  distance,                 // "Reach"; 0 = never fades
+  angle, penumbra,          // spot only
+  shadow: true, on: true }
+```
+
+`dir` is a direction, not a target point, so **moving a lamp never changes where
+it aims** — which is what makes the translate and aim handles independent. A
+point light has no aim; its `dir` is kept (so a type swap and back does not lose
+it) but neither used nor shown. Everything that reaches the app goes through
+`normLight`, which clamps and falls back rather than throwing, so a hand-edited
+file opens with a dull light in it rather than a blank page.
+
+Defaults for a new lamp: spot, intensity 0.9, white, Reach 0 (no falloff —
+`decay 1` with `distance 0` is three.js's "no attenuation", so dragging a lamp
+across a 300 mm baseplate keeps the brightness you set), cone 0.6 rad, penumbra
+0.35, shadow on.
+
+### File format
+
+`{type:'part', appearance, lights, features}`. Both middle keys are optional and
+**a part with neither still writes the bare array** every earlier build wrote and
+reads, so adding this feature churns not one document that never used it —
+including `models/magic-lamp.sketchcad`, which is byte-identical. `partFileData`
+stays the single reader for all three shapes (bare array, `{appearance}`,
+`{appearance,lights}`); `loadDocData` the single loader. Lights also ride in the
+autosave payload, next to `appearance`.
+
+Lamps belong to a **part** document. `doNewPart`, `loadDemo`, loading an
+assembly, and stepping into assembly mode all clear them; a drawing keeps its
+model — and its lamps — alive underneath, so only `asm` clears. **No demo ships
+lamps**, deliberately: the shipped models have to render exactly as they did.
+
+### Fitting the shadow to the model
+
+This is the part that is easy to get wrong and the owner called out. A shadow
+map records the **casters**, but the shader only darkens a **receiver** whose
+position falls inside that same map. Size the frustum to the model's bounding
+box and the shadow on the floor is cut off at the model's own footprint, with a
+hard straight edge where the frustum ended. So the set of points the camera has
+to contain is the model's eight corners **and where each of them lands on the
+ground under this particular lamp** (`lightCover`).
+
+- **Directional** — replicate exactly what `DirectionalLightShadow.updateMatrices`
+  will do at draw time (camera at the light, `lookAt` the target, r128's default
+  up), then measure the cover points in *that* camera's space and set
+  left/right/top/bottom/near/far from the extents. Sizing from a bounding sphere
+  about the model centre instead leaves the frustum off-axis and clips one side.
+- **Spot** — three.js sets `fov` from `light.angle`, so the frustum *is* the
+  cone and it cannot clip laterally; only the depth range is ours, taken along
+  the spot axis.
+- **Point** — a cube camera, so only near/far.
+
+Nothing is hardcoded. Measured on the lamp (26.7 mm model radius) the sun's
+ortho frustum comes out 51 units wide; on a 5×4 Gridfinity baseplate (134 mm
+radius) the same lamp gets 285 — a **5.6× frustum for a 5× model**, and every
+cover point inside the unit cube in both. `lightRefit()` runs from the rebuild
+tail, so a rollback, a detail change or a new demo re-fits every lamp.
+
+One deliberate limit: a lamp near the horizon throws the shadow towards
+infinity, and a frustum that wide has no resolution left for the model. Past
+`LIGHT_SHADOW_SPAN` (6) model-radii from the centre the ground points are
+clamped, so the shadow fades out rather than being drawn as mush.
+
+`normalBias` scales with the model (`max(0.008, r*0.02)`) — a 400 mm plate and a
+3 mm boss cannot share one acne constant.
+
+### The floor, and why it changes when you add a lamp
+
+The first working version cast correct shadows that **nobody could see**: the
+floor is a `ShadowMaterial` at opacity 0.3 over a near-black backdrop, so a
+shadow on it moved the pixels by about four levels. Raising the opacity, and
+then lifting the plane above the grid so the wires darkened too, both helped and
+neither was enough.
+
+So the floor now has two states. With **no lamps** it is the `ShadowMaterial` it
+has always been — invisible, only ever a darkening, and byte-identical to every
+earlier build. The moment there is a lamp, it becomes a real matte
+`MeshStandardMaterial` (0x171f28, roughness 0.97, `envMapIntensity` 0.15) that
+the lamps light, and the shadow is the part of it they do not reach. That single
+change is the difference between "the shadow is technically there" and a
+viewport that looks like a CAD app.
+
+### The gizmo — hand-rolled, and why
+
+r128 core has no `TransformControls`, and vendoring one is off the table: a
+strict offline service worker and preload hints would both have to learn about a
+new file. So:
+
+**Translate.** For axis `a`, the drag plane is the one that *contains* the axis
+and faces the camera most squarely — take the camera's look direction and strip
+the component along `a`; what is left is the plane normal. Intersect the pointer
+ray with that plane through the lamp, take `(hit − origin)·a`, and subtract the
+same quantity captured at grab time. Edge on (camera staring down the axis) the
+normal vanishes, so fall back to any perpendicular rather than hand out a NaN
+position.
+
+**Aim.** The obvious mapping — screen point onto a virtual sphere (Shoemake) —
+was written first and is **wrong here, and the suite caught it**: it saturates at
+its own silhouette, so one long drag runs out of ball and the aim sticks. It got
+`dir.y` to −0.28 and no further. What ships instead is a path-length turntable:
+each pointermove contributes a rotation about
+`normalize((dy, dx, 0))` in camera space (the axis that carries the near side of
+the ball along the drag), by `hypot(dx,dy)/canvasHeight × 2π`, applied to `dir`
+and accumulated. It has no edge to run off, and **poles are not special to any
+of it** — straight up and straight down are two ordinary points on a great
+circle. Measured: one 840 px drag sweeps `dir.y` from −0.99 through +0.9996 and
+out the other side, biggest step 5.9°, unit error 7e−7.
+
+**Grabbing.** An arrow thin enough to see past is about ten pixels wide, which
+is fiddly. Each handle therefore carries an **invisible fat sleeve** — three.js
+raycasts an object handed to it directly whether or not it is `visible`, so it
+costs nothing to draw and makes the whole shaft grabbable.
+
+**Scale.** Everything is built at unit size and scaled per frame by
+`controls.sph.radius × 0.024`, so a handle is the same size on screen at any
+zoom. A gizmo you cannot grab at a baseplate's zoom is no gizmo.
+
+### The two contracts
+
+**A — markers and gizmos exist only while the Lights section is open.** The
+group is *added* on open and *removed* (not hidden) on close, and every piece of
+it carries `userData.lightGiz` and `castShadow:false`, following the
+`userData.faceCol` / `faceHl` pattern. Fourteen suites take screenshots and
+count scene objects; a stray helper would break them and would show up in the
+user's renders and drawing views. Verified: 22 tagged objects with the panel
+open, 0 with it shut, and the body meshes still the only shadow casters.
+
+**B — no lamps + panel shut = the pixels the previous build drew.** Verified at
+700×450 in *both* the workshop and the rendered view: 0 of 315,000 pixels
+differ, max channel delta 0. Everything the feature touches is gated on
+`lights.length`: the floor material, `ground` position/renderOrder (now
+unchanged either way), the gizmo group.
+
+**Careful with the baseline.** `lighttool-main.js` pins its equivalent check
+against `git show HEAD:freyacad/index.html`, and the lane is checkpointed as it
+goes — by the time this suite ran, HEAD already carried the lights, and the
+check would have passed for the wrong reason. `lights.js` therefore walks
+`git rev-list` back to the last commit whose index.html has no `addLight(` in
+it and uses that. **`lighttool-main.js`'s check 8 is now vacuous for the same
+reason** and should be given the same treatment next time it is touched.
+
+### What a lamp costs
+
+`renderer.shadowMap.autoUpdate` is **off**, with a single `lightDirty()` called
+from every mutation and from the rebuild tail: orbiting the camera does not
+change a shadow, and paying four extra depth passes a frame to prove that is
+wasteful. Measured on the demo lamp, 1400×900, SwiftShader (the suites'
+software rasteriser — an order of magnitude slower than a GPU; read the ratios,
+not the milliseconds), `readPixels` after each frame to force the pipeline to
+drain:
+
+| lamps | casters | shadows re-rendered every frame | camera-only (the app's policy) |
+|---|---|---|---|
+| 0 | 0 | 117 ms | 122 ms |
+| 1 | 1 | 185 ms | 161 ms |
+| 2 | 2 | 245 ms | 216 ms |
+| 4 | 4 | 426 ms | 332 ms |
+| 6 | 4 (2 capped) | 420 ms | 328 ms |
+| 8 | 4 (4 capped) | 449 ms | 351 ms |
+| 1 / 4 / 8, shadows **off** | 0 | 135 / 165 / 199 ms | — |
+
+Two things worth knowing. **Most of a shadow's cost is in the main pass, not
+the depth pass**: at four lamps, skipping the shadow-map render entirely only
+saves ~22%, because the body shader is sampling four PCF-soft maps per
+fragment. And **a lamp with shadows off is nearly free** — 8 of them cost 1.7×
+the empty frame.
+
+Hence `LIGHT_SHADOW_CAP = 4`. It is a **cap, not a silent drop**: lamps past it
+still light the scene, and the panel names them and says why. Each shadow map
+also costs a texture unit in the body shader, which is the other reason not to
+let it run.
+
+### Suite
+
+`$SP/newdemos/lights.js` — 10/10. Add reaches the panel/scene/`__C`; each of
+X, Y and Z moves the lamp along that axis only (to 1e−6) with the pixels
+following; the aim handle sweeps both poles without flipping or sticking; every
+cover point inside the frustum on a 30 mm part and a 210 mm one; round trip
+through `docFile`/`loadDocData` identical; both legacy formats still open with
+no lamps; deleting the last lamp returns the bare array; contract A; contract B;
+zero page errors.
+
+### Judgement calls and rough edges
+
+- **A directional light's position does nothing to the lighting** — only its aim
+  does. Dragging one still moves its handle and re-fits its shadow camera, and
+  the panel says "a sun: parallel rays, so only the aim matters, not the
+  distance". Left as-is rather than faked.
+- **Assemblies have no lamps.** The record lives in the part file; the assembly
+  file was left alone. The panel says so in asm mode.
+- **The grid is still 24 mm.** On a 250 mm bin it is a postage stamp under the
+  model. Pre-existing, but the lit floor makes it more obvious than it was.
+- **The 600×600 floor has a visible edge** at the zoom a very large model needs.
+  Also pre-existing; the lit floor makes it visible where the `ShadowMaterial`
+  hid it.
+- The `dragLight` / `dragPlane` scaffold that was already in the pointer
+  handlers (declared, never assigned, three dead branches) is gone; the real
+  handlers replace it.
