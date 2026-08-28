@@ -1066,25 +1066,40 @@ const CSG = (function(){
   const ground=new THREE.Mesh(new THREE.PlaneGeometry(600,600), new THREE.ShadowMaterial({opacity:0.3}));
   ground.rotation.x=-Math.PI/2; ground.position.y=-0.002; ground.receiveShadow=true; scene.add(ground);
   const GRID=24;
-  const grid=new THREE.GridHelper(GRID,GRID,0x2c3a45,0x18222a);
-  grid.material.opacity=0.85; grid.material.transparent=true;
-  /* Fade the grid toward its rim. A GridHelper stops dead at its own square,
-     and that hard edge — over a backdrop gradient that used to reach pure
-     black exactly where the floor sits — is what made the space between the
-     lines read as a solid slab rather than as open ground. Scaling the vertex
-     colours down with distance blends the far lines into the backdrop, which
-     on a dark ground IS a fade: no alpha, no shader, no second material and
-     nothing new to sort. */
-  (function(){
-    const g=grid.geometry, pos=g.attributes.position, col=g.attributes.color;
-    const half=GRID/2;
-    for(let i=0;i<pos.count;i++){
-      const d=Math.min(1,Math.max(Math.abs(pos.getX(i)),Math.abs(pos.getZ(i)))/half);
-      const k=Math.max(0.10,1-d*d);          // flat through the middle, quick at the rim
-      col.setXYZ(i,col.getX(i)*k,col.getY(i)*k,col.getZ(i)*k);
+  /* The floor grid, built by hand rather than with GridHelper, so it can FADE.
+     The hard square edge where the grid stopped dead — over a backdrop that
+     used to reach pure black exactly where the floor sits — is what made the
+     space between the lines read as a solid slab rather than as open ground.
+     GridHelper draws each line as ONE segment from rim to rim, so its two
+     vertices are both at the extreme and a vertex colour can only dim a line
+     as a whole; cutting every line at each division gives interior vertices to
+     colour, and the grid can then dissolve. On a dark ground, blending a line
+     into the backdrop IS a fade: no alpha ramp, no shader, no second material
+     and nothing new to sort. The falloff is radial, so the corners — the part
+     that most gave the square away — go first. */
+  const grid=(function(){
+    const half=GRID/2, pos=[], col=[];
+    const mid=new THREE.Color(0x2c3a45), oth=new THREE.Color(0x18222a), t=new THREE.Color();
+    const fade=(x,z)=>{ const d=Math.min(1,Math.hypot(x,z)/half); return 1-d*d*d; };
+    const put=(x,z,c)=>{ pos.push(x,0,z);
+      t.copy(c).multiplyScalar(fade(x,z)); col.push(t.r,t.g,t.b); };
+    for(let i=0;i<=GRID;i++){
+      const h=-half+i, c=(i===GRID/2)?mid:oth;
+      for(let j=0;j<GRID;j++){
+        const a=-half+j, b=a+1;
+        put(a,h,c); put(b,h,c);            // the line along X at z=h, one division of it
+        put(h,a,c); put(h,b,c);            // and the line along Z at x=h
+      }
     }
-    col.needsUpdate=true;
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+    g.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
+    const m=new THREE.LineSegments(g,
+      new THREE.LineBasicMaterial({vertexColors:true,toneMapped:false}));
+    m.name='floorGrid';                    // suites that must ignore the floor look for this
+    return m;
   })();
+  grid.material.opacity=0.85; grid.material.transparent=true;
   scene.add(grid);
   const axMat=c=>new THREE.LineBasicMaterial({color:c,transparent:true,opacity:0.5});
   scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-GRID/2,0.002,0),new THREE.Vector3(GRID/2,0.002,0)]),axMat(0xc0584f)));
@@ -17962,7 +17977,7 @@ const CSG = (function(){
     (sk.entities||[]).forEach(function(e){
       a.push(e.type==='poly'?('P'+((e.pts||[]).length)+(e.closed?'c':''))
         :e.type==='polygon'?('G'+Math.max(3,e.sides|0))
-        :e.type==='rect'?'R':e.type==='circle'?'C':'?'); });
+        :e.type==='rect'?'R':e.type==='circle'?'C':e.type==='arc'?'A':'?'); });
     a.push('|');
     (sk.cons||[]).concat(imp||[]).forEach(function(c){
       a.push(c.kind+gcsRefSig(c.a)+gcsRefSig(c.b)+gcsRefSig(c.ref)+gcsRefSig(c.about)+
