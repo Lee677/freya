@@ -2956,3 +2956,37 @@ the plane that was picked is the plane that was used.
   cross, then tilt one of them until it is parallel to the other. The pick
   cannot refuse that — it has already happened — and `axisGeom` throws with its
   own message, which is the honest outcome but is not the pick's doing.
+
+### The four-up "Defined by" control
+
+Worth saying because it is a visible change nobody asked for: the Add-axis
+method switch has four options with real names, and a `.seg` is one flex row
+inside a 230&nbsp;px panel. *Centre of a circle* was being laid out past the
+right-hand edge — not truncated, **absent**: unreadable and unclickable. A
+scoped class, `.seg.seg-2up`, wraps that one control to a 2&times;2 and every
+other segmented control in the app is byte-for-byte as it was. Screenshot
+`$SP/lamp/axispick.png` shows the four options.
+
+### Results
+
+- Battery, all pins held: `verify` 12/12 · `brepsel` 47 realEdges / 21 faces /
+  14765 tris · `loft` allOk · `offline` 9/9 · `lighttool` 10/10 · `lights` 10/10
+  · `offsetplane` 17/17 · **`planepick` 18/18 — it did not move** ·
+  **`axmirpick` 16/16 (new)** · `solver` 114/114 · `gcsglue` 37/37 ·
+  `gcsbrowser` 9/9 · `gcsdrive` 38/38 · `gcsoff` 8/8 · `textfeat` roundtrip
+  match · `colors` / `uicolor` / `library` / `drawref` / `polycon` / `gate` /
+  `rollbar` / `boltnut` clean, zero page errors throughout.
+- Documents identical (`$SP/docsame.js`, now comparing against **two**
+  baselines found by walking `rev-list` for a marker, because HEAD is
+  checkpoint-committed and already carries the change): pillow 378.7121 / 1
+  body, magic lamp 2882.2725 / 1, `models/magic-lamp.sketchcad` 2882.2725 / 1,
+  and a purpose-built three-mirror document 607.3345 / 2 — same volumes, same
+  body counts, same per-feature errors and same resolved datum frames at
+  `2865c7b` (before this change) and at `993adec` (before the base pick). The
+  mirror document was added because neither shipped demo carries a mirror: the
+  boat that does is deliberately off the Demo menu, so the mirror resolver would
+  otherwise have been compared only by `verify`'s kernel pins.
+- `FEATURE-MATRIX.html`: no tally moved — *Mirror feature* and *Custom datum
+  planes & axes* were already ✅ ✅ ✅. Both notes were updated through
+  `dev/matrix_done.py` (never by hand) so the cards and the token total are
+  recomputed from the table; the diff is two `<span class="q">` strings.
