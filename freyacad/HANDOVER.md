@@ -2770,3 +2770,223 @@ just holds a button now instead of a row of them.
   base that is a map hit after a rebuild, but the first call of a session can
   resolve the face reference — cheap here, and worth remembering if the panel is
   ever rebuilt per keystroke.
+
+## Add axis and Mirror point at the plane too
+
+*"You should point at the plane you mean, not choose its name from a list in
+the properties panel."* — Add plane was fixed last round; **Mirror** and **Add
+axis** were left behind, still picking a plane by name from a segmented list.
+They now point, through the *same* machinery, generalised rather than copied.
+
+### One armed slot, three callers, one gate
+
+The base pick was hardwired to "the dplane draft awaiting a base": one pending
+variable, one target field, one legality rule. It is now a small descriptor:
+
+```js
+let planePick=null;   // {feat, field, what, set}
+```
+
+`feat` is the feature being edited (the panel's DRAFT, exactly as before),
+`field` is the key on it the click writes — `'base'`, `'plane'`, `'pa'` or
+`'pb'` — and `what` / `set` are the words the card, the hint and the manual use.
+`startPlanePick(f, field)` arms it, `endPlanePick()` puts it down, and
+**`consumePlanePick(base)` is the single consume path**: both routes in (a tree
+row and a quad in the viewport) and all four fields go through it, so there is
+still exactly one rule about what a click does.
+
+What differs between callers lives in **one** place, `planePickRefusal(base)`,
+which returns `null` if the pick would take that plane and otherwise the
+sentence to say. The tree rows, the drawn quads, the origin-plane dimming, the
+cursor, the hover highlight and the click itself all ask it, so a plane that
+*looks* refused is refused, and for the reason it then gives.
+
+Nothing was cloned. There is no second pending slot, no second consume, no
+second "is it legal" — `planeLeansOn` is still the one loop walk, and
+`planesParallel` is now the one parallel test, asked by both the pick and
+`axisGeom` so a pick that lands always builds an axis that exists.
+
+The panel side collapsed the same way: `fieldPlanePick(f, field, label,
+fallback, id)` builds the one-button "which plane?" field, and all four call
+sites use it. The button still carries `id`, `dataset.base` and the `.base-pick`
+class the last round's suites read, so `prop-base-pick` is unchanged and
+`planepick.js` did not move.
+
+### The three legality rules, and why they genuinely differ
+
+| field | rule | why |
+|---|---|---|
+| `dplane.base` | not itself, and not a plane that already leans on it (`planeLeansOn`) | a plane **defines** itself in terms of another, so a base that leads back here is a cycle the resolver cannot unwind |
+| `mirror.plane` | any plane that still resolves | a mirror **consumes** a plane and defines nothing, so no chain of plane definitions can run through it — no cycle is possible |
+| `daxis.pa` / `pb`, method `planes` | not the plane already in the other field, and not parallel to it | the axis **is** the line where the two meet; the same plane twice, or two parallel ones, is not a line |
+
+`daxis` with method `normal` uses one plane and refuses nothing — including
+planes parallel to anything, which is the whole point of that method.
+
+### There is no tree-order rule in this app, so the pick did not invent one
+
+The brief asked whether a feature may only reference reference geometry that
+sits **above** it in the tree. Checked, and the answer is **no** — the app has
+no such rule anywhere:
+
+- `planeOf` / `planeFrame` / `resolveAxis` all look features up with
+  `features.find(...)` over the **whole** list, not `features.slice(0,
+  rollbackIndex)` and not "everything above me".
+- `dplaneBaseFrame` says so in as many words: *"A plane may be based on one that
+  sits BELOW it in the tree, and that one has not run yet this rebuild. Resolve
+  it on demand rather than calling a face that is perfectly present missing."*
+- The `revolve` and `cpattern` axis lists, and the old `daxis` plane list, were
+  built from every matching feature with no index filter.
+- The only ordering that actually bites is **sketches**, and it is implicit:
+  `sketchData` is cleared and refilled as the feature loop runs, so an extrude
+  above its sketch fails with "needs a sketch". Nothing equivalent exists for
+  planes or axes.
+
+So the pick offers a plane below the feature in the tree, takes it, and builds.
+`axmirpick.js` check 13 asserts exactly that with a mirror at index 5 reflecting
+about a plane at index 7.
+
+**But it does not FOLLOW that plane** — and that is the app's, not this round's.
+The per-feature checkpoint keys are prefix-accumulated (`run += '|' +
+sigStr(keyed[i])`), so editing a feature at index 7 leaves the key at index 5
+valid, the checkpoint there is restored, and the consumer never re-runs.
+Reproduced at `2865c7b` (before any of this) with a **revolve** whose `ax:` axis
+feature sits after it: edit the axis's Position X from 0 to 10 and the solid
+stays put at x −7..7, while the same document with the axis *above* the revolve
+moves correctly to x 4..16. `$SP/stale3.js` is that experiment; `$SP/stale2.js`
+is the mirror equivalent on this branch. Fixing it means teaching the checkpoint
+key about the reference geometry each feature resolves, which is a change to the
+rebuild's core and not this job — but it is the reason `help.html` says *"make
+the plane before the mirror"* rather than promising it follows unconditionally.
+
+### A mirror can now reflect about any plane
+
+It could not before: `applyFeature` read `const pl = DATUM[f.plane]`, so the
+three origin planes were the only possible answers and the segmented control
+listing them was, in a sense, complete. Pointing only makes sense if there is
+something to point at, so the mirror now resolves through **`planeOf`**, the
+same function `axisGeom` uses. For an origin plane `planeOf` hands back exactly
+the point and normal `DATUM` already held — `o` is the same `(0,0,0)`, `n` is
+the same unit vector — so every document written before this reflects about
+precisely what it always did, `verify`'s two mirror cases included.
+
+`mirror.plane` still holds a **string**. Origin planes still store `'Right'`;
+a plane of your own stores `'dp:<id>'`, which is the same shape
+`dplane.base` has stored since last round and which every resolver here already
+accepted alongside a plain name. Nothing reads `mirror.plane` except the build.
+
+`daxis.pa` / `pb` behave the same way: they always accepted a plane's **name**
+(that is what the old list wrote), they still read one, and the pick now writes
+`'dp:<id>'` for a plane of your own — robust against a rename, where a name is
+not.
+
+### Two things that were quietly wrong and are not any more
+
+- **A cancelled pick left its button lying.** Press *Base plane*, press
+  <kbd>Esc</kbd>, and the button still read `Click a plane…` with nothing
+  armed. It was true of the base pick from the day it shipped and
+  `planepick.js` check 9 did not look. `endPlanePick` and `cancelPicks` now call
+  `refreshPropsBody()`, which rebuilds the panel body only — `openProps` would
+  have rebuilt the model with it, and nothing about the model changed.
+- **The axis panel's picks did not put each other down.** Arming a plane pick
+  now clears `pendingAxisPick` and `pendingPlaneFace`, switching *Defined by*
+  clears both kinds, and the circular pick clears a plane pick. Otherwise a
+  click meant for a plane could land on a face.
+
+### Marking, in the viewport as well as the tree
+
+Datum-plane quads already had three states (teal candidate, amber hover, dimmed
+refusal) and they now read `planePickRefusal` instead of `planeBaseAllowed`, so
+they mark the right thing for whichever tool is asking. The **origin** planes
+gained the missing one: an origin plane an armed pick would refuse is drawn at
+opacity 0.05 instead of 0.2, because with the axis rules an origin plane finally
+*can* be refused (pick `pb` with `pa` = Top and Top is out). A candidate marked
+in the tree and not in the viewport would be two different promises about one
+plane. `setPlanePickHover` refuses to light a plane the click would not take,
+and the cursor follows it.
+
+### Testing
+
+`$SP/newdemos/axmirpick.js`, 16 checks, added to `$SP/runbattery.sh` before the
+run started:
+
+1. the Mirror panel names its plane on a button, no list left
+2. arming marks every plane a candidate — tree and viewport (mirror refuses nothing)
+3. a tree row mirrors about **that** plane: 272 + 272 − 128 = 416 mm³, x 2.5..15.5
+4. the viewport: hovered quad amber, click mirrors about it
+5. an origin plane stores the same plain name the record always held
+6. the axis panel names both planes, no list
+7. same-plane and parallel refusals, with their sentences, pick stays armed
+8. `pa` from a row, and the **drawn** axis line follows the shared line (25° slope)
+9. `pb` arms its own pick and takes a viewport click
+10. *Normal to a plane* picks its one plane and refuses nothing
+11. Escape disarms and hands the pinned/unpinned origin planes back exactly
+12. a plane that is gone is refused; a document holding one says so on the feature
+13. a plane **below** the feature in the tree is offered, taken and built
+14. one armed pick at a time
+15. cancelling the panel disarms and leaves the plane untouched
+16. zero page errors
+
+Geometry is judged from the kernel (`BRepGProp` volume) and the drawn meshes'
+bounding box, not from a variable — where a reflection *lands* is the only proof
+the plane that was picked is the plane that was used.
+
+**Mutation run**, four deliberate breakages, each restored afterwards:
+
+| mutation | result |
+|---|---|
+| `planePickRefusal` always returns `null` | 12/16 — 7, 8, 9, 12 red |
+| mirror back to `DATUM[f.plane]` | 12/16 — 3, 4, 12, 13 red |
+| tree rows stop marking candidates | 10/16 — 2, 7, 9, 10, 11, 13 red |
+| `consumePlanePick` writes `f.base` whatever was asked | 9/16 — 3, 4, 5, 8, 9, 10, 13 red |
+
+### What is still weak
+
+- **The out-of-order staleness above.** Reachable: add a Mirror, then add a
+  plane, then point the mirror at it. It builds right on load and right on any
+  edit at or below the mirror; it does not follow later edits to that plane.
+- **`planePickRefusal` is called per row per tree refresh**, and for the axis
+  rules it resolves two plane frames each time — O(n²) frames in the number of
+  planes while a pick is armed. Tens of planes is nothing; hundreds would show.
+- **Hovering a tree row still does not tint that plane's quad.** Same gap the
+  last round left: `planePickHover` is only written from the canvas.
+- **The refusal sentence is computed twice** for an origin tree row (once for
+  the class, once for the title). Cheap, but it is the kind of thing that drifts.
+- **A `daxis` can still end up parallel by the back door**: pick two planes that
+  cross, then tilt one of them until it is parallel to the other. The pick
+  cannot refuse that — it has already happened — and `axisGeom` throws with its
+  own message, which is the honest outcome but is not the pick's doing.
+
+### The four-up "Defined by" control
+
+Worth saying because it is a visible change nobody asked for: the Add-axis
+method switch has four options with real names, and a `.seg` is one flex row
+inside a 230&nbsp;px panel. *Centre of a circle* was being laid out past the
+right-hand edge — not truncated, **absent**: unreadable and unclickable. A
+scoped class, `.seg.seg-2up`, wraps that one control to a 2&times;2 and every
+other segmented control in the app is byte-for-byte as it was. Screenshot
+`$SP/lamp/axispick.png` shows the four options.
+
+### Results
+
+- Battery, all pins held: `verify` 12/12 · `brepsel` 47 realEdges / 21 faces /
+  14765 tris · `loft` allOk · `offline` 9/9 · `lighttool` 10/10 · `lights` 10/10
+  · `offsetplane` 17/17 · **`planepick` 18/18 — it did not move** ·
+  **`axmirpick` 16/16 (new)** · `solver` 114/114 · `gcsglue` 37/37 ·
+  `gcsbrowser` 9/9 · `gcsdrive` 38/38 · `gcsoff` 8/8 · `textfeat` roundtrip
+  match · `colors` / `uicolor` / `library` / `drawref` / `polycon` / `gate` /
+  `rollbar` / `boltnut` clean, zero page errors throughout.
+- Documents identical (`$SP/docsame.js`, now comparing against **two**
+  baselines found by walking `rev-list` for a marker, because HEAD is
+  checkpoint-committed and already carries the change): pillow 378.7121 / 1
+  body, magic lamp 2882.2725 / 1, `models/magic-lamp.sketchcad` 2882.2725 / 1,
+  and a purpose-built three-mirror document 607.3345 / 2 — same volumes, same
+  body counts, same per-feature errors and same resolved datum frames at
+  `2865c7b` (before this change) and at `993adec` (before the base pick). The
+  mirror document was added because neither shipped demo carries a mirror: the
+  boat that does is deliberately off the Demo menu, so the mirror resolver would
+  otherwise have been compared only by `verify`'s kernel pins.
+- `FEATURE-MATRIX.html`: no tally moved — *Mirror feature* and *Custom datum
+  planes & axes* were already ✅ ✅ ✅. Both notes were updated through
+  `dev/matrix_done.py` (never by hand) so the cards and the token total are
+  recomputed from the table; the diff is two `<span class="q">` strings.
