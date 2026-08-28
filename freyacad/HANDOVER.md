@@ -3368,3 +3368,248 @@ lacks the feature. Check 8 should learn the same trick.
 cache key and had no arc branch, so an arc signed as `'?'` — the same as any type
 the function has never heard of. Nothing in the sketcher makes an arc yet, so this
 was latent rather than live.
+
+## A rectangle is four lines
+
+The owner drew one and found it was not: *"after a square is drawn it should
+just be like four separate lines joined at the corners where you can delete
+sides one at a time if you wish, same with polygons, just like SW."* Three
+separate faults, and they split by variant:
+
+| tool | was | 4 handles? | erase one side? | opposite sides held? |
+|---|---|---|---|---|
+| Rectangle — two opposite corners | `{type:'rect',a,b}` | no, 2 | no, the whole shape | by construction |
+| Centre rectangle | `{type:'rect',a,b}` | no, 2 | no, the whole shape | by construction |
+| 3-point rectangle | closed 4-point `poly` | yes | yes | **no** |
+| 3-point centre rectangle | closed 4-point `poly` | yes | yes | **no** |
+
+The first two only ever had two handles because `entPoints` builds corners 1
+and 3 fresh on every call — `[e.a, {x:e.a.x,y:e.b.y}, e.b, {x:e.b.x,y:e.a.y}]`
+— so anything that wrote to them wrote to a throwaway. `liveRef` says so out
+loud (`r.idx===0||r.idx===2`). That is not a bug in the branch; it is what
+"two stored corners, axis-aligned" means. And the eraser could only take the
+whole entity because `dimHit` on a `rect` returns `{kind:'width'}` or
+`{kind:'height'}` — never a `seg` — so `removePolySegment` was never reachable.
+
+### What all four tools commit now
+
+`commitRectLines(cor, rotatable, ground)` — four separate two-point `poly`
+entities, side k running corner k → corner (k+1)%4, plus the records that make
+them a rectangle:
+
+- four `coinc`, corner k joining the end of side k−1 to the start of side k;
+- axis-aligned (`rect`, `crect`): `horiz` on sides 0 and 2, `vert` on 1 and 3;
+- rotatable (`rect3`, `crect3`): `paral`(0,2), `paral`(1,3), `perp`(0,1).
+
+Side k is corner k → corner k+1 for **all four** tools (`rect3Corners` and
+`crect3Corners` already returned their corners in that order), so "opposite" is
+k and k+2 and "adjacent" is k and k+1 whichever tool drew the shape. That is
+the whole reason the same helper can serve all four.
+
+### The degrees of freedom, which is the number to check
+
+Four lines × two points × two coordinates = **16**.
+
+| | equations | left |
+|---|---|---|
+| four coincidences | 8 | 8 |
+| axis-aligned: H, V, H, V | 4 | **4** — left, right, bottom, top |
+| rotatable: ∥02, ∥13, ⊥01 | 3 | **5** — place 2, angle 1, width 1, height 1 |
+
+Measured, not assumed: `rects.js` reads the chip before drawing (the suite's
+guide run is 4 on its own) and after, and asserts the difference. It also
+proves the set is minimal from the other side — a fourth right angle on the
+rotatable one comes back `redundant`, which is what says three was the right
+number rather than a lucky one.
+
+**The records go straight into `sk.cons`, not through the constraint tools.**
+Two reasons. The geometry is already exactly right at creation, so the one-shot
+move every tool runs first has nothing to correct; and `storeSegPair`'s
+one-master-per-follower rule ("a newer parallel replaces the older one on the
+same follower") would have thrown away the second parallel of the pair.
+
+`dynMirrorAdd` runs for the four indices only **after** all four entities and
+every record are stored, so the reflections append past them and the indices
+the constraints name stay the ones they were given. `flashLoop` wants one
+entity, so it gets a throwaway `{type:'poly',closed:true,pts:cor}`; it is
+display-only and never enters the sketch.
+
+### Why four lines rather than one entity that knows it is a rectangle
+
+Because that is what the owner asked for, and it is what SolidWorks stores —
+but also because the machinery was already there and the alternative was not.
+Four separate runs already stitch into a profile (`stitchLoops`), already erase
+a segment at a time (`removePolySegment`), already carry a length dimension per
+side, and already drag as one through the coincidence graph. A `rect` that grew
+four independent corners would have needed its own version of every one of
+those. And the reverse direction is the real prize: delete the perpendicular
+badge and the shape is free to be any quadrilateral, which is exactly what a
+parametric sketcher is for and what `{type:'rect'}` could never express.
+
+### `type:'rect'` is not going anywhere
+
+Around thirty branches still read it, old saved files carry it, and so do the
+demos, the `DEMO_*` fixtures and `drawref.js` / `loft.js`. **Four creation sites
+changed; the type did not.** `rects.js` loads a stored `rect`, and checks it
+still extrudes to exactly w×h×depth, still shows two handles, still dimensions
+by width and height, still offers its derived corners to `cornerAt`, still
+resizes when its stored corner is dragged, and still goes as a whole shape
+under the eraser.
+
+## A corner that belongs to two lines
+
+Four lines stitching into a profile already worked. What did **not** was a
+**per-corner** fillet or bevel on one, and rounded rectangle corners are bread
+and butter for 3D printing, so shipping the change above without this would
+have been a regression the owner hit on day one.
+
+Three things had to change, and only the first two were in the plan.
+
+**1. `stitchLoops` carries provenance.** It already threads a per-point `segs`
+array through the chain walk; it now threads an `own` array the same way, one
+`{ent,idx}` per loop point. `applyCorner(sk,L,closed,ei,own)` takes it and
+looks each point up on its own, instead of falling back to the sketch-wide
+setting because a stitched loop has no single `ei`. Both consumers
+(`entityLoops` and `OCK.sketchLoops`) pass it. A curved run's points are
+tessellated and index nothing stored, so it carries nulls — and a curved loop
+skips corner treatment anyway.
+
+**2. One corner, one name.** At a junction two runs each have an endpoint on
+the spot. The record is canonicalised to the **lower** of the two, entity index
+first then point index — in `stitchLoops` as the walk steps through the
+junction, and in `junctionAt` for the hit test — or a corner rounded from one
+line would read as square from the other. `junctionAt` only answers where
+**exactly two** ends meet, which is also the only junction `stitchLoops` walks
+through: at a fork it stops rather than guess, and a corner there would
+describe a profile nobody drew. Construction runs, splines and closed runs are
+out of both for the same reason.
+
+**3. The click could not reach the hit test at all, and the brief did not know
+it.** The plan said `cornerAt` refused to offer a corner on an open run, which
+is true — but fixing that alone changes nothing, because a pointer-down near a
+handle *takes the gesture* (`dragVtx=h`) and the pointer-up returns before
+`sketchClick` ever runs. A shape's corners are exactly where its handles are,
+so **per-corner fillets were unreachable by clicking on anything whose corners
+are stored points** — a closed polyline, a regular polygon, and now a
+rectangle. On the old `rect` they worked only because corners 1 and 3 are
+derived and carry no handle.
+
+So a grab that has not travelled is no longer a drag: `dragMoved` is set in
+`pointermove` only once the pointer is more than 2 px from where it went down,
+nothing is written before that, and `pointerup` with `!dragMoved` drops the
+undo step the grab banked and hands the point to `sketchClick`. The outline
+grab next door already read a still tap as a selection and says so in its own
+comment; this is the same rule for point handles. It also means a tap on a
+circle's centre now selects the circle instead of doing nothing.
+
+**This fixes per-corner fillets on any hand-drawn four-line rectangle too — a
+hole that predates all of this** — and makes them reachable on a polygon and on
+a closed polyline for the first time.
+
+### The sketch shows the corner the kernel is given
+
+One more thing had to follow, or the fix would have been invisible until you
+extruded: `cornerPoly` never touches the ends of an open run, because within
+one entity there is no corner there. So the four lines drew square while the
+profile came out round. `runDisplayPts` rounds an open run against a **phantom
+neighbour** borrowed from whatever its ends join — the partner's far point —
+and trims the phantom back off afterwards. Both lines then draw the same arc,
+which is what a rounded corner looks like, and every point either of them draws
+is on the profile `entityLoops` hands the kernel (the suite checks exactly
+that). It costs nothing on a sketch with no corner treatment: one boolean, and
+it returns down the old path.
+
+## A polygon gives up a side
+
+A regular `polygon` is parametric — centre, radius, side count, rotation — and
+its sides are not stored at all, so there is nothing to take one away from.
+Rebuilding it out of N free lines would need an **angle constraint the app has
+not got**, so the honest cheap thing is what shipped: the eraser **explodes**
+it. `explodePolygon` replaces the entity, in place, with an open chain of the
+corners it had minus the clicked side — the same "start just past the erased
+span and run right round" that opening a closed chain does — and says so in the
+hint. The first side costs the parametrics; every side after that is the
+ordinary one-at-a-time removal.
+
+`dropDimsFor(sk,ei,0)` runs for the entity that died: delta 0 because it
+survives in place, so nothing after it moves. Everything pinned to the polygon
+named its centre or a corner by an index the chain has not got, so it goes with
+the parametrics — including its size dimension and its per-corner records.
+A construction polygon explodes into a construction chain.
+
+### The suite
+
+`newdemos/rects.js`, **103 checks**, added to `runbattery.sh` after `arcs`, one
+run of about 55 seconds. Two halves, the `arcs.js` pattern:
+
+- **plain node, 50 checks** — the corner machinery, the profile stitcher and
+  the polygon explode lifted out of `index.html` and evaluated with the real
+  code beside them, plus the adapter for the degrees-of-freedom arithmetic.
+  The spline branches are stubbed with functions that throw: this half only
+  ever hands straight runs, and a stub that throws proves it.
+- **Playwright, 53 checks** — all four tools drawn through the real dock and
+  the real canvas, a corner dragged in each, a side erased with the eraser, a
+  corner filleted by clicking it, the result extruded and its volume measured,
+  a polygon exploded through the eraser, and a stored `type:'rect'` put through
+  drawing, handles, `dimHit`, `cornerAt`, a drag and the eraser.
+
+**Every check was watched failing.** Nine mutations were applied to
+`index.html` one at a time and the suite re-run against each: `applyCorner`
+ignoring `own` (4 red), `stitchLoops` dropping it (7), `junctionAt` not
+canonicalising (1), `junctionAt` allowing forks (1), the explode dropping no
+records (3), the display ignoring junctions (3), the tap-to-click branch
+removed (4), the rotatable pair losing its perpendicular (6), and `rect`
+committing one entity again (12). None was silent, and none took the run down
+with it — two of them did at first, and the checks were rewritten to report a
+missing structure rather than throw on it, because a suite that dies on the
+first fault hides every fault after it.
+
+### Results
+
+- **`rects` 103/103 (new)** · `solver` 114/114, worst Jacobian relative error
+  9.8e-10 · `gcsdrive` 38/38 · `verify` 19 fixtures, zero errors, byte-identical
+  to its last run but for the `ms` timings · `brepsel`, `loft`, `drawref` and
+  `gate` **byte-identical** to their stored runs (brepsel still 47 realEdges,
+  21 faces, 2 planes, 14765 tris, 48-48 wholeEdge; loft still `allOk`) ·
+  `polycon` byte-identical but for `cardOpacity`, which is a sample taken
+  mid-fade and differs run to run. Zero page errors anywhere.
+- The rest of the battery was deliberately **not** run: nothing here touches
+  lighting, the drawing sheet, assemblies or the tree.
+- `FEATURE-MATRIX.html` is unchanged and `dev/matrix_done.py` was not run —
+  no row moved. "Rectangle" and "Round / bevel sketch corners" were both
+  already ✅ in the freyacad column; what changed is how well they are true,
+  which the matrix has no way to say and should not pretend to.
+- `help.html`: the rectangle rows, the eraser row and the "Worth knowing" note
+  under the drawing tools were rewritten for the four-line model; "Editing a
+  sketch" gained bullets for erasing one side and for clicking a corner; the
+  corner section no longer claims the ends of an open run are never offered;
+  and the degrees-of-freedom paragraph now walks the rectangle's 16 → 8 → 4.
+  Its date was already today's.
+
+## What is still weak
+
+- **`applyCons` has no `perp` branch**, so with `planegcs.js` missing the
+  fallback relaxation holds a rotatable rectangle's parallels but not its right
+  angle, and a drag can shear it into a parallelogram. `consOn` does not count
+  a `perp` either, so the arithmetic DOF fallback reads one too many. Both are
+  pre-existing gaps in the no-solver path (`perp` has never been in either),
+  not new — but a rectangle is the first thing the sketcher itself creates that
+  stores one, so they are reachable now where before they needed the tool.
+- **Mirroring a new rectangle gives four loose lines.** `mirrorEntity` reflects
+  one entity at a time and knows nothing about the records between them, so the
+  reflection stitches and extrudes but is not held square. That is exactly what
+  mirroring four hand-drawn lines has always done; making it carry the
+  relationships means teaching the mirror about `sk.cons`, which is its own
+  piece of work.
+- **A corner where three or more runs meet is offered no treatment**, matching
+  `stitchLoops`, which will not guess a profile there either. Right, but it
+  reads as "nothing happens" rather than as a refusal.
+- **`flashLoop` still passes the whole sketch's `corners` array** with a
+  throwaway entity at index 0, so the green flash can borrow entity 0's corner
+  overrides for its 650 ms. Display-only and pre-existing;
+  `entityDisplayPath` next door renumbers them properly and shows how.
+- **A rectangle drawn with dynamic mirror armed** gets its reflection from four
+  separate `dynMirrorAdd` calls, so the two shapes are independent from the
+  moment they are drawn. Same limitation as the point above, same fix.
+- `gcsSig` already letters an arc `'A'` — that landed with the arcs round and
+  the note at the end of the previous section records it. Nothing to do.

@@ -3603,8 +3603,6 @@ const CSG = (function(){
       if(e.construction||e.type!=='poly'||e.closed)return;
       const pts=isSpline(e)?splinePts(e):(e.pts||[]).map(q=>({x:q.x,y:q.y}));
       if(pts.length>=2)paths.push({ei:i,pts,curved:isSpline(e),segs:entSegs(e)});
-      // fall through: `own` is derived per chain below, where the walk knows
-      // which way round each run is being read
     });
     if(paths.length<2)return [];
     const K=p=>Math.round(p.x/STITCH_TOL)+':'+Math.round(p.y/STITCH_TOL);
@@ -13173,9 +13171,13 @@ const CSG = (function(){
     const h=$('hint');
     if(mode==='sketch'){h.classList.add('show');
       if(tool==='line')h.innerHTML='<span class="pip"></span> Line: every click lands a segment · click the first point to close the loop · <kbd>Esc</kbd> ends the run';
-      else if(tool==='select')h.innerHTML='<span class="pip"></span> Pointer: drag to rotate · drag a point (it snaps to the origin, plane traces and other points) · drag a dimension to reposition · click a line then <kbd>Del</kbd>';
+      else if(tool==='select')h.innerHTML='<span class="pip"></span> Pointer: drag to rotate · drag a point (it snaps to the origin, plane traces and other points) · click a corner to round just that one · click a line then <kbd>Del</kbd>';
       else if(tool==='dim')h.innerHTML='<span class="pip"></span> Dim: click a circle, polygon, rectangle edge, line, point or plane trace — then type a value to drive it';
-      else if(tool==='erase')h.innerHTML='<span class="pip"></span> Erase: click a shape to delete it';
+      else if(tool==='erase')h.innerHTML='<span class="pip"></span> Erase: click a line to delete it · click one side of a rectangle or polygon to take only that side';
+      else if(tool==='rect')h.innerHTML='<span class="pip"></span> Rectangle: click two opposite corners · it lands as four lines, held square, that drag, dimension and erase one at a time';
+      else if(tool==='crect')h.innerHTML='<span class="pip"></span> Centre rectangle: click the middle, then a corner · four lines, held square';
+      else if(tool==='rect3')h.innerHTML='<span class="pip"></span> 3-point rectangle: click one edge end to end, then the width · four lines at any angle, held square';
+      else if(tool==='crect3')h.innerHTML='<span class="pip"></span> 3-point centre rectangle: click the middle, a half-axis, then the width · four lines at any angle';
       else if(tool==='horiz')h.innerHTML='<span class="pip"></span> Horizontal: click a line segment or a polygon edge to lay it flat';
       else if(tool==='vert')h.innerHTML='<span class="pip"></span> Vertical: click a line segment or a polygon edge to stand it upright';
       else if(tool==='paral')h.innerHTML='<span class="pip"></span> Parallel: click the reference line, then the line to align to it';
