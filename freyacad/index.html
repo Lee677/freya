@@ -3226,7 +3226,7 @@ const CSG = (function(){
       // spline hasn't got any
       if(isSpline(e))return {pts:splinePts(e),closed:!!e.closed};
       if(e.type==='poly'){
-        const pts=applyCorner(sk,e.pts,!!e.closed,ei);
+        const pts=runDisplayPts(sk,e,ei);
         if(pts&&pts.length>=2)return {pts:pts,closed:!!e.closed};
       } else {
         /* One entity in a sketch of its own — so its corner records have to be
@@ -3627,16 +3627,35 @@ const CSG = (function(){
         k=K(r.end===0?P.pts[P.pts.length-1]:P.pts[0]);
       }
       if(!closed){ for(const c of chain)if(c.i!==s)used[c.i]=false; continue; }
-      const L=[], segs=[]; let curved=false;
+      /* `own` rides beside `segs`: which entity and which stored point each
+         loop point came from, so a per-corner fillet on a profile made of
+         several runs can still be looked up. At a junction the two runs each
+         have an endpoint on the spot — the record is canonicalised to the
+         lower one (entity first, then point) so a corner rounded from one side
+         reads the same from the other. A curved run's points are tessellated
+         and index nothing stored, so it carries nulls; a curved loop skips
+         corner treatment anyway. */
+      const L=[], segs=[], own=[]; let curved=false;
+      const lower=(a,b)=>!a?b:!b?a:(b.ent<a.ent||(b.ent===a.ent&&b.idx<a.idx))?b:a;
       chain.forEach((c,ci)=>{
         const P=paths[c.i]; curved=curved||P.curved;
-        const seq=c.rev?P.pts.slice().reverse():P.pts;
-        for(let q=(ci===0?0:1);q<seq.length;q++)L.push({x:seq[q].x,y:seq[q].y});
+        const n=P.pts.length, at=q=>c.rev?n-1-q:q;
+        for(let q=(ci===0?0:1);q<n;q++){
+          const s=P.pts[at(q)];
+          L.push({x:s.x,y:s.y});
+          own.push(P.curved?null:{ent:P.ei,idx:at(q)});
+        }
+        if(ci>0){                                 // the junction we just stepped through
+          const j=L.length-(n-1)-1;
+          if(j>=0)own[j]=lower(own[j],P.curved?null:{ent:P.ei,idx:at(0)});
+        }
         for(const s of (c.rev?revSegs(P.segs):P.segs)) segs.push(s);
       });
       // the walk ends back on the first point; a loop states it once
-      if(L.length>2&&Math.hypot(L[0].x-L[L.length-1].x,L[0].y-L[L.length-1].y)<STITCH_TOL*4)L.pop();
-      if(L.length>=3)out.push({pts:L,curved,segs});
+      if(L.length>2&&Math.hypot(L[0].x-L[L.length-1].x,L[0].y-L[L.length-1].y)<STITCH_TOL*4){
+        L.pop(); const o=own.pop(); if(own.length)own[0]=lower(own[0],o);
+      }
+      if(L.length>=3)out.push({pts:L,curved,segs,own});
     }
     return out;
   }
@@ -3667,7 +3686,7 @@ const CSG = (function(){
     });
     // and the profiles that only exist because two runs meet at both ends
     for(const st of stitchLoops(sk))
-      loops.push(st.curved?st.pts:applyCorner(sk,st.pts,true));
+      loops.push(st.curved?st.pts:applyCorner(sk,st.pts,true,null,st.own));
     return loops;
   }
   /* ---- splines ---------------------------------------------------------------
@@ -3762,15 +3781,78 @@ const CSG = (function(){
     return (o===undefined)?sketchDefaultCorner(sk):o;
   }
   /* `ei` is the entity the points came from, so a per-corner setting can be
-     looked up. A stitched loop spans several entities and has no single one, so
-     it passes null and takes the sketch-wide setting. */
-  function applyCorner(sk,L,closed,ei){
-    const anyPer=!!(sk.corners&&sk.corners.length&&ei!=null);
+     looked up. A stitched loop spans SEVERAL entities, so it hands over `own`
+     instead: one {ent,idx} per point, saying which stored corner each one is.
+     Without that a profile made of four separate lines could only ever take the
+     sketch-wide setting, and a per-corner fillet on it silently did nothing. */
+  function applyCorner(sk,L,closed,ei,own){
+    const anyPer=!!(sk.corners&&sk.corners.length&&(ei!=null||own));
     if(!anyPer){
       const g=sketchDefaultCorner(sk);
       return g?cornerPoly(L,closed,()=>g):L.slice();
     }
+    if(own)return cornerPoly(L,closed,i=>{ const o=own[i];
+      return o?cornerSpec(sk,o.ent,o.idx):sketchDefaultCorner(sk); });
     return cornerPoly(L,closed,i=>cornerSpec(sk,ei,i));
+  }
+  /* Where two separate straight runs meet, end to end. That is a corner in
+     every sense that matters — it is what a rectangle drawn as four lines has
+     four of — but it belongs to two entities at once, so it needs one name.
+     The rule is the lower endpoint, entity first then point index, and both
+     stitchLoops and cornerAt use it, or a corner rounded from one side would
+     read as square from the other.
+
+     Only where EXACTLY two ends meet, which is also the only junction
+     stitchLoops walks through: at a fork it stops rather than guess, and a
+     corner there would describe a profile nobody drew. Construction runs,
+     splines and closed runs are out for the same reason they are out of the
+     stitch. `nb` is the partner's far point — the neighbour this run has to
+     round against, since its own point list stops at the corner. */
+  function junctionAt(sk,ei,idx){
+    const e=sk.entities&&sk.entities[ei];
+    if(!e||e.type!=='poly'||e.spline||e.construction||e.closed)return null;
+    const P=e.pts; if(!P||P.length<2||(idx!==0&&idx!==P.length-1))return null;
+    const q=P[idx];
+    let ref=null, nb=null, hits=0;
+    (sk.entities||[]).forEach((o,oi)=>{
+      if(oi===ei||!o||o.type!=='poly'||o.spline||o.construction||o.closed)return;
+      const Q=o.pts; if(!Q||Q.length<2)return;
+      for(const j of [0,Q.length-1]){
+        if(Math.hypot(Q[j].x-q.x,Q[j].y-q.y)>STITCH_TOL)continue;
+        hits++;
+        if(!ref||oi<ref.ent||(oi===ref.ent&&j<ref.idx))ref={ent:oi,idx:j};
+        if(!nb)nb=Q[j===0?1:Q.length-2];
+      }
+    });
+    if(hits!==1)return null;
+    const mine=(ref.ent<ei||(ref.ent===ei&&ref.idx<idx));
+    return {ref:mine?ref:{ent:ei,idx:idx}, nb:nb};
+  }
+  /* An open run drawn on its own: its own two ends are square, because
+     cornerPoly never touches the ends of an open run — there is no corner
+     there within one entity. But if an end sits on another run's end there IS
+     one, so the run is rounded against a phantom neighbour borrowed from its
+     partner and the phantom trimmed back off. Both lines then draw the same
+     arc, which is what a rounded corner looks like, and the sketch shows
+     exactly the profile entityLoops will hand the kernel. */
+  function runDisplayPts(sk,e,ei){
+    const P=e.pts;
+    const anyRound=(sk.fillet>0||sk.chamfer>0||(sk.corners&&sk.corners.length));
+    if(e.closed||!anyRound||!P||P.length<2)return applyCorner(sk,P,!!e.closed,ei);
+    const end=k=>{ const j=junctionAt(sk,ei,k);
+      return (j&&j.nb&&cornerSpec(sk,j.ref.ent,j.ref.idx))?j:null; };
+    const a=end(0), b=end(P.length-1);
+    if(!a&&!b)return applyCorner(sk,P,false,ei);
+    const L=[], own=[];
+    if(a){ L.push(a.nb); own.push(null); }
+    for(let i=0;i<P.length;i++){
+      L.push(P[i]);
+      own.push(i===0&&a?a.ref:(i===P.length-1&&b)?b.ref:{ent:ei,idx:i});
+    }
+    if(b){ L.push(b.nb); own.push(null); }
+    const out=cornerPoly(L,false,i=>{ const o=own[i];
+      return o?cornerSpec(sk,o.ent,o.idx):null; });
+    return out.slice(a?1:0, b?out.length-1:out.length);
   }
   function ccw(p){return polyArea(p)>0?p:p.slice().reverse();}
   function cw(p){return polyArea(p)<0?p:p.slice().reverse();}
@@ -4097,7 +4179,7 @@ const CSG = (function(){
        is closed — the kernel is handed the same kind of wire and never learns
        it came from two entities rather than one. */
     for(const st of stitchLoops(sk)){
-      const L = st.curved ? st.pts : applyCorner(sk, st.pts, true);
+      const L = st.curved ? st.pts : applyCorner(sk, st.pts, true, null, st.own);
       /* Only a curved loop goes through the segment path: an uncurved one may
          have had its corners rounded, and the segments describe the profile
          before that happened. */
@@ -6655,6 +6737,14 @@ const CSG = (function(){
      the model edges — violet is the one family nothing else claims. */
   const DIM_COL=0xD6A2F5, DIM_COL_PEND=0x9B7BB8;
   let dragVtx=null, dragSnapPt=null;          // Move-tool: point being dragged + its snap target
+  /* Has the grab actually travelled? A handle grab owns the gesture from
+     pointerdown, so a tap on a handle used to write a solve and bank an undo
+     step for a move nobody made — and, worse, the hit test underneath it was
+     never reached. A shape's corners are exactly where its handles are, so
+     that made a per-corner fillet unclickable on anything whose corners are
+     stored points. Until the pointer has travelled, nothing is written and the
+     gesture is still a click. */
+  let dragMoved=false;
   let lockFlash=null, lockFlashT=0;           // point you just tried to drag but can't
   const SNAP_JOIN=1.0;                          // mm: floor for the drag-snap radius (grows with zoom)
   function sketchHandles(){
@@ -6774,12 +6864,20 @@ const CSG = (function(){
       let L=null;
       if(e.type==='rect')L=[{x:e.a.x,y:e.a.y},{x:e.b.x,y:e.a.y},{x:e.b.x,y:e.b.y},{x:e.a.x,y:e.b.y}];
       else if(e.type==='polygon')L=polyCorners(e);
-      else if(e.type==='poly'&&!e.spline&&e.pts.length>=3)L=e.pts;
+      else if(e.type==='poly'&&!e.spline&&(e.closed?e.pts.length>=3:e.pts.length>=2))L=e.pts;
       if(!L)return;
       for(let i=0;i<L.length;i++){
-        if(e.type==='poly'&&!e.closed&&(i===0||i===L.length-1))continue;
+        /* The end of an open run is a corner only when another run ends there
+           too — and then it is ONE corner belonging to both, so both resolve to
+           the same record. Without this a rectangle made of four lines had no
+           corners at all to pick. */
+        let ref={ent:ei,idx:i};
+        if(e.type==='poly'&&!e.closed&&(i===0||i===L.length-1)){
+          const j=junctionAt(editing,ei,i); if(!j)continue;
+          ref=j.ref;
+        }
         const d=Math.hypot(L[i].x-p.x,L[i].y-p.y);
-        if(d<bd){bd=d;best={ent:ei,idx:i};}
+        if(d<bd){bd=d;best=ref;}
       }
     });
     return best;
@@ -7167,6 +7265,57 @@ const CSG = (function(){
     const nh={x:n.x*h,y:n.y*h};
     return [{x:c.x-a.x-nh.x,y:c.y-a.y-nh.y},{x:c.x+a.x-nh.x,y:c.y+a.y-nh.y},
             {x:c.x+a.x+nh.x,y:c.y+a.y+nh.y},{x:c.x-a.x+nh.x,y:c.y-a.y+nh.y}];
+  }
+  /* ---- a rectangle is four lines -----------------------------------------
+     "after a square is drawn it should just be like four separate lines joined
+     at the corners where you can delete sides one at a time if you wish" — so
+     that is what every rectangle tool now commits: four two-point runs, corner
+     k → corner (k+1)%4, joined by four coincidences, held in shape by
+     relationships rather than by the entity's type. Four draggable corners
+     (they are real stored points now, not derived ones), one side erasable on
+     its own, opposite sides genuinely constrained.
+
+     The arithmetic, which is also what the DOF chip must read afterwards —
+     4 lines × 2 points × 2 coords = 16 numbers:
+       axis-aligned  16 − 8 (four coincidences) − 4 (H,V,H,V)   = 4
+                     left, right, bottom, top. Exactly a rectangle.
+       rotatable     16 − 8 − 3 (∥ 0-2, ∥ 1-3, ⊥ 0-1)         = 5
+                     position 2, angle 1, width 1, height 1.
+
+     Side k is corner k to corner k+1 for all four tools, so "opposite" is
+     k and k+2 and "adjacent" is k and k+1 however the shape was drawn.
+
+     The records go straight into sk.cons rather than through the constraint
+     tools: the geometry is already exactly right at creation, so there is
+     nothing for a one-shot move to correct, and storeSegPair's one-master-per-
+     follower rule would throw the second parallel of the pair away.
+
+     `type:'rect'` is NOT going anywhere — every branch that reads it still
+     does, and old files, the demos and the DEMO_ fixtures still carry one. */
+  function commitRectLines(cor,rotatable,ground){
+    const base=editing.entities.length, cons=consOf(editing);
+    for(let k=0;k<4;k++)
+      editing.entities.push({type:'poly',closed:false,
+        pts:[{x:cor[k].x,y:cor[k].y},{x:cor[(k+1)%4].x,y:cor[(k+1)%4].y}]});
+    for(let k=0;k<4;k++)                 // corner k: the end of side k−1, the start of side k
+      cons.push({kind:'coinc',a:{ent:base+(k+3)%4,idx:1},b:{ent:base+k,idx:0}});
+    if(rotatable){
+      cons.push({kind:'paral',a:{ent:base,  seg:0},b:{ent:base+2,seg:0}});
+      cons.push({kind:'paral',a:{ent:base+1,seg:0},b:{ent:base+3,seg:0}});
+      cons.push({kind:'perp', a:{ent:base,  seg:0},b:{ent:base+1,seg:0}});
+    } else {
+      for(let k=0;k<4;k++)cons.push({kind:(k%2)?'vert':'horiz',ent:base+k,seg:0});
+    }
+    // a corner that was drawn onto the origin or a plane trace keeps its hold
+    if(ground)for(const k of Object.keys(ground))
+      if(ground[k])storeGround({ent:base+(+k),idx:0},ground[k]);
+    /* Dynamic mirror appends, so it only runs once the four lines and every
+       record about them are stored — the reflections then land past them and
+       the indices the constraints name stay the ones they were given. */
+    for(let k=0;k<4;k++)dynMirrorAdd(base+k);
+    // the green flash wants one entity: a throwaway loop, display only
+    flashLoop(editing,{type:'poly',closed:true,pts:cor});
+    return base;
   }
   function drawSnapMark(){
     while(snapMarkGroup.children.length){const c=snapMarkGroup.children.pop();if(c.geometry)c.geometry.dispose();}
@@ -7666,20 +7815,22 @@ const CSG = (function(){
       chain.ei=ei;
       redrawDraft(null); rebuild();
     } else if(tool==='rect'){
-      if(draftStage===0){draftA=p;draftStage=1;} else {if(Math.abs(p.x-draftA.x)>1e-4&&Math.abs(p.y-draftA.y)>1e-4){const ent={type:'rect',a:{x:draftA.x,y:draftA.y},b:{x:p.x,y:p.y}};editing.entities.push(ent);
-        const ei=editing.entities.length-1;
-        if(draftA._g)storeGround({ent:ei,idx:0},draftA._g);
-        if(p._g)storeGround({ent:ei,idx:2},p._g);
-        dynMirrorAdd(ei); flashLoop(editing,ent);}draftStage=0;draftA=null;rebuild();}
+      if(draftStage===0){draftA=p;draftStage=1;}
+      else {
+        if(Math.abs(p.x-draftA.x)>1e-4&&Math.abs(p.y-draftA.y)>1e-4)
+          commitRectLines([{x:draftA.x,y:draftA.y},{x:p.x,y:draftA.y},
+                           {x:p.x,y:p.y},{x:draftA.x,y:p.y}],
+                          false,{0:draftA._g,2:p._g});
+        draftStage=0;draftA=null;rebuild();
+      }
     } else if(tool==='crect'){
       /* centre rectangle: the first click is the middle, the second a corner */
       if(draftStage===0){draftA=p;draftStage=1;}
       else {
         const dx=Math.abs(p.x-draftA.x), dy=Math.abs(p.y-draftA.y);
         if(dx>1e-4&&dy>1e-4){
-          const ent={type:'rect',a:{x:draftA.x-dx,y:draftA.y-dy},b:{x:draftA.x+dx,y:draftA.y+dy}};
-          editing.entities.push(ent);
-          dynMirrorAdd(editing.entities.length-1); flashLoop(editing,ent);
+          const x0=draftA.x-dx, x1=draftA.x+dx, y0=draftA.y-dy, y1=draftA.y+dy;
+          commitRectLines([{x:x0,y:y0},{x:x1,y:y0},{x:x1,y:y1},{x:x0,y:y1}],false,null);
         }
         draftStage=0;draftA=null;rebuild();
       }
@@ -7689,11 +7840,7 @@ const CSG = (function(){
       else if(draftStage===1){draftB=p;draftStage=2;}
       else {
         const cor=(tool==='rect3'?rect3Corners:crect3Corners)(draftA,draftB,p);
-        if(cor){
-          const ent={type:'poly',closed:true,pts:cor};
-          editing.entities.push(ent);
-          dynMirrorAdd(editing.entities.length-1); flashLoop(editing,ent);
-        }
+        if(cor)commitRectLines(cor,true,null);
         draftStage=0;draftA=null;draftB=null;rebuild();
       }
     } else if(tool==='circle'){
@@ -8123,6 +8270,30 @@ const CSG = (function(){
     if(idx==null)e.tan=[]; else e.tan[idx]=null;
     rebuild(); return true;
   }
+  /* A regular polygon is parametric — a centre, a radius, a side count and a
+     rotation — and its sides are not stored at all, so there is nothing to
+     take one away from. Rebuilding it out of free lines would need an angle
+     constraint the app has not got, so erasing a side EXPLODES it instead: the
+     entity becomes an open chain of the corners it had, with the clicked side
+     missing, and every erase after that is the ordinary one-segment-at-a-time
+     removal. The first erase costs the parametrics; that is the honest price
+     of taking a side off a shape whose sides were never stored.
+
+     Everything pinned to the polygon named its centre or a corner by an index
+     the chain has not got, so it goes with the parametrics — dropDimsFor with
+     delta 0, because the entity survives in place and nothing after it moves. */
+  function explodePolygon(sk,ei,si){
+    const e=sk.entities[ei];
+    const C=polyCorners(e), n=C.length;
+    // start just past the erased side and run right round, exactly as opening
+    // a closed chain does
+    const pts=[]; for(let k=1;k<=n;k++){ const q=C[(si+k)%n]; pts.push({x:q.x,y:q.y}); }
+    const out={type:'poly',closed:false,pts:pts};
+    if(e.construction)out.construction=true;
+    sk.entities[ei]=out;
+    dropDimsFor(sk,ei,0);
+    return out;
+  }
   function eraseAt(p){
     if(!editing)return false;
     const di=dimNear(p);
@@ -8131,6 +8302,10 @@ const CSG = (function(){
     const e=editing.entities[d.entIdx]; if(!e)return false;
     pushUndo('erase');
     if(e.type==='poly'&&!e.spline&&d.kind==='seg') removePolySegment(editing,d.entIdx,d.seg);
+    else if(e.type==='polygon'&&d.kind==='pedge'){
+      explodePolygon(editing,d.entIdx,d.seg);
+      setHint('That side is gone — the polygon is now plain lines, so the rest erase one at a time');
+    }
     else { editing.entities.splice(d.entIdx,1); dropDimsFor(editing,d.entIdx); }
     return true;
   }
@@ -9129,6 +9304,30 @@ const CSG = (function(){
         }
         continue;
       }
+      /* Perpendicular, the same shape as parallel but a quarter turn off, and
+         it has to be here for a reason that only started applying now: a
+         rotatable rectangle is the first thing the APP ITSELF stores a `perp`
+         for. Before that a perp only existed if someone added one on purpose,
+         and a sketch with no solver simply never met one. Without this branch
+         such a rectangle shears into a parallelogram the moment you drag a
+         corner on a build where planegcs.js did not load — measured at 130
+         and 50 degrees where it should read 90. Length is kept and the nearer
+         of the two square directions wins, so the side turns the short way
+         rather than flipping end for end. */
+      if(c.kind==='perp'){
+        let ra=c.a, rb=c.b;
+        if(onSegC(c.b)&&!onSegC(c.a)){ ra=c.b; rb=c.a; }   // the dragged side leads
+        const A=segPts(sk,{ent:ra.ent,seg:ra.seg}), B=segPts(sk,{ent:rb.ent,seg:rb.seg});
+        if(!A||!B)continue;
+        const pv=segPivot(sk,{ent:rb.ent,seg:rb.seg})||B.a;
+        const mv=(pv===B.a)?B.b:B.a;
+        let dx=A.b.x-A.a.x, dy=A.b.y-A.a.y; const AL=Math.hypot(dx,dy)||1; dx/=AL; dy/=AL;
+        const nx=-dy, ny=dx;
+        const L=Math.hypot(mv.x-pv.x,mv.y-pv.y);
+        const sgn=((mv.x-pv.x)*nx+(mv.y-pv.y)*ny)<0?-1:1;
+        mv.x=pv.x+sgn*nx*L; mv.y=pv.y+sgn*ny*L;
+        continue;
+      }
       if(c.kind==='horiz'||c.kind==='vert'){
         /* segAlign swings a free line about the dragged end when the hand
            is on it (the held-end reading otherwise), and spins a coupled
@@ -9173,8 +9372,8 @@ const CSG = (function(){
         // one direction spent — a spin or a swing, whatever entSeg resolves
         if(entSeg(sk,i,c.seg||0))n++;
       }
-      // parallel/equal each cost the following line one freedom
-      else if((c.kind==='paral'||c.kind==='equal')&&c.b&&c.b.ent===i){
+      // parallel, equal and perpendicular each cost the following line one freedom
+      else if((c.kind==='paral'||c.kind==='equal'||c.kind==='perp')&&c.b&&c.b.ent===i){
         const s=segPts(sk,{ent:i,seg:c.b.seg}); if(s)n++;
       }
       // a point held on a plane loses one translation
@@ -12996,9 +13195,13 @@ const CSG = (function(){
     const h=$('hint');
     if(mode==='sketch'){h.classList.add('show');
       if(tool==='line')h.innerHTML='<span class="pip"></span> Line: every click lands a segment · click the first point to close the loop · <kbd>Esc</kbd> ends the run';
-      else if(tool==='select')h.innerHTML='<span class="pip"></span> Pointer: drag to rotate · drag a point (it snaps to the origin, plane traces and other points) · drag a dimension to reposition · click a line then <kbd>Del</kbd>';
+      else if(tool==='select')h.innerHTML='<span class="pip"></span> Pointer: drag to rotate · drag a point (it snaps to the origin, plane traces and other points) · click a corner to round just that one · click a line then <kbd>Del</kbd>';
       else if(tool==='dim')h.innerHTML='<span class="pip"></span> Dim: click a circle, polygon, rectangle edge, line, point or plane trace — then type a value to drive it';
-      else if(tool==='erase')h.innerHTML='<span class="pip"></span> Erase: click a shape to delete it';
+      else if(tool==='erase')h.innerHTML='<span class="pip"></span> Erase: click a line to delete it · click one side of a rectangle or polygon to take only that side';
+      else if(tool==='rect')h.innerHTML='<span class="pip"></span> Rectangle: click two opposite corners · it lands as four lines, held square, that drag, dimension and erase one at a time';
+      else if(tool==='crect')h.innerHTML='<span class="pip"></span> Centre rectangle: click the middle, then a corner · four lines, held square';
+      else if(tool==='rect3')h.innerHTML='<span class="pip"></span> 3-point rectangle: click one edge end to end, then the width · four lines at any angle, held square';
+      else if(tool==='crect3')h.innerHTML='<span class="pip"></span> 3-point centre rectangle: click the middle, a half-axis, then the width · four lines at any angle';
       else if(tool==='horiz')h.innerHTML='<span class="pip"></span> Horizontal: click a line segment or a polygon edge to lay it flat';
       else if(tool==='vert')h.innerHTML='<span class="pip"></span> Vertical: click a line segment or a polygon edge to stand it upright';
       else if(tool==='paral')h.innerHTML='<span class="pip"></span> Parallel: click the reference line, then the line to align to it';
@@ -13049,7 +13252,7 @@ const CSG = (function(){
              is selected, it sits away from the curve, and it is the one thing
              there you cannot get at any other way. */
           const sh=nearestSplineHandle(p,tol);
-          if(sh){ pushUndo('spline handle'); dragVtx=sh; dragSnapPt=null;
+          if(sh){ pushUndo('spline handle'); dragVtx=sh; dragSnapPt=null; dragMoved=false;
             controls._s=0; redrawHandles(); return; }
           // a point beats the outline it sits on — the corner handle spins a
           // polygon, the edge between corners only resizes it
@@ -13067,7 +13270,7 @@ const CSG = (function(){
             setHint('Fully defined — change a dimension to move this point');
             return;
           }
-          if(h){ pushUndo('move point'); dragVtx=h; dragSnapPt=null;
+          if(h){ pushUndo('move point'); dragVtx=h; dragSnapPt=null; dragMoved=false;
             ensureDimValues(editing);   // capture targets before anything moves
             dragJoins=collectJoins(editing);   // loose joints ride along with the hand
             dragPreErr=maxDimErr(editing);     // so the release check judges the delta
@@ -13116,6 +13319,12 @@ const CSG = (function(){
       return;
     }
     if(dragVtx){
+      // a gesture that has not travelled is not a drag yet — write nothing, so
+      // the pointer-up can still read it as a click on what is underneath
+      if(!dragMoved){
+        if(Math.hypot(e.clientX-downX,e.clientY-downY)<=2)return;
+        dragMoved=true;
+      }
       const p=pointerToSketch(e); if(!p)return;
       if(dragVtx.kind==='pg'){
         // corner handle: the vector from centre to cursor gives both the
@@ -13276,6 +13485,20 @@ const CSG = (function(){
          the circumcircle — a click on the flat of an edge would find nothing. */
       sketchSel={entIdx:ei,seg:null}; drawSketchSel(); ensureSketchProps();
       setHint('Selected — press Delete to remove it, or drag the outline to resize');
+      return;
+    }
+    /* A tap on a handle is a click on whatever is under it, not a drag. The
+       grab owns the gesture from pointerdown, so without this the hit test
+       below — which is where a CORNER is found — could never be reached: the
+       corners of a shape are exactly where its handles are. Nothing was
+       written while the gesture stood still, so the undo step it banked is
+       dropped rather than kept. */
+    if(dragVtx&&!dragMoved){
+      undoStack.pop(); refreshUndoUI();
+      gcsDragEnd();
+      dragJoins=null; dragVtx=null; dragSnapPt=null; redrawHandles();
+      const p=pointerToSketch(e);
+      if(p)sketchClick(p);
       return;
     }
     if(dragVtx){

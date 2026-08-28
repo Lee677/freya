@@ -466,9 +466,14 @@ you picked and the panel gains a <b>This corner</b> section above the sketch-wid
     whatever the rest of the sketch does. A size box appears under it.</td></tr>
 </table>
 <p>So a plate with three rounded corners and one square one is a sketch-wide fillet plus one
-corner set to Square, and a plate where every corner differs is four separate settings. The
-ends of an open run are not corners and are never offered. A corner setting travels with its
-point: move the point and it follows, delete the point or the shape and it goes too.</p>
+corner set to Square, and a plate where every corner differs is four separate settings.</p>
+<p>Where <b>two separate lines meet end to end</b> that is a corner as well, and it is
+offered as one — which is what makes the corners of a rectangle, or of any profile you
+drew line by line, roundable one at a time. Both lines are asking about the same corner,
+so setting it from either of them is setting the same thing. A free end that meets nothing,
+and a place where three or more runs cross, are not corners and are never offered.</p>
+<p>A corner setting travels with its point: move the point and it follows, delete the point
+or the shape and it goes too.</p>
 <h3>The right-click menu, and rearranging it</h3>
 <p>Right-clicking in a sketch gives four groups: <b>Sketch</b> (Finish, Finish + extrude,
 Cancel) first, since finishing is the commonest reason to open it; then <b>Sketch
@@ -524,7 +529,8 @@ whatever you're mid-way through, and again to leave the sketch.</p>
     Angled, and centred on the first click.</td></tr>
   <tr><td colspan="3"><em>All four live on one <b>Rect</b> button: the small arrow opens the
     list, the button itself draws whichever you chose last, and that choice is remembered
-    between sessions.</em></td></tr>
+    between sessions. Whichever you use, what lands is <b>four separate lines joined at
+    the corners</b> — see below.</em></td></tr>
 
   <tr><td><b>Circle</b></td><td><kbd>3</kbd></td><td>Click the centre, then a point on
     the radius.</td></tr>
@@ -545,7 +551,10 @@ whatever you're mid-way through, and again to leave the sketch.</p>
   <tr><td><b>Pointer</b></td><td>—</td><td>Select, drag and orbit. Nothing is drawn while
     it's active.</td></tr>
   <tr><td><b>Eraser</b></td><td>—</td><td>Deletes one thing at a time — a single segment,
-    a circle, a dimension.</td></tr>
+    a circle, a dimension. Click <b>one side</b> of a rectangle and only that side goes;
+    the other three stay exactly where they are. A <b>polygon</b> gives up a side too, but
+    it costs the parametrics: the first side you erase turns it into plain lines (see
+    <a href="#editsk">Editing a sketch</a>).</td></tr>
 </table>
 <div class="note warn">
   <span class="tag">Closed profiles</span>
@@ -555,11 +564,31 @@ whatever you're mid-way through, and again to leave the sketch.</p>
 </div>
 
 <div class="note">
-  <span class="tag">Worth knowing</span>
-  <p>The two axis-aligned rectangles are stored as rectangles, so they keep the width and
-  height dimensions and the two corner handles. The two three-point ones can sit at any
-  angle, which that storage can't express, so they commit as a closed four-sided profile —
-  every corner is draggable, and you dimension the sides like any other lines.</p>
+  <span class="tag">A rectangle is four lines</span>
+  <p>All four rectangle tools commit <b>four separate two-point lines, joined at the
+  corners</b>, exactly as if you had drawn them one at a time — and then held in shape by
+  relationships, which is what SolidWorks does and what makes the shape behave the way you
+  expect:</p>
+  <ul>
+    <li><b>All four corners are handles.</b> Drag any one of them and the two lines that
+        meet there come with it.</li>
+    <li><b>Each side erases on its own.</b> Click one with the eraser and the other three
+        are untouched.</li>
+    <li><b>Each side carries its own length dimension</b>, like any other line.</li>
+    <li><b>The shape is held square by relationships you can see and delete.</b> The two
+        axis-aligned tools put a <b>horizontal</b> on the top and bottom and a
+        <b>vertical</b> on the sides; the two three-point tools put a <b>parallel</b> on
+        each opposite pair and one <b>perpendicular</b> between two adjacent sides, which
+        is what lets them sit at any angle and still stay square.</li>
+  </ul>
+  <p>That leaves an axis-aligned rectangle with <b>four</b> degrees of freedom (left,
+  right, bottom, top) and an angled one with <b>five</b> (where it is, which way round it
+  is, how wide and how tall) — the numbers the chip reports. Delete a relationship badge
+  and the shape is free to become any quadrilateral; that is the point of storing it this
+  way rather than as a shape that can only ever be a rectangle.</p>
+  <p>Rectangles in sketches saved before this change are still stored the old way — two
+  corners and a width-and-height pair — and still draw, drag, dimension and build exactly
+  as they always did.</p>
 </div>
 
 <h2 id="snap">Snapping</h2>
@@ -639,8 +668,10 @@ fully in charge of itself.</p>
 <h2 id="constrain">Constraints &amp; degrees of freedom</h2>
 <p>The chip in the top-left corner is the sketch's own report on itself, and a real
 constraint solver is behind it. Every entity carries a number of free values — a line has
-four (two endpoints, two coordinates each), a circle three, a rectangle four — and every
-dimension and constraint takes some of them away. What is left is the <b>degrees of
+four (two endpoints, two coordinates each), a circle three, an arc five — and every
+dimension and constraint takes some of them away. A rectangle is four lines, so it starts
+at sixteen: the four corner joins take eight and the four relationships that keep it
+square take four more, leaving the four you would expect. What is left is the <b>degrees of
 freedom</b>: the number of independent ways your sketch can still deform.</p>
 <p>It counts what your rules actually <em>decide</em>, not how many rules you wrote. Three
 parallels round a rectangle are three constraints but only two decisions — the third
@@ -858,6 +889,17 @@ cost time.</p>
       the flats between them only resize.</li>
   <li><b>Delete</b> — click a line to select it, then <kbd>Delete</kbd>. Or use the eraser
       to remove individual segments and dimensions.</li>
+  <li><b>Erase one side of a shape</b> — click that side with the eraser. On a rectangle,
+      or on any run of lines, only the side you clicked goes. On a <b>regular polygon</b>
+      it works too, at a price: a polygon is stored as a centre, a radius, a side count and
+      an angle, and it has no sides to take away — so the first side you erase turns it
+      into a plain chain of lines with that side missing. Everything after that erases one
+      side at a time like any other line, but the polygon's own size dimension and its
+      relationships go when the parametrics do.</li>
+  <li><b>Round one corner</b> — click the corner itself with the pointer. A ring marks it
+      and the panel gains a <b>This corner</b> section (see
+      <a href="#sketch">Making a sketch</a>). A corner where two separate lines meet counts,
+      so the corners of a rectangle can each be rounded on their own.</li>
   <li><b>Select several at once</b> — drag a box over empty space. Everything
       <em>completely inside</em> it is caught, lines and dimensions alike; then press
       <kbd>Delete</kbd> or pick the eraser to remove the lot. (Hold <kbd>Shift</kbd> and
