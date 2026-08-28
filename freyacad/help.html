@@ -88,6 +88,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line-soft);
   <a href="#speed">If a model feels slow</a>
   <div class="grp">Interface</div>
   <a href="#layout">The layout</a>
+  <a href="#props">Feature properties</a>
   <a href="#navigate">Getting around</a>
   <a href="#gridfinity">Gridfinity</a>
   <a href="#views">Views &amp; projection</a>
@@ -123,7 +124,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line-soft);
 <main>
 <h1>freyacad</h1>
 <p class="tagline">Parametric solid modelling that runs entirely in your browser.</p>
-<p class="stamp" id="stamp">Manual — last revised 27 August 2026</p>
+<p class="stamp" id="stamp">Manual — last revised 28 August 2026</p>
 
 <h2 id="start">Start here</h2>
 <p class="lede">freyacad is a small CAD program with a real geometry kernel. You sketch on a
@@ -217,6 +218,9 @@ edits that look equally small can take very different amounts of time.</p>
     order, with the origin and datum planes at the top.</td></tr>
   <tr><td><b>Viewport</b></td><td>The 3D scene. Right-click anywhere in it for a context
     menu that changes with what you're doing.</td></tr>
+  <tr><td><b>Feature properties</b></td><td>The panel that appears at the top right when
+    you open a feature. Every number and choice that feature has, plus <b>Done</b> and
+    <b>Cancel</b>. Its own section is next.</td></tr>
   <tr><td><b>Tool dock</b></td><td>Appears at the bottom while a sketch is open — the
     drawing tools, dimension, pointer and eraser.</td></tr>
   <tr><td><b>Status chip</b></td><td>In the toolbar while sketching. Tells you whether the
@@ -229,6 +233,34 @@ edits that look equally small can take very different amounts of time.</p>
 <p>If the toolbar feels crowded, <b>Aa</b> collapses the buttons to icons only. The feature
 tree keeps its full text either way — the tree is the one place where names matter more
 than space.</p>
+
+<h2 id="props">Feature properties</h2>
+<p>The panel that appears at the <b>top right</b> of the viewport is <b>Feature
+properties</b>. It is where a feature's numbers live — the depth of an extrude, the radius
+of a fillet, the angle and offset of a plane — and it shows one feature at a time.</p>
+<p>It opens by itself whenever you <b>add</b> a feature, so a new extrude arrives with its
+panel already up. To reopen it later, <b>double-click the feature</b> in the tree, or
+right-click it and choose <b>Edit feature</b> (<b>Edit plane</b> on a plane). Sketches are
+the exception: double-clicking a sketch reopens the sketch itself, since a sketch is drawn
+rather than typed.</p>
+<p><b>The model rebuilds as you type.</b> Every change previews immediately on the real
+solid — there is no Apply button and no waiting to see what a number does. Drag an offset
+and the plane moves with it.</p>
+<p>The two buttons at the bottom decide what happens to all that:</p>
+<ul>
+  <li><b>Done</b> keeps the change, and counts as <em>one</em> undo step however many
+      values you touched while the panel was open.</li>
+  <li><b>Cancel</b> rolls it back to exactly how it was when the panel opened. On a feature
+      you have only just added, Cancel removes the feature entirely — that is what makes it
+      safe to add something, try it, and change your mind.</li>
+</ul>
+<p>Some panels also ask you to <b>point at something</b> rather than type: a plane's base
+plane and its reference face, an axis's circle, the face a piece of text sits on. Those
+show a button; press it and a prompt card appears in the corner telling you what to click.
+<kbd>Esc</kbd> or a right-click cancels the pick and leaves the rest of the panel alone.</p>
+<p>Fillets and chamfers work the other way round: their panel stays open while you
+<b>click edges in the viewport</b>, and the result previews with the removed material
+highlighted.</p>
 
 <h2 id="navigate">Getting around</h2>
 <table>
@@ -1074,16 +1106,26 @@ from</b> something, <b>tilt</b> it, then <b>offset</b> it. Any of the three can 
 alone — a plane with no tilt and no offset is simply a copy of what it started from.</p>
 <ul>
   <li><b>Start from &middot; A plane</b> — one of Top, Front or Right, or <b>another plane
-      you have added</b>. Planes chain: put one 10&nbsp;mm above Top, another 4&nbsp;mm
-      above that, and the second sits at 14. Change the first and the second follows.</li>
+      you have added</b>. You choose it by <b>clicking the plane you mean</b>: press the
+      <b>Base plane</b> button and then click either its <b>row in the feature tree</b> or
+      the <b>plane itself in the viewport</b>. While the pick is waiting, the origin planes
+      are shown whether or not you had them on, every plane you may pick is marked in teal
+      in both the tree and the viewport, and the one under the cursor lights amber. The
+      panel keeps saying which plane is the current base; press it again to change your
+      mind. Planes chain: put one 10&nbsp;mm above Top, another 4&nbsp;mm above that, and
+      the second sits at 14. Change the first and the second follows.</li>
   <li><b>Start from &middot; A face</b> — press <b>Pick a face</b> and click a flat face of
       the model. The plane starts on that face, lying flat against it, and the offset
       floats it clear. Switching to a face drops the 30&deg; the tool opens with, since
       "parallel to this face, this far off" is nearly always what is wanted; the tilt is
       still there if it isn't.</li>
-  <li><b>Tilt about</b> its U or its V axis, by an <b>angle</b>. The axis is one of the
-      base's own in-plane directions, so a tilted plane still passes through the base's
-      origin — an angled plane, not a floating one, exactly as before.</li>
+  <li><b>Tilt about</b> one of the base's two in-plane directions, by an <b>angle</b>. The
+      two buttons name each direction by the <b>world axis it runs along</b> — on a plane
+      based on Top they read <em>Along X</em> and <em>Along Z</em>. Where a direction does
+      not line up with a world axis, because the base is itself tilted or is an oblique
+      face, it reads <em>Near&nbsp;X</em> instead: the axis it comes closest to, said as an
+      approximation rather than a claim. The tilt axis lies in the base, so a tilted plane
+      still passes through the base's origin — an angled plane, not a floating one.</li>
   <li><b>Offset along its own normal</b>, with <b>Reverse the offset direction</b> for the
       other side. The plane is tilted <em>first</em> and moved <em>second</em>, so the
       distance you type is measured square to the plane you end up with, not to the base.
@@ -1105,8 +1147,9 @@ feature is marked with a red <b>!</b> in the tree and the reason reads "its refe
 is no longer on the model". It never quietly moves somewhere else and takes your sketches
 with it. Pick the face again and it carries on.</p>
 <p>A plane whose base plane was deleted, or whose bases run in a circle, is marked the
-same way. Circular bases are refused rather than followed — the panel won't offer you a
-base that already leans on the plane you are editing.</p>
+same way. Circular bases are refused rather than followed: a plane that already leans on
+the one you are editing is greyed out while the pick is waiting, and clicking it anyway
+says why instead of quietly doing nothing.</p>
 
 <h2 id="undo">Undo</h2>
 <p><kbd>Ctrl</kbd>+<kbd>Z</kbd> steps back, <kbd>Ctrl</kbd>+<kbd>Y</kbd> forward, up to

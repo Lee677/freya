@@ -312,6 +312,12 @@ if(!window.THREE){
   .feat:hover .fx{opacity:1}
   .feat .fx:hover{color:var(--g-red);background:rgba(234,67,53,.15);text-shadow:0 0 4px var(--g-red)}
   .feat.suppressed .fname{color:var(--muted-2);text-decoration:line-through}
+  /* a pick is armed and this row is one of the planes it would take — the same
+     teal the viewport tints the candidate quads with, so the two read as one */
+  .feat.cand{border-color:rgba(53,212,230,.55);background:rgba(53,212,230,.09)}
+  .feat.cand .fname{color:var(--text)}
+  .feat.cand .fi{color:#35d4e6}
+  .feat.nocand{opacity:.34}
 
   .rollbar{height:14px;margin:1px 4px;position:relative;cursor:grab;display:flex;align-items:center}
   .rollbar::before{content:"";position:absolute;left:0;right:0;height:2px;background:repeating-linear-gradient(90deg,var(--g-yellow) 0 7px,transparent 7px 12px);border-radius:2px;box-shadow:0 0 4px var(--g-yellow)}
@@ -467,6 +473,13 @@ if(!window.THREE){
   .check .box svg{opacity:0;stroke:var(--g-green)}
   .check.on .box svg{opacity:1}
   .note{font-size:11px;color:var(--muted-2);line-height:1.5}
+  /* the base plane is stated, not chosen from a list — the button reads as a
+     value you can press to change rather than as one option among many */
+  .base-pick{width:100%;justify-content:space-between;font-family:var(--mono);font-size:12px;
+    padding:7px 9px;border-color:var(--line);color:var(--text)}
+  .base-pick::after{content:"pick";font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--muted-2)}
+  .base-pick.bad{border-color:var(--g-red);color:var(--g-red)}
 
   .hint{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);background:rgba(13,17,23,.9);backdrop-filter:blur(6px);border:1px solid var(--g-yellow);border-radius:999px;padding:7px 15px;font-size:11.5px;color:var(--text);display:flex;align-items:center;gap:9px;box-shadow:0 0 15px rgba(251,188,5,0.2);pointer-events:none;opacity:0;transition:opacity .2s;white-space:nowrap;z-index:8}
   /* the pick card: a PERSISTENT prompt, top right, for click-something-next
@@ -2438,6 +2451,13 @@ const CSG = (function(){
      is waiting for a pick has to make the origin planes and axes visible, and
      updateDatumVis runs long before the assembly code is reached. */
   let mateSel=null, mateHi=[];        // mate in progress: {kind,a,hover} + its highlight meshes
+  /* The plane tool's BASE pick lives up here for the same reason: while it is
+     armed the origin planes have to be on show and the datum planes have to
+     say which of them the click would take, so updateDatumVis and
+     drawRefGeometry both read it — and both run long before the plane tool's
+     own code is reached. */
+  let pendingPlaneBase=null;          // the dplane (draft) feature awaiting a base PLANE
+  let planeBaseHover=null;            // 'Top'|'Front'|'Right'|'dp:<id>' under the cursor
   (function buildDatumPlanes(){
     const SZ=9;
     function label(text){
@@ -2495,8 +2515,14 @@ const CSG = (function(){
     const auto=(docMode==='part')&&(mode==='model')&&features.length===0;
     const matePick=isA&&!!mateSel;
     const skPick=(docMode==='part')&&(mode==='model')&&!!pendingSketchPick;
+    /* A plane you cannot see is a plane you cannot click, so an armed base
+       pick BORROWS the origin planes' visibility for as long as it lasts.
+       Nothing is stored and nothing has to be put back: datumShow is not
+       touched, so the moment the pick ends this same function hands the
+       planes straight back to whatever the tree had them set to. */
+    const bpPick=(docMode==='part')&&(mode==='model')&&!!pendingPlaneBase;
     const anyPinned=datumShow.Top||datumShow.Front||datumShow.Right;
-    datumGroup.visible=live&&(auto||anyPinned||matePick||skPick);
+    datumGroup.visible=live&&(auto||anyPinned||matePick||skPick||bpPick);
     const hov=treeHover?treeHover.split(':'):null;
     const hovPlane=(hov&&hov[0]==='plane')?hov[1]:null;
     const hovAxis =(hov&&hov[0]==='axis') ?hov[1]:null;
@@ -2506,8 +2532,8 @@ const CSG = (function(){
     const wantA=!matePick||mateSel.kind==='concentric';
     for(const m of datumPlanes){
       const lit=hovPlane===m.userData.plane;          // hovered in the tree
-      const on=(auto||skPick||(matePick&&wantP)||!!datumShow[m.userData.plane]||lit);
-      if(m.material)m.material.opacity=lit?0.34:((matePick&&wantP)||skPick?0.2:0.12);
+      const on=(auto||skPick||bpPick||(matePick&&wantP)||!!datumShow[m.userData.plane]||lit);
+      if(m.material)m.material.opacity=lit?0.34:((matePick&&wantP)||skPick||bpPick?0.2:0.12);
       m.visible=on;
       if(m.userData.border)m.userData.border.visible=on;
       if(m.userData.label)m.userData.label.visible=on;
@@ -2518,7 +2544,7 @@ const CSG = (function(){
       ln.visible=live&&(!!axisShow[ln.userData.axis]||lit||(matePick&&wantA));
       if(ln.material){ln.material.opacity=lit?1:0.75;ln.material.linewidth=lit?2:1;}
     }
-    if(!auto&&!matePick&&!skPick)setDatumHover(null);   // clickable as the plane picker, or for a mate
+    if(!auto&&!matePick&&!skPick&&!bpPick)setDatumHover(null);   // clickable as the plane picker, or for a mate
     const db=$('btn-demo'); if(db)db.style.display=auto?'':'none';
   }
 
@@ -5523,6 +5549,36 @@ const CSG = (function(){
     st.add(pf.id);
     return planeFrame({kind:'dplane',refId:bp.id},st);
   }
+  /* Does the plane `id` already lean on `targetId`, directly or down a chain?
+     A base that leads back to the plane being edited would only build a loop
+     for the resolver to refuse, so both the panel's readout and the armed base
+     pick ask this before accepting anything. It lived inside the plane panel
+     until the pick needed it as well; there is one copy, and this is it.
+
+     One visited set PER walk, not one shared across a sweep of candidates —
+     a shared one remembers a plane it passed through on the way to finding the
+     target, and then answers "no" when that plane is asked about directly. */
+  function planeLeansOn(id,targetId,seen){
+    if(id===targetId)return true;
+    const st=seen||new Set();
+    if(st.has(id))return false;          // a loop that does not run through the target
+    st.add(id);
+    const p=features.find(x=>x.type==='dplane'&&x.id===id);
+    if(!p||p.baseKind==='face')return false;
+    const b=features.find(x=>x.type==='dplane'&&(('dp:'+x.id)===(p.base||'')||x.name===(p.base||'')));
+    return b?planeLeansOn(b.id,targetId,st):false;
+  }
+  /* May `f` — a datum-plane feature, usually the panel's draft — be based on
+     the plane `id` without building a loop? */
+  function planeBaseAllowed(f,id){ return !!f&&!planeLeansOn(id,f.id); }
+  /* The stored base ('Top'|'Front'|'Right', 'dp:<id>', or a plane's name) as
+     something to show a person. Null when it names nothing that still exists. */
+  function planeBaseLabel(base){
+    const nm=base||'Top';
+    if(DATUM[nm])return nm+' plane';
+    const p=features.find(x=>x.type==='dplane'&&(('dp:'+x.id)===nm||x.name===nm));
+    return p?p.name:null;
+  }
   /* Resolve any plane spec to a live frame. Handles datum planes, offset
      datum-plane features, and face frames (which may be plain JSON after a
      project load — reconstruct real Vector3s).
@@ -6393,13 +6449,27 @@ const CSG = (function(){
         const SZ=8;
         const cor=[[-SZ/2,-SZ/2],[SZ/2,-SZ/2],[SZ/2,SZ/2],[-SZ/2,SZ/2]]
           .map(([a,b])=>fr.o.clone().addScaledVector(fr.u,a).addScaledVector(fr.v,b));
+        /* While a base pick is armed these quads ARE the pick targets, so they
+           have to say what the click would take: the one under the cursor
+           amber, every plane this one may legally stand on teal, and the ones
+           that would run in a circle dimmed out of the way. With no pick armed
+           nothing here changes — blue, or amber for the selected one. */
+        let qc=col, qf=sel?0.13:0.05, qb=sel?1:0.55;
+        if(pendingPlaneBase){
+          if(!planeBaseAllowed(pendingPlaneBase,f.id)){ qc=0x4285F4; qf=0.02; qb=0.16; }
+          else if(planeBaseHover===('dp:'+f.id)){ qc=0xFBBC05; qf=0.30; qb=1; }
+          else { qc=0x35D4E6; qf=0.11; qb=0.85; }
+        }
         const fill=new THREE.Mesh(new THREE.PlaneGeometry(SZ,SZ),
-          new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:sel?0.13:0.05,side:THREE.DoubleSide,depthWrite:false}));
+          new THREE.MeshBasicMaterial({color:qc,transparent:true,opacity:qf,side:THREE.DoubleSide,depthWrite:false}));
         fill.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(fr.u,fr.v,fr.n));
         fill.position.copy(fr.o); fill.renderOrder=1;
         const border=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(cor),
-          new THREE.LineBasicMaterial({color:col,transparent:true,opacity:sel?1:0.55}));
+          new THREE.LineBasicMaterial({color:qc,transparent:true,opacity:qb}));
         border.renderOrder=2;
+        /* the quad carries the feature it draws, so a click on it knows which
+           plane it landed on without a second search */
+        fill.userData.dplaneId=f.id; border.userData.dplaneId=f.id;
         refOverlay.add(fill); refOverlay.add(border);
       } else if(f.type==='daxis'){
         let g; try{ g=axisGeom(f); }catch(_){ g=null; }
@@ -9221,10 +9291,11 @@ const CSG = (function(){
   /* Any armed pick owns the next click, so selection must stand aside for it */
   function armedPick(){
     return !!(pendingSketchPick||pendingTextFace||pendingAxisPick||pendingFaceSketch
-             ||pendingPlaneFace||pendingBodyColor||pendingFaceColor);
+             ||pendingPlaneFace||pendingPlaneBase||pendingBodyColor||pendingFaceColor);
   }
   function cancelPicks(msg){
     const had=armedPick();
+    endPlaneBasePick();          // puts the origin planes and the quads back
     pendingSketchPick=false; pendingTextFace=false; pendingAxisPick=null; pendingFaceSketch=false;
     pendingPlaneFace=null; pendingBodyColor=false; pendingFaceColor=false;
     hidePickCard(); updateDatumVis();
@@ -9589,6 +9660,83 @@ const CSG = (function(){
     setHint('Plane started from that face — type a distance to float it clear');
     if(propsFeat) openProps(propsFeat); else rebuild();
   }
+  /* ---- the plane tool's OTHER pick: its BASE PLANE ------------------------
+     Same shape as the face pick above, deliberately: armed from the panel,
+     held against the DRAFT feature, one pick card, Esc or right-click to
+     cancel, and the panel redrawn from the draft when it lands. What differs
+     is what it accepts — a PLANE — and that a plane can be pointed at in two
+     places, its row in the feature tree or its own quad in the viewport. Both
+     arrive at consumePlaneBase, so there is one rule about what is allowed.
+
+     The origin planes are shown for the duration (updateDatumVis, exactly as
+     for the sketch pick) and handed back the moment it ends. */
+  function redrawRefGeometry(){ drawRefGeometry(features.slice(0,rollbackIndex)); }
+  function startPlaneBasePick(f){
+    pendingPlaneBase=f; planeBaseHover=null;
+    showPickCard('Click the plane this one starts from — its row in the tree, or the plane itself');
+    setHint('Click a plane — in the feature tree or in the viewport. Esc cancels');
+    updateDatumVis(); refreshTree(); redrawRefGeometry();
+    if(typeof updateHelp==='function')updateHelp();
+  }
+  function endPlaneBasePick(){
+    if(!pendingPlaneBase)return;
+    pendingPlaneBase=null; planeBaseHover=null; setDatumHover(null);
+    hidePickCard(); updateDatumVis(); refreshTree(); redrawRefGeometry();
+    if(typeof updateHelp==='function')updateHelp();
+  }
+  /* One gate for both routes in. A base that leads back to the plane being
+     edited is REFUSED OUT LOUD — silence would read as a dead click — and the
+     pick stays armed so the next one can land. */
+  function consumePlaneBase(base){
+    const f=pendingPlaneBase; if(!f)return false;
+    if(!DATUM[base]){
+      /* both stored shapes, the same two the resolver accepts: 'dp:<id>' and a
+         plain plane name (which is what a hand-written file is likely to hold) */
+      const p=features.find(x=>x.type==='dplane'&&(('dp:'+x.id)===base||x.name===base));
+      if(!p){ setHint('That plane is no longer here — pick another'); return false; }
+      if(p.id===f.id){
+        setHint('A plane cannot be built on itself — pick a different one'); return false; }
+      if(planeLeansOn(p.id,f.id)){
+        setHint(p.name+' already leans on '+(f.name||'this plane')
+          +' — basing it there would run in a circle. Pick another.');
+        return false; }
+    }
+    if(f.baseKind==='face')f.baseKind='plane';
+    f.base=base;
+    const label=planeBaseLabel(base)||base;
+    endPlaneBasePick();
+    setHint('Base plane set to '+label+' — the angle and the offset are measured from it');
+    if(propsFeat) openProps(propsFeat); else rebuild();
+    return true;
+  }
+  /* What a click in the viewport would take: an origin plane's quad or a datum
+     plane's own drawn quad, nearest to the camera first — a plane BEHIND
+     another must not steal the click, which is the same rule the sketch pick
+     applies between a plane and the solid. */
+  function planeBaseAt(e){
+    const r=canvas.getBoundingClientRect();
+    ndc.x=((e.clientX-r.left)/r.width)*2-1; ndc.y=-((e.clientY-r.top)/r.height)*2+1;
+    raycaster.setFromCamera(ndc,camera);
+    const quads=refOverlay.children.filter(o=>o.isMesh&&o.userData.dplaneId!=null);
+    const dh=datumGroup.visible?(raycaster.intersectObjects(datumPlanes,false)[0]||null):null;
+    const rh=quads.length?(raycaster.intersectObjects(quads,false)[0]||null):null;
+    if(dh&&(!rh||dh.distance<=rh.distance))
+      return {base:dh.object.userData.plane, mesh:dh.object};
+    if(rh) return {base:'dp:'+rh.object.userData.dplaneId, mesh:null};
+    return null;
+  }
+  /* Hovering says which plane the click would take, in the same two colours
+     the tree rows wear: the quad under the cursor goes amber, and an origin
+     plane goes through setDatumHover so it lights exactly as it does anywhere
+     else. Only a CHANGE redraws — the reference overlay is rebuilt from
+     scratch, and that is not a per-pointermove cost. */
+  function setPlaneBaseHover(h){
+    const key=h?h.base:null;
+    if(key===planeBaseHover)return;
+    planeBaseHover=key;
+    setDatumHover(h&&h.mesh?h.mesh:null);
+    redrawRefGeometry();
+  }
   function makeFaceSketch(hit){
     const n=hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
     const o=hit.point.clone().addScaledVector(n,0.001);
@@ -9935,8 +10083,15 @@ const CSG = (function(){
   }
   function makeFeatRow(f,i,child,twist){
     const el=document.createElement('div');
+    /* While the plane tool is waiting for a base, every datum-plane row says
+       whether it is one this plane may stand on — the rows are pick targets,
+       and a target that would be refused should look refused before it is
+       clicked, not after. */
+    const bpArmed=!!pendingPlaneBase&&f.type==='dplane';
+    const bpOk=bpArmed&&planeBaseAllowed(pendingPlaneBase,f.id);
     el.className='feat'+(child?' child':'')+(f.id===selId?' sel':'')+(i>=rollbackIndex?' rolled':'')
-      +(f.error?' errored':'')+(f.suppressed?' suppressed':'');
+      +(f.error?' errored':'')+(f.suppressed?' suppressed':'')
+      +(bpOk?' cand':'')+(bpArmed&&!bpOk?' nocand':'');
     el.dataset.fid=f.id;
     el.dataset.fi=i;
     const fname=(propsFeat&&propsFeat.id===f.id&&draftFeat)?draftFeat.name:f.name;
@@ -9953,6 +10108,10 @@ const CSG = (function(){
         refreshTree(); return; }
       if(e.target.classList.contains('ferr')){ e.stopPropagation(); showErrorDialog(f); return; }
       if(e.target.classList.contains('fx')){deleteFeature(f.id);return;}
+      /* the row IS the plane: an armed base pick takes it here, exactly as a
+         click on its quad in the viewport would */
+      if(pendingPlaneBase&&f.type==='dplane'){ e.stopPropagation();
+        consumePlaneBase('dp:'+f.id); return; }
       selectFeature(f.id);
     });
     el.addEventListener('dblclick',()=>{ if(f.type==='sketch')editSketch(f); else openProps(f); });
@@ -9979,13 +10138,18 @@ const CSG = (function(){
     if(!originCollapsed)
     for(const nm of ['Top','Front','Right']){
       const el=document.createElement('div');
-      el.className='feat datum'+(datumShow[nm]?' shown':'');
-      el.title=nm+' plane — click to show or hide';
+      /* an origin plane can never lean on anything, so it is always a base a
+         plane may stand on */
+      el.className='feat datum'+(datumShow[nm]?' shown':'')+(pendingPlaneBase?' cand':'');
+      el.title=pendingPlaneBase?('Base this plane on '+nm)
+                               :(nm+' plane — click to show or hide');
       el.innerHTML='<span class="twist"></span>'+icHTML('dplane')+
         `<span class="fname">${nm} plane</span>`+
         (datumShow[nm]?`<span class="fshow" title="visible">${EYE_SVG}</span>`:'');
       const toggle=()=>{ datumShow[nm]=!datumShow[nm]; updateDatumVis(); refreshTree(); };
-      el.addEventListener('click',toggle);
+      el.addEventListener('click',()=>{
+        if(pendingPlaneBase){ consumePlaneBase(nm); return; }
+        toggle(); });
       el.addEventListener('mouseenter',()=>setTreeHover('plane',nm));
       el.addEventListener('mouseleave',()=>setTreeHover(null,null));
       el.addEventListener('contextmenu',e=>{
@@ -10172,6 +10336,7 @@ const CSG = (function(){
      DRAFT, and once the panel is gone that object is nobody's. */
   function closeProps(){if(propsEl){propsEl.remove();propsEl=null;propsFeat=null;draftFeat=null;draftOriginalState=null;propsComp=null;
     if(pendingPlaneFace){pendingPlaneFace=null;hidePickCard();}
+    endPlaneBasePick();
     if(typeof updateHelp==='function')updateHelp();}}
   
   function openProps(f){
@@ -10334,6 +10499,29 @@ const CSG = (function(){
     return w;
   }
   function rerun(){rebuild();}
+  /* Name a datum plane's two tilt directions. Both come out of the BASE frame,
+     so they describe the hinge the angle actually turns about. The pairing is
+     chosen over both directions at once rather than greedily, so two
+     perpendicular directions nearest the same world axis still get one name
+     each. With no base frame to read — a plane whose base was deleted, a face
+     reference the model has lost — it falls back to wording that names no axis
+     at all, because at that point there is no truthful axis to name. */
+  const WORLD_AX=[['X',new THREE.Vector3(1,0,0)],['Y',new THREE.Vector3(0,1,0)],
+                  ['Z',new THREE.Vector3(0,0,1)]];
+  function tiltAxisLabels(pf){
+    let fr=null; try{ fr=dplaneBaseFrame(pf); }catch(_){ }
+    if(!fr||!fr.u||!fr.v) return {u:'One direction',v:'The other',exact:false};
+    const fu=fr.u.clone().normalize(), fv=fr.v.clone().normalize();
+    let best=null;
+    for(const A of WORLD_AX) for(const B of WORLD_AX){
+      if(A[0]===B[0])continue;
+      const du=Math.abs(fu.dot(A[1])), dv=Math.abs(fv.dot(B[1]));
+      if(!best||du+dv>best.s) best={s:du+dv,a:A[0],b:B[0],du,dv};
+    }
+    const nm=(d,n)=>(d>0.999?'Along ':'Near ')+n;
+    return {u:nm(best.du,best.a), v:nm(best.dv,best.b),
+            exact:best.du>0.999&&best.dv>0.999};
+  }
 
   /* A sketch with more than one bounded region gets a contour picker: tick the
      ones this feature should use. Nothing ticked means all of them, so parts
@@ -10587,6 +10775,11 @@ const CSG = (function(){
         f.baseKind==='face'?'face':'plane',
         v=>{ const wasFace=f.baseKind==='face';
           f.baseKind=(v==='face')?'face':'plane';
+          /* a pick armed for the OTHER kind of base is no longer what was
+             asked for — leaving it armed would let a click on a plane quietly
+             switch the panel back, or a click on a face do the same */
+          if(pendingPlaneFace===f){ pendingPlaneFace=null; hidePickCard(); }
+          endPlaneBasePick();
           /* Starting from a face nearly always means "parallel to it, this far
              off", so the FIRST switch drops the 30° the tool opens with. The
              tilt control is still right there, and coming back to a plane that
@@ -10610,28 +10803,40 @@ const CSG = (function(){
           : 'No face picked yet — press the button and click a flat face of the model.';
         add(nc);
       } else {
-        /* Only planes this one cannot already be leaning on: offering a base
-           that leads back here would just build a loop for the resolver to
-           refuse. One visited set PER walk, not one shared across the filter —
-           a shared one remembers a plane it passed through on the way to
-           finding f, and then answers "no" when that plane is asked about
-           directly. */
-        const leansOnMe=(id,seen)=>{
-          if(id===f.id)return true;
-          const st=seen||new Set();
-          if(st.has(id))return false;          // a loop that does not run through f
-          st.add(id);
-          const p=features.find(x=>x.type==='dplane'&&x.id===id);
-          if(!p||p.baseKind==='face')return false;
-          const b=features.find(x=>x.type==='dplane'&&(('dp:'+x.id)===(p.base||'')||x.name===(p.base||'')));
-          return b?leansOnMe(b.id,st):false;
-        };
-        const baseOpts=[{l:'Top',v:'Top'},{l:'Front',v:'Front'},{l:'Right',v:'Right'}]
-          .concat(features.filter(x=>x.type==='dplane'&&!leansOnMe(x.id))
-            .map(x=>({l:x.name,v:'dp:'+x.id})));
-        add(fieldSeg('Base plane',baseOpts,f.base||'Top',v=>{f.base=v;rerun();}));
+        /* You choose the base by POINTING AT IT — its row in the feature tree
+           or its own quad in the viewport — so the panel's job here is to SAY
+           which plane that is and to arm the pick again for a different one.
+           A list of every plane in the document was the wrong gesture: the
+           plane you mean is already on the screen. */
+        const cur=f.base||'Top';
+        const curName=planeBaseLabel(cur);
+        const w=document.createElement('div'); w.className='field';
+        w.innerHTML='<span class="field-label">Base plane</span>';
+        const pb=document.createElement('button');
+        pb.id='prop-base-pick';
+        pb.className='btn-ghost base-pick'+(curName?'':' bad');
+        pb.dataset.base=cur;
+        pb.textContent=(pendingPlaneBase===f)?'Click a plane…'
+                      :(curName||'Missing — click to pick one');
+        pb.title='Click, then click the plane you want — in the feature tree or in the viewport';
+        pb.addEventListener('click',()=>{ startPlaneBasePick(f); pb.textContent='Click a plane…'; });
+        w.appendChild(pb); add(w);
+        const bn=document.createElement('div'); bn.className='note';
+        bn.textContent=curName
+          ? 'This plane starts from '+curName+'. To change it, press the button above and then '
+            +'click the plane you want — its row in the feature tree, or the plane itself in the viewport.'
+          : 'Its base plane is gone. Press the button above, then click the plane this one should start from.';
+        add(bn);
       }
-      add(fieldSeg('Tilt about',[{l:'Its U axis',v:'u'},{l:'Its V axis',v:'v'}],f.about||'u',
+      /* The two choices are the base's own two in-plane directions, at right
+         angles to each other. "U" and "V" named them after the maths and told
+         a person nothing; each is named here after the world axis it actually
+         runs along, which is the same fact in words you can act on. A
+         direction that does NOT line up with a world axis says NEAR the one it
+         is closest to rather than claiming an alignment it hasn't got, and the
+         two are matched to different axes so they can never read the same. */
+      const tilt=tiltAxisLabels(f);
+      add(fieldSeg('Tilt about',[{l:tilt.u,v:'u'},{l:tilt.v,v:'v'}],f.about||'u',
         v=>{f.about=v;rerun();}));
       add(fieldNumber('Angle to the base',f.angle==null?30:f.angle,5,-180,180,'deg',
         v=>{f.angle=v;rerun();}));
@@ -12496,6 +12701,13 @@ const CSG = (function(){
       }
       if(textRotHit(e)){ canvas.style.cursor='grab'; return; }
       if(textHandleHit(e)){ canvas.style.cursor='move'; return; }
+      /* an armed base pick owns the next click, so it owns the highlight too */
+      if(pendingPlaneBase){
+        const h=planeBaseAt(e);
+        setPlaneBaseHover(h);
+        canvas.style.cursor=h?'pointer':'default';
+        return;
+      }
       if(datumGroup.visible){
         const d=pickDatum(e); setDatumHover(d);
         canvas.style.cursor=d?'pointer':'default';
@@ -12693,6 +12905,13 @@ const CSG = (function(){
       consumePlaneFacePick(e);
       return;
     }
+    if(pendingPlaneBase){
+      if(e.button!==0)return;
+      const h=planeBaseAt(e);
+      if(h)consumePlaneBase(h.base);
+      else setHint('No plane there — click a datum plane, or its row in the feature tree');
+      return;
+    }
     if(mode==='sketch'&&editing){ if(e.button===0){const p=pointerToSketch(e);if(p)sketchClick(applyDrawSnap(p));} return; }
     if(mode==='model'&&e.button===0){
       if(datumGroup.visible){
@@ -12746,6 +12965,9 @@ const CSG = (function(){
   canvas.addEventListener('pointerleave',()=>{
     const tc=$('tool-cursor'); if(tc)tc.style.display='none';
     if(mode==='sketch'&&editing){ hoverSnap=null; drawSnapMark(); redrawDraft(null); }
+    /* the cursor has left: nothing in the viewport is under it any more, and a
+       plane left lit would be promising a click that is now the tree's */
+    if(pendingPlaneBase)setPlaneBaseHover(null);
   });
   canvas.addEventListener('contextmenu',e=>{
     if(Math.hypot(e.clientX-downX,e.clientY-downY)>5)return;
@@ -12761,7 +12983,7 @@ const CSG = (function(){
         return;
     }
     if(pendingTextFace||pendingAxisPick||pendingFaceSketch||pendingSketchPick
-       ||pendingPlaneFace||pendingBodyColor||pendingFaceColor){
+       ||pendingPlaneFace||pendingPlaneBase||pendingBodyColor||pendingFaceColor){
       cancelPicks('Pick cancelled');
       return;
     }
@@ -15882,6 +16104,7 @@ const CSG = (function(){
     if(pendingSketchPick) return {title:'Start a sketch', body:'Click a <b>flat face</b> of the model, or one of the <b>origin planes</b>, and the sketch opens there. <kbd>Esc</kbd> or right-click cancels.'};
     if(pendingFaceSketch) return {title:'Pick a face', body:'Click a <b>flat face</b> on the solid to place the new sketch there. Right-click to cancel.'};
     if(pendingPlaneFace) return {title:'Pick a face', body:'Click a <b>flat face</b> on the solid. The plane starts there, and the <b>offset</b> in the panel floats it clear along that face’s normal. Right-click to cancel.'};
+    if(pendingPlaneBase) return {title:'Pick a base plane', body:'Click the plane this one starts from — its <b>row in the feature tree</b>, or the <b>plane itself</b> in the viewport. Candidates are marked in teal; a plane that already leans on this one is refused and says so. <kbd>Esc</kbd> or right-click cancels.'};
     if(draftFeat&&draftFeat.type==='fillet') return {title:draftFeat.kind==='chamfer'?'Chamfer':'Fillet', body:'Click <b>edges in the viewport</b> to add or remove them — the result previews live. Set the radius in the panel, then <b>Done</b>.'};
     if(propsFeat) return {title:'Feature properties', body:'Adjust the values — the model rebuilds live. <b>Done</b> keeps the change, <b>Cancel</b> rolls it back.'};
     if(!features.length) return {title:'Getting started', body:'<b>Left-click a plane</b> to start a sketch on it, or right-click anywhere for every command. The <b>Demo</b> menu loads a finished example — a bearing mount, a magic lamp or a print test boat.'};
@@ -16285,7 +16508,7 @@ const CSG = (function(){
     if(e.key==='F1'){e.preventDefault();openManual();return;}
     if(e.key==='Escape'&&mateSel){e.preventDefault();cancelMate();return;}
     if(e.key==='Escape'&&(pendingSketchPick||pendingTextFace||pendingAxisPick||pendingFaceSketch
-       ||pendingPlaneFace)){
+       ||pendingPlaneFace||pendingPlaneBase)){
       e.preventDefault();cancelPicks('Pick cancelled');return;}
     if(docMode==='draw'){
       // a sheet does not orbit, zoom or fit — those keys belong to the model
@@ -17474,6 +17697,9 @@ const CSG = (function(){
     pickEdge, get pendingAxisPick(){ return pendingAxisPick; }, sketchBox,
     planeFrame, planeOf, addSketchOnDPlane,
     get pendingPlaneFace(){ return pendingPlaneFace; },
+    get pendingPlaneBase(){ return pendingPlaneBase; },
+    get planeBaseHover(){ return planeBaseHover; },
+    startPlaneBasePick, planeLeansOn, planeBaseAllowed, planeBaseLabel, tiltAxisLabels,
     textAnchorWorld, textGripWorld, startSketchPick,
     get pendingSketchPick(){ return pendingSketchPick; },
     get mateSel(){ return mateSel; }, perimeterHit, datumAt, mateEndAt, updateDatumVis,
