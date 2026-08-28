@@ -11,11 +11,12 @@ the user sees or does — a new tool, a shortcut, a menu entry, a changed defaul
 that gets lifted — updates the manual in the same commit. Also bump the "last revised"
 date in two places: `#stamp` near the top and the `<footer>`.
 
-The manual states its own limits (no perpendicular/tangent/symmetric constraint tool, no
-datum-plane dimensions, params outside undo). When one of those gets fixed, delete the
-note — a stale caveat is worse than none, because it teaches people to work around a
-problem that no longer exists. The "no constraint solver" caveat went that way when
-phase 2 wired PlaneGCS up; do the same with the next one.
+The manual states its own limits (no arc tool, no datum-plane dimensions, params outside
+undo). When one of those gets fixed, delete the note — a stale caveat is worse than none,
+because it teaches people to work around a problem that no longer exists. The "no
+constraint solver" caveat went that way when phase 2 wired PlaneGCS up, and the "no
+perpendicular/tangent/symmetric constraint tool" one went when the five relationship tools
+landed; do the same with the next one.
 
 Same applies to the repo: every change gets committed and pushed.
 
@@ -970,12 +971,15 @@ having a visible pane to paste into.
 **A real constraint solver *for sketches*** was this entry for a long time. It is done:
 PlaneGCS is ported (`planegcs.js`) and wired into the DOF readout, dimension edits, drags
 and constraint entry — see "A real constraint solver: PlaneGCS, ported" and "The solver
-driving the sketcher (phase 2)" below. What is left of it is coverage rather than
-machinery: **arcs as constrainable geometry** (the port has no arc constraints; upstream's
-`ConstraintArcRules` and friends are the work), and **constraint tools the solver already
-understands but the dock does not offer** — perpendicular, tangent, symmetric, midpoint,
-collinear. Note the assembly mate solver (trap 17) is still a separate thing: it projects
-rigid bodies in 3D, and sketch entities are neither rigid nor 3D.
+driving the sketcher (phase 2)" below. The two coverage gaps that used to sit here are
+closed as far as the solver goes: **arcs are constrainable geometry** (upstream's `Arc`,
+`Curve::Value` and `ConstraintCurveValue` are ported and wired into the variable model),
+and **all five missing constraint tools** — perpendicular, tangent, symmetric, midpoint,
+collinear — are in the dock. What is left of the arc half is the *sketcher*, not the
+solver: there is no arc drawing tool, no arc rendering and no arc in the kernel path, so
+nothing produces one yet. See "Arcs the solver can hold" at the end of this file. Note the
+assembly mate solver (trap 17) is still a separate thing: it projects rigid bodies in 3D,
+and sketch entities are neither rigid nor 3D.
 
 Also open: dimensioning to the datum planes (length and angle to a plane trace; the origin
 already works), lines parallel to a datum plane, and property-panel edits inside undo.
@@ -2319,9 +2323,12 @@ solve.
   which costs nothing, but the UI has no way to pick one today.
 - **Splines are poly points to the solver.** A `spline` entity's control points
   constrain like any polyline points; the curve itself is not constrained.
-- **No arcs.** When arcs arrive, they need `ConstraintArcRules`,
-  `ConstraintCurveValue` and friends ported from upstream — that is a real
-  chunk of work, and the file is laid out to receive it.
+- ~~**No arcs.**~~ **Done** — `Arc`, the `Curve::Value` contract and
+  `ConstraintCurveValue` are ported, and `addConstraintArcRules` builds an
+  arc's ends out of them. See "Arcs the solver can hold" at the end of this
+  file for the variable model and the one deviation from upstream (an arc's
+  ends are materialised one at a time, not both together). Ellipses,
+  hyperbolas, parabolas and B-splines are still out.
 - **The diagnosis re-solve moves the geometry and puts it back.** It snapshots
   and restores the parameters, but if you interrupt it (you cannot, it is
   synchronous) or if a constraint's `evaluate()` writes somewhere unexpected,
@@ -2990,3 +2997,374 @@ other segmented control in the app is byte-for-byte as it was. Screenshot
   planes & axes* were already ✅ ✅ ✅. Both notes were updated through
   `dev/matrix_done.py` (never by hand) so the cards and the token total are
   recomputed from the table; the diff is two `<span class="q">` strings.
+
+## Arcs the solver can hold, and the five tools that were missing
+
+Two jobs, one round. The solver gained **arcs** as real constrainable geometry
+(ported from upstream, in `planegcs.js`), and the dock gained the five
+relationships the solver had understood since phase 1 but nothing offered:
+**perpendicular, tangent, symmetric, midpoint, collinear**.
+
+### First, the thing that was not true
+
+The brief said "freyacad's sketcher can draw arcs, so the solver covers less
+than the app produces". **It cannot.** The dock draws lines, construction lines,
+four rectangle variants, circles, regular polygons and splines — there is no arc
+tool and no `arc` entity in any saved file, demo or model. The curves you see in
+a rounded corner are `cornerPts` tessellating a fillet into the poly's own point
+list at build time; they are not geometry of their own.
+
+So what landed is **the whole solver-side arc**, tested end to end through the
+real adapter, with nothing in the sketcher that can produce one yet. That is
+honest infrastructure, not a feature: the next agent who writes an arc tool
+should find that DOF, drags, dimensions, coincidence, tangency, concentricity
+and the diagnosis all already work on it. What is still missing is the drawing
+tool, the overlay rendering, `dimHit`, and the kernel path (`entSegs` /
+`stitchLoops` / `pathChain` would have to emit a real arc edge or tessellate
+it). None of that was touched, deliberately — it is the part that could break
+extrude, loft and the profile stitcher, and it is a feature of its own.
+
+### The arc variable model
+
+**An arc is five numbers: `c.x, c.y, r, a0, a1`** — centre, radius, start angle,
+end angle. `entVarCount` says 5, `entPoints` hands out three points (centre = 0,
+start = 1 at `a0`, end = 2 at `a1`), and `coupledEnt` therefore reads true,
+because 5 < 2×3: an arc's ends are *functions* of its numbers, exactly as a
+regular polygon's corners are.
+
+`entSpin` and `entSeg` both say **no** for an arc: it has no straight segments at
+all, so every segment-shaped tool (horizontal, vertical, parallel, equal length,
+perpendicular, collinear) simply cannot reach it, and a record that names one
+lands in `ctx.skipped` where the chip will say so. What *does* reach it are the
+point-shaped and circle-shaped rules: coincident on an end, tangent, concentric,
+equal radius, a radius or diameter dimension, a distance dimension to an end.
+
+**An end that some constraint names costs two auxiliary parameters**, appended
+after every entity's own variables, pinned by a pair of upstream's
+`ConstraintCurveValue` equations (`System.addConstraintArcRules`), one per
+coordinate:
+
+```
+start.x - (c.x + r*cos(a0)) = 0      start.y - (c.y + r*sin(a0)) = 0
+```
+
+Two parameters against two always-independent equations, so an arc still counts
+as five degrees of freedom. This is upstream's own device and the same one
+`ConstraintPolygonCorner` borrows; the difference is that here it is upstream's
+primitive rather than one of ours.
+
+**Per end, not both at once, and that is not a saving.** The obvious port —
+`addConstraintArcRules` materialises `start` and `end` together, as upstream
+does — has a nasty consequence in a minimum-norm solver: an end nobody named
+still has parameters, so when the arc's centre or radius moves the least-norm
+step happily splits the correction between that end's coordinates and its angle,
+and **the arc silently changes how far it goes round every time it is
+dimensioned**. Measured: an arc from 0.35 to 1.6 rad, given a radius, came out
+0 to 1.516. `gcsArcEnd(ctx, ei, k)` builds one end at a time; an end nothing
+refers to has no parameters and cannot absorb anything. The suite pins the angle
+of the untouched end to the last bit.
+
+### What was ported, and what was written
+
+Ported from upstream at the **same commit the header already records**,
+`fda5c1438057ec84fb1d5bd0f45fb29e94e0c8e1` (re-fetched from
+`raw.githubusercontent.com` and md5-identical to the copies phase 1 read), all
+inside `planegcs.js`, all LGPL-2.1-or-later with the upstream copyright intact:
+
+- `DeriVector2::multD`, and the **`Curve::Value` contract** — `Line.value`,
+  `Circle.value`, `Circle.calculateNormal` — the parametric point and its
+  derivative (Geo.h / Geo.cpp).
+- **`Arc`**, subclassing `Circle`, with `startAngle`, `endAngle`, `start`, `end`
+  and its `pushOwnParams` / `reconstruct` order (Geo.h / Geo.cpp).
+- **`ConstraintCurveValue`** with its `errorgrad` and `reconstructGeomPointers`
+  (Constraints.cpp) — its `maxStep` returns `lim`, which is the base class's
+  behaviour here and so needs no override — including upstream's trick of deciding which
+  coordinate it constrains by identity of the `pcoord` pointer — here object
+  identity, which survives parameter redirection because both entries redirect
+  through the same map.
+- The `System` helpers: `addConstraintCurveValue`, `addConstraintArcRules`,
+  `addConstraintPointOnArc`, `addConstraintTangentLineArc`,
+  `addConstraintArcRadius` (GCS.cpp).
+
+`copy()` is upstream's `Curve::Copy` with the one detail a JS port has to get
+right: the clone shares the *parameter objects* and only the `Point` wrappers
+around them are new, which is what a C++ copy of a struct-of-`double*` does
+anyway. `ConstraintCurveValue` relies on it — it holds its own curve, but the
+numbers it reads are the system's.
+
+The header's "WHAT IS NOT PORTED" list lost "arcs" and kept everything else.
+`PlaneGCS.version` is 2, and `Arc` / `ConstraintCurveValue` are exported.
+
+Nothing of freyacad's moved into `planegcs.js`, and none of the arc code moved
+out of it into `index.html`. The adapter (`gcsBuild` / `gcsArcObj` /
+`gcsArcEnd` / `gcsPoint` / `gcsCircleOf` / `gcsApply`) is freyacad's, as before.
+
+### Negative radius, on an arc, is not `Math.abs`
+
+`gcs.apply` writes `Math.abs(r)` for a circle, which is right — a circle with
+radius −5 is the same circle. For an **arc** it is wrong: the mirrored arc is on
+the opposite side. The arc branch turns the angles with it —
+`r = -r; a0 += π; a1 += π` — which is exact. `gcsInsideOut` still treats a solve
+that got there as a failure (it looks at every `rec.r`, so it covers arcs with
+no change); this only makes the state it leaves behind sane rather than
+scrambled. The circle's `Math.abs` is untouched.
+
+### The five tools
+
+Records, all in `sk.cons`, all going through `gcsAskAfter` → `gcsConCheck` →
+`guardDims` → `gcsSettle` exactly as Parallel does:
+
+| tool | record | solver |
+|---|---|---|
+| `perp` | `{kind:'perp', a:{ent,seg}, b:{ent,seg}}` | `Perpendicular` |
+| `collin` | `{kind:'collin', a:{ent,seg}, b:{ent,seg}}` | `Parallel` + `PointOnLine` |
+| `midpt` | `{kind:'midpt', ref:{ent,idx}, seg:{ent,seg}}` | `PointOnPerpBisector` + `PointOnLine` (upstream's `addConstraintP2PSymmetric(p1,p2,point)`) |
+| `symm` | `{kind:'symm', a:{ent,idx}, b:{ent,idx}, about:{ent,seg}}` | `Perpendicular` + `MidpointOnLine` |
+| `tangent` | `{kind:'tangent', a, b, flip?}` — a side is `{ent,seg}` for a line, `{ent}` for a circle or arc | `P2LDistance` (line↔round) or `TangentCircumf` (round↔round) |
+
+`perp`, `tangent` and `symm` were already in `gcsAddCon` from phase 1 and needed
+no adapter work; `midpt` and `collin` are new mappings. Badges: ⊥, ⌒, ⋈, M, ↔,
+with titles, hit-testing and deletion identical to ∥ and =. `gcsName` names all
+five, so a refusal can say what it fought. Dock buttons, icons, `CMD` entries and
+the Relations section of `DEFAULT_LAYOUT` all gained them —
+`adoptNewCommands` puts them into a stored layout on next load, so someone who
+had customised the dock gets them too.
+
+Four of the five run a **one-shot move first**, for the same reason Parallel
+does: it picks the branch, and it is the configuration the solver is then asked
+about.
+`applyPerp` swings the follower a quarter turn off the reference (about its
+anchored end if it has one, else its midpoint, honouring `heldEnd` like every
+other tool); `applyCollinear` is `applyParallel` plus a sideways slide onto the
+reference's infinite line; `applyMidpt` puts the point at the middle;
+`applySymmetric` reflects the second point onto the first one's mirror image, and
+swaps the two if the second is the origin, which cannot move. **Tangent runs no
+one-shot** — unlike a horizontal it does not compile to an equality the solver
+would collapse, so asking from where the sketch already is asks the right
+question.
+
+### Erasing an entity: the list of special cases is gone
+
+`dropDimsFor` renumbered stored constraints through a hand-written list —
+`coinc` by its two point refs, `ontrace` by `ref`, "pair" meaning exactly
+`paral` or `equal`, everything else by a bare `c.ent`. Five new kinds with
+three new shapes between them (`symm` names three things, `midpt` two of
+different sorts, `tangent` two that are each either a segment or a whole
+entity) would have fallen through to the `c.ent` tail, which they do not have —
+so erasing an entity would have left them **pointing at whichever entity slid
+into the vacated slot**, silently holding the wrong geometry. That is worse
+than losing the record.
+
+It now asks each record which references it owns (`a`, `b`, `ref`, `seg`,
+`about`, any of them an object carrying `.ent`) and drops or shifts all of
+them; horizontal and vertical are the one shape with no ref object and still
+fall through to the tail. A new kind joins the reindex by having refs, not by
+being added to a list. `arcs.js` erases entity 0 from a sketch carrying one of
+every shape and compares the whole `cons` array afterwards, so this cannot
+quietly stop working. `shiftPointRefs` (spline point insert/delete) gained
+`bump(c.ref)` in the same spirit, which also fixes `ontrace` on a spline point
+— a hole that predates this work.
+
+### The tangent side — the decision, and why
+
+Phase 2 flagged this: tangency fixes its side at build time (upstream's `ccw`)
+and cannot re-solve round the other way. Adding a tool makes that user-visible.
+What was chosen:
+
+1. **The side is read off the geometry at every build, and never stored.** So a
+   tangency follows the arrangement you can see, rather than freezing whichever
+   one held when the badge was first added. Drag a circle through a line and the
+   next solve keeps it on the side it now sits. The flag still cannot move
+   *during* a solve — that is what stops it flipping mid-iteration, and it is
+   why upstream has it at all.
+2. **The record can ask for the other one**, with `flip`. Nothing about the side
+   itself is stored — only the user's wish to have the other one — so `flip`
+   survives geometry changes without going stale.
+3. **The tool is the flip control.** Name a pair that already has a tangency and
+   it turns over instead of stacking a second badge up: `storeTangent` finds the
+   existing record (either order, line-or-circle side either way) and inverts
+   `flip`. The hint says so both times, and the badge's tooltip reads
+   "Tangent (the other side)".
+
+Why not "pick the nearer side at creation and keep it": that is what freezing the
+flag *is*, and it is the behaviour that made this worth flagging. Why not "flip
+automatically on rebuild": it already does, in the only sense that is safe — the
+side is re-read every build, so it follows the geometry; what it must never do is
+change under a solve that the user did not ask for. The measurable behaviours are
+in the suite: a line above a circle stays above, a line below stays below, `flip`
+puts it on the other side, and two circles apart touch outside (centres r1+r2
+apart) while flipped they nest (r1−r2).
+
+### The two phase-2 warts
+
+- **`gcsPivotEnd` no longer duplicates `segPivot` when it can help it.** It now
+  calls `segPivot` when the host function is reachable and maps the point it gets
+  back to an end index; the inline rule is still there because the node suites
+  evaluate the adapter block on its own with only the structural interface beside
+  it. They can still drift *in the node harness*, but not in the browser, which
+  is where it mattered.
+- **Negative radius**: addressed for arcs (above), unchanged for circles.
+
+### The suite
+
+`newdemos/arcs.js`, **101 checks**, added to `runbattery.sh` (after `gcsoff`).
+Two halves in one run. The first is plain node and lifts the adapter out of
+`index.html` between its markers, evaluated with the real `entPoints`,
+`entVarCount`, `entSpin`, `entSeg`, `coupledEnt`, `resolvePt`, `arcAngle`,
+`setArcEnd` and `arcEndRef` pulled from the same file — so it tests the code the
+browser runs, and a drift between the arc's five variables and `entVarCount`
+fails a test. The second half is Playwright and drives all five tools through the
+real dock button, the real canvas and the real records.
+
+What it covers: the arc's variables and points against the structural interface;
+the live end accessor (including its one-coordinate-at-a-time semantics, which it
+shares with `polyCornerRef`); every new gradient against finite differences
+(worst relative error **4.2e-9**, on `TangentCircumf` — the arc's own
+`CurveValue` is 6.1e-10); a constrained arc solving to an exact analytic answer
+(centre 0,0, r 5, a0 0) with the untouched end's angle unmoved to the last bit;
+a line made tangent to an arc; the negative-radius turn; each of the five records
+building, solving and staying out of `ctx.skipped`; a conflicting use of each
+being refused *and named*; a redundant use of one being allowed; the tangent side
+in all four arrangements; a record naming geometry that is gone landing in
+`skipped` (the negative control for all of the above); the five dock buttons
+really existing with labels and icons; the perpendicular badge really appearing
+with the right glyph and title; and the lamp demo still opening, still reading
+from the solver, still skipping nothing.
+
+Every click in the browser half checks `elementFromPoint` first. That caught a
+real one: a click at the top of a fitted sketch landed on a **dock button's
+label span**, which silently switched the tool — the trap the handover already
+warns about, hit again, and the reason the symmetric refusal case uses a sketch
+that fits inside the middle of the view.
+
+### Something surprising, worth knowing
+
+**A redundant constraint that the geometry does not already satisfy downgrades a
+successful solve to `Converged`, which `gcsSettle` reads as a failure.**
+`System.solve` checks every constraint in `this.redundant` after the subsystems
+have solved — but the subsystems work on *copies*, and `applySolution` has not
+run yet, so those constraints are evaluated against the geometry as it was
+**before** the solve. If the redundant one was already true at the start (the
+usual case — a parallel on a rectangle that is already parallel) it reads zero
+and the status stands. If it was not (a diameter dimension made redundant by a
+coincidence, on an arc that has not been resized yet), the solve reports
+`Converged` and the settle falls back to `relaxDims` even though the answer was
+exact to 1e-19. This is upstream-faithful and predates this work; it is not
+arc-specific. It cost half an hour of chasing a "failing" test whose geometry was
+perfect, which is why it is written down.
+
+Also worth knowing: **the rank-based conflict test only sees linear dependence,
+not infeasibility.** Two lines both constrained horizontal, then asked to be
+perpendicular, is *not* reported as a conflict — the two horizontals are
+eliminated by merging and the perpendicular equation is satisfiable by collapsing
+a line to a point, so the rank is full and nothing is flagged. What it does catch
+reliably is a constraint that duplicates a *dimension's* freedom: perpendicular
+against a 30° angle dimension, collinear against the same, a midpoint on a line's
+own end against that line's length. That is what the refusal tests use, and it is
+worth knowing before writing a test that expects "obviously impossible" to be
+refused.
+
+### What is still weak
+
+- **No arc tool.** The whole of the above is unreachable from the UI until one
+  exists. `dimHit` has no arc branch either, so even an arc placed into
+  `editing.entities` by hand cannot be clicked.
+- **Perpendicular and parallel are raw dot and cross products**, scaled by a
+  constant fixed at construction. That is upstream, and it is why the rank test
+  cannot see "parallel and perpendicular at once" as a contradiction.
+- **`applyCollinear` slides by the follower's midpoint offset**, so if its
+  anchored end was off the reference line, the anchored end moves. The solver
+  settles from there; the one-shot only picks the branch.
+- **The tangent tool cannot name a rectangle's side** — `dimHit` reports a
+  rectangle as `width`/`height`, not as a segment, so `tangPick` returns nothing
+  for it. `gcsSeg` would accept `{ent, seg:0..3}` happily.
+- **A tangency between two entities that are *both* straight is refused by the
+  tool with a hint**, not by the solver; the solver would build `P2LDistance`
+  with a nonsense radius if it were asked.
+- **`symm` about a plane trace** is in the adapter (`c.trace`) and has no tool —
+  the tool always picks a sketch segment.
+
+### Results
+
+- Suites run (only the ones this could break, plus `verify`): **`arcs` 101/101
+  (new)** · `solver` 114/114, worst Jacobian relative error still 9.8e-10 ·
+  `gcsglue` 37/37 · `gcsbrowser` 9/9 · `gcsdrive` 38/38 · `verify` 12/12 ·
+  `polycon` byte-identical to its last run but for `cardOpacity`, which is a
+  sample taken mid-fade and differs run to run. Zero page errors anywhere.
+  The rest of the battery was deliberately **not** run — nothing here touches
+  the kernel, the tree, lighting or the drawing sheet — and `runbattery.sh`
+  carries `arcs` for whoever runs the lot at integration.
+- `arcs.js`'s own worst gradient error against finite differences: **4.2e-9**
+  (`TangentCircumf`, which is pre-existing); the newly ported `CurveValue` is
+  1.9e-10 to 6.1e-10 across arcs and lines.
+- `FEATURE-MATRIX.html`: **"Geometric constraints" moved ◐ → ✅** through
+  `dev/matrix_done.py`, because all five tools landed and all five are tested
+  through the real dock. freyacad now reads 44 ✅ · 3 ◐ · 29 ❌ of 76.
+- `help.html`: the constraints section gained the five tools and the tangent
+  turn-over, the badge paragraph lists every glyph, and the two stale "known
+  limits" bullets were replaced — "no perpendicular, tangent or symmetric
+  constraint in the dock" is gone, and "sketch arcs are not constrained
+  geometry" became the honest "there is no arc tool yet". Both dates bumped.
+
+## Two pixel tripwires that had to be rebaselined
+
+The owner asked for the black between the top-plane grid lines to stop reading as
+a solid slab. Two changes did it: the `.viewport` gradient no longer reaches pure
+`#000000` (it bottoms out at `#080d14`), and the floor grid now dissolves into the
+backdrop instead of stopping at the hard square edge of its own extent. On a dark
+ground, blending a line into the backdrop IS a fade — no alpha ramp, no shader, no
+second material and nothing new to sort.
+
+**The grid is no longer a `GridHelper`, and it had to stop being one.** The first
+attempt kept the helper and scaled its vertex colours down by each vertex's
+distance from the middle. That cannot work, and it is worth knowing why before
+someone tries it again: `GridHelper` emits each line as ONE segment spanning the
+whole grid — `push(-a,0,h, a,0,h)` — so **both** of a line's vertices sit at the
+extreme, every vertex reads distance 1, and the scale factor collapses to its floor
+everywhere. The result was not a fade at all; it was the whole grid uniformly dimmed
+to a tenth, with the square edge still perfectly crisp. A vertex colour can only dim
+a line as a whole unless the line has interior vertices.
+
+So the grid is built by hand: every line cut at each division, each vertex coloured
+by `1 - d³` of its radial distance, `name='floorGrid'` so a suite that must ignore
+the floor can find it. Radial rather than square, so the corners — the part that
+most gave the square away — go first.
+
+That tripped **two lighting suites**, and it is worth writing down why, because the
+next deliberate visual change will trip them again if nobody does:
+
+- `lighttool-main.js` check 8 — "with no stored key the workshop view is
+  byte-identical to HEAD"
+- `lights.js` check 9 — "with no lamps and the panel shut, the workshop AND
+  rendered frames are byte-identical to the pre-lights build"
+
+Both capture the WebGL canvas and compare every pixel against a build from before
+the feature landed. Both reported 8924 (workshop) and 8921 (rendered) pixels of
+315000 touched, `maxChannelDelta` 255 — while every piece of lighting state either
+side was identical (`lights: 0`, `sceneLights: 1`, ground `opacity 0.3` at
+`y −0.002`, exposure 1, tone 0, hemi 0.4). The 255 is not alarming: `frameBytes`
+draws the WebGL canvas onto a transparent 2D canvas and reads it back
+**unpremultiplied**, so an antialiased grid-line pixel with alpha near zero has its
+RGB divided by almost nothing. The whole diff was the grid's rim.
+
+The fix was NOT to re-pin the baselines to a newer commit — that would throw away
+the one thing those checks mean, which is *the lighting feature is inert when you
+do not use it*. Instead `frameBytes` in both suites now hides every `GridHelper` in
+the baseline page and the lane page alike before rendering, and restores it after.
+The model, its shadow and the shadow-catching ground stay compared; nothing the
+lights feature can touch is hidden, so no coverage is lost. What is lost is the
+suites' dependence on floor styling they were never testing.
+
+**If you change how the viewport backdrop or the grid looks, these two checks are
+now indifferent to it. If you change the ground, the model or the shadow, they are
+not — and that is the point.** Note this is a different fault from the one still
+open against `lighttool-main.js` check 8: that check builds its baseline from
+`git show HEAD:freyacad/index.html`, so once the lane is committed it compares a
+tree against itself and can no longer fail at all. `lights.js` check 9 does it
+properly — it walks `git rev-list` back to the last commit whose `index.html`
+lacks the feature. Check 8 should learn the same trick.
+
+`gcsSig` also gained `'A'` for an arc. It letters entity types for the solver's
+cache key and had no arc branch, so an arc signed as `'?'` — the same as any type
+the function has never heard of. Nothing in the sketcher makes an arc yet, so this
+was latent rather than live.

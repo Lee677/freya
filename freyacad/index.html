@@ -324,7 +324,7 @@ if(!window.THREE){
   .rollbar .grip{position:absolute;left:50%;transform:translateX(-50%);background:var(--g-yellow);color:#000;font-family:var(--mono);font-size:8.5px;font-weight:700;letter-spacing:.1em;padding:1px 8px;border-radius:20px;box-shadow:0 0 12px var(--g-yellow)}
   .rollbar:active{cursor:grabbing}
 
-  .viewport{grid-row:2/3;grid-column:2/3;position:relative;overflow:hidden;background:radial-gradient(120% 100% at 50% 0%,#0d1117 0%,#000000 75%)}
+  .viewport{grid-row:2/3;grid-column:2/3;position:relative;overflow:hidden;background:radial-gradient(130% 115% at 50% 4%,#141d2a 0%,#0c121b 52%,#080d14 100%)}
   canvas{display:block;position:absolute;inset:0}
 
   /* Every dock measurement is driven by --ui-scale so one control resizes them
@@ -873,6 +873,11 @@ if(!window.THREE){
       <button data-tool="paral" title="Make one line parallel to another">∥ Parallel</button>
       <button data-tool="equal" title="Make one line the same length as another">= Equal</button>
       <button data-tool="coinc" title="Lock two points together (or a point to the origin)">⊕ Coinc</button>
+      <button data-tool="perp" title="Make one line perpendicular to another">⊥ Perp</button>
+      <button data-tool="tangent" title="Make a circle or arc touch a line, a circle or an arc — name the same pair again to take the other side">⌒ Tangent</button>
+      <button data-tool="symm" title="Make two points mirror images about a line">⋈ Symmetric</button>
+      <button data-tool="midpt" title="Put a point at the middle of a line">M Midpoint</button>
+      <button data-tool="collin" title="Put two lines on the same infinite line">↔ Collinear</button>
       <button data-tool="erase">Erase</button>
     </div>
     <div class="hint" id="hint"></div>
@@ -1061,8 +1066,41 @@ const CSG = (function(){
   const ground=new THREE.Mesh(new THREE.PlaneGeometry(600,600), new THREE.ShadowMaterial({opacity:0.3}));
   ground.rotation.x=-Math.PI/2; ground.position.y=-0.002; ground.receiveShadow=true; scene.add(ground);
   const GRID=24;
-  const grid=new THREE.GridHelper(GRID,GRID,0x2c3a45,0x18222a);
-  grid.material.opacity=0.85; grid.material.transparent=true; scene.add(grid);
+  /* The floor grid, built by hand rather than with GridHelper, so it can FADE.
+     The hard square edge where the grid stopped dead — over a backdrop that
+     used to reach pure black exactly where the floor sits — is what made the
+     space between the lines read as a solid slab rather than as open ground.
+     GridHelper draws each line as ONE segment from rim to rim, so its two
+     vertices are both at the extreme and a vertex colour can only dim a line
+     as a whole; cutting every line at each division gives interior vertices to
+     colour, and the grid can then dissolve. On a dark ground, blending a line
+     into the backdrop IS a fade: no alpha ramp, no shader, no second material
+     and nothing new to sort. The falloff is radial, so the corners — the part
+     that most gave the square away — go first. */
+  const grid=(function(){
+    const half=GRID/2, pos=[], col=[];
+    const mid=new THREE.Color(0x2c3a45), oth=new THREE.Color(0x18222a), t=new THREE.Color();
+    const fade=(x,z)=>{ const d=Math.min(1,Math.hypot(x,z)/half); return 1-d*d*d; };
+    const put=(x,z,c)=>{ pos.push(x,0,z);
+      t.copy(c).multiplyScalar(fade(x,z)); col.push(t.r,t.g,t.b); };
+    for(let i=0;i<=GRID;i++){
+      const h=-half+i, c=(i===GRID/2)?mid:oth;
+      for(let j=0;j<GRID;j++){
+        const a=-half+j, b=a+1;
+        put(a,h,c); put(b,h,c);            // the line along X at z=h, one division of it
+        put(h,a,c); put(h,b,c);            // and the line along Z at x=h
+      }
+    }
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+    g.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
+    const m=new THREE.LineSegments(g,
+      new THREE.LineBasicMaterial({vertexColors:true,toneMapped:false}));
+    m.name='floorGrid';                    // suites that must ignore the floor look for this
+    return m;
+  })();
+  grid.material.opacity=0.85; grid.material.transparent=true;
+  scene.add(grid);
   const axMat=c=>new THREE.LineBasicMaterial({color:c,transparent:true,opacity:0.5});
   scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-GRID/2,0.002,0),new THREE.Vector3(GRID/2,0.002,0)]),axMat(0xc0584f)));
   scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0.002,-GRID/2),new THREE.Vector3(0,0.002,GRID/2)]),axMat(0x4f86c0)));
@@ -2933,10 +2971,24 @@ const CSG = (function(){
      with no dimensions is blue too — same as SolidWorks. No solver here, so
      angles between polyline segments are not counted; a polyline reads as
      defined once every segment has a length. */
+  /* ---- arcs --------------------------------------------------------------
+     An arc is stored the way it is drawn and the way PlaneGCS wants it: a
+     centre, a radius and the two angles that bound it — FIVE numbers. Its two
+     endpoints are functions of those five, exactly as a regular polygon's
+     corners are functions of its four, which is why entVarCount says 5 while
+     entPoints hands out three points. entPoints numbers them centre = 0,
+     start = 1 (at a0), end = 2 (at a1); the adapter follows that numbering
+     and the solver ties the two ends to the angles with upstream's ArcRules. */
+  function arcAngle(e,k){ return k?e.a1:e.a0; }
+  /* entPoints stays free of helpers on purpose: the node suites lift it out of
+     this file on its own, so anything it calls would have to be lifted too. */
   function entPoints(e){
     if(e.type==='poly')return e.pts;
     if(e.type==='rect')return [e.a,{x:e.a.x,y:e.b.y},e.b,{x:e.b.x,y:e.a.y}];
     if(e.type==='circle')return [e.c];
+    if(e.type==='arc')return [e.c,                               // centre, start, end
+      {x:e.c.x+e.r*Math.cos(e.a0), y:e.c.y+e.r*Math.sin(e.a0)},
+      {x:e.c.x+e.r*Math.cos(e.a1), y:e.c.y+e.r*Math.sin(e.a1)}];
     if(e.type==='polygon')return [e.c].concat(polyCorners(e));   // centre, then corners
     return [];
   }
@@ -2959,6 +3011,7 @@ const CSG = (function(){
     if(e.type==='poly')return 2*e.pts.length;   // x,y per point
     if(e.type==='rect')return 4;                // two stored corners, axis-aligned
     if(e.type==='circle')return 3;              // centre + radius
+    if(e.type==='arc')return 5;                 // centre + radius + two angles
     if(e.type==='polygon')return 4;             // centre + radius + rotation
     return 0;
   }
@@ -2980,6 +3033,11 @@ const CSG = (function(){
        coupled shape's derived corners (read-only; its spin does the
        moving). */
   function entSpin(e){
+    /* An arc has no straight segments at all, so it has nothing for entSpin or
+       entSeg to answer about: both say no, and every segment-shaped tool
+       (horizontal, parallel, equal length) simply does not reach it. What DOES
+       reach it are the point-shaped and circle-shaped rules — coincident on an
+       end, tangent, concentric, equal radius, a radius dimension. */
     if(e&&e.type==='polygon')return {
       get:()=>e.rot, set:v=>{e.rot=v;},
       segDir:seg=>e.rot+(seg+0.5)/e.sides*Math.PI*2+Math.PI/2};
@@ -6929,7 +6987,7 @@ const CSG = (function(){
   function applyConstraintToSelection(t){
     if(!editing||!sketchSel)return false;
     if(sketchSel.seg==null)return false;
-    if(t!=='horiz'&&t!=='vert'&&t!=='paral'&&t!=='equal')return false;
+    if(t!=='horiz'&&t!=='vert'&&t!=='paral'&&t!=='equal'&&t!=='perp'&&t!=='collin')return false;
     const d={entIdx:sketchSel.entIdx,kind:'seg',seg:sketchSel.seg};
     if(t==='horiz'||t==='vert'){
       // the same one path as the click tool: ask, align, store, settle
@@ -6951,8 +7009,10 @@ const CSG = (function(){
                            :'Line constrained vertical — delete its badge to free it');
       return true;
     }
-    // parallel / equal need a reference, so seed it from the selection
+    // the pair tools need a reference, so seed it from the selection
     if(t==='paral'){ paralRef=d; setHint('Now click the line to make parallel'); }
+    else if(t==='perp'){ perpRef=d; setHint('Now click the line to stand square to it'); }
+    else if(t==='collin'){ collinRef=d; setHint('Now click the line to lay on the same line'); }
     else { equalRef=d; setHint('Now click the line to match its length'); }
     return false;
   }
@@ -7017,7 +7077,7 @@ const CSG = (function(){
   }
   // Tools where clicking an existing point means something — the glow is the
   // affordance that says "this endpoint is grabbable".
-  const POINT_TOOLS=['dim','select','erase','coinc'];
+  const POINT_TOOLS=['dim','select','erase','coinc','symm','midpt'];
   function nearestSketchPoint(p){
     if(!editing)return null;
     const tol=Math.max(0.55,controls.sph.radius*0.035);
@@ -7562,7 +7622,8 @@ const CSG = (function(){
     // Backspace/Escape, so only the commit is worth an undo step
     if(tool==='rect'||tool==='crect'||tool==='circle'||tool==='polygon'){ if(draftStage===1)pushUndo('draw '+tool); }
     else if(tool==='rect3'||tool==='crect3'){ if(draftStage===2)pushUndo('draw '+tool); }
-    else if(tool==='erase'||tool==='horiz'||tool==='vert'||tool==='paral'||tool==='equal'||tool==='coinc'){ pushUndo(tool); }
+    else if(tool==='erase'||tool==='horiz'||tool==='vert'||tool==='paral'||tool==='equal'||tool==='coinc'
+            ||tool==='perp'||tool==='tangent'||tool==='symm'||tool==='midpt'||tool==='collin'){ pushUndo(tool); }
     if(tool==='line'||tool==='cline'||tool==='spline'){
       if(chain&&chain.ei!=null){
         const ent=editing.entities[chain.ei];
@@ -7741,6 +7802,116 @@ const CSG = (function(){
                  setHint(chk.verdict==='redundant'?chk.message
                    :'Lines constrained equal — delete the = badge to free them'); }
       } else setHint('Click a reference line segment first');
+    } else if(tool==='perp' || tool==='collin'){
+      /* Two straight picks, exactly like Parallel. The one-shot move runs
+         first so the question the solver is asked is about the sketch the tool
+         is ABOUT to make, not the one it is looking at — see gcsAskAfter. */
+      const d=dimHit(p);
+      if(d && d.kind==='seg'){
+        const kind=(tool==='perp')?'perp':'collin';
+        const what=(tool==='perp')?'Perpendicular':'Collinear';
+        const cur=(tool==='perp')?perpRef:collinRef;
+        if(!cur){
+          if(tool==='perp')perpRef=d; else collinRef=d;
+          redrawDraft(null);
+          setHint(tool==='perp'?'Now click the line to stand square to it'
+                               :'Now click the line to lay on the same line');
+        } else {
+          const rf=cur; perpRef=null; collinRef=null;
+          if(rf.entIdx===d.entIdx&&rf.seg===d.seg){
+            setHint('Pick a different second line'); drawSnapMark(); return; }
+          const move=(tool==='perp')?function(){ applyPerp(rf,d); }
+                                    :function(){ applyCollinear(rf,d); };
+          const chk=gcsAskAfter(editing,function(){ move(); },
+                        {kind:kind,a:{ent:rf.entIdx,seg:rf.seg},b:{ent:d.entIdx,seg:d.seg}},
+                        what,
+                        function(c){ return c.kind===kind&&c.b&&
+                          c.b.ent===d.entIdx&&c.b.seg===d.seg; });
+          if(chk.refuse){ setHint(chk.message); drawSnapMark(); return; }
+          if(guardDims(()=>{ move(); storeSegPair(kind,rf,d); return true; },what))
+            setHint(chk.verdict==='redundant'?chk.message
+              :tool==='perp'?'Lines constrained perpendicular — delete the \u22a5 badge to free them'
+                            :'Lines constrained collinear — delete the \u2194 badge to free them');
+        }
+      } else setHint(((tool==='perp')?perpRef:collinRef)?'Click the second line segment'
+                                                        :'Click a reference line segment first');
+    } else if(tool==='tangent'){
+      const pick=tangPick(dimHit(p));
+      if(!pick){ setHint(tangRef?'Now click the line, circle or arc it should touch'
+                                :'Click a circle or an arc, then the line, circle or arc it should touch');
+                 return; }
+      if(!tangRef){ tangRef=pick; redrawDraft(null);
+                    setHint('Now click the line, circle or arc it should touch'); }
+      else {
+        const rf=tangRef; tangRef=null;
+        if(rf.ent===pick.ent&&rf.seg===pick.seg){ setHint('Pick a different second thing'); return; }
+        const rnd=r=>{ const e=editing.entities[r.ent];
+                       return !!e&&(e.type==='circle'||e.type==='arc'); };
+        if(!rnd(rf)&&!rnd(pick)){
+          setHint('Two straight lines are parallel or perpendicular, never tangent');
+          drawSnapMark(); return; }
+        const same=(x,y)=>!!x&&!!y&&x.ent===y.ent&&((x.seg==null&&y.seg==null)||x.seg===y.seg);
+        const had=(editing.cons||[]).find(c=>c.kind==='tangent'&&
+          ((same(c.a,rf)&&same(c.b,pick))||(same(c.a,pick)&&same(c.b,rf))));
+        const rec={kind:'tangent',a:rf,b:pick,flip:had?!had.flip:false};
+        /* No one-shot move: unlike a horizontal, a tangency does not compile to
+           an equality the solver would collapse, so asking from where the sketch
+           is now is asking the right question. */
+        const chk=gcsConCheck(gcsSkSans(editing,function(c){ return c===had; }),rec,'Tangent');
+        if(chk.refuse){ setHint(chk.message); drawSnapMark(); return; }
+        if(guardDims(()=>{ storeTangent(rf,pick); return true; },'Tangent'))
+          setHint(chk.verdict==='redundant'?chk.message
+            :had?'Tangency taken round the other side — name the pair again to turn it back'
+                :'Tangent — delete the \u2312 badge to free it, or name the pair again for the other side');
+      }
+    } else if(tool==='midpt'){
+      /* A point and a line: the point goes to the middle of it. Point first,
+         because that is the thing being placed. */
+      if(!midptRef){
+        const pr=nearestPointRef(p);
+        if(!pr){ setHint('Click the point to centre — a line end, a corner or a centre'); return; }
+        midptRef=pr; redrawDraft(null); setHint('Now click the line it should sit halfway along');
+      } else {
+        const d=dimHit(p);
+        if(!d||d.kind!=='seg'){ setHint('Click a straight line segment'); return; }
+        const rf=midptRef; midptRef=null;
+        const sg={ent:d.entIdx,seg:d.seg};
+        const chk=gcsAskAfter(editing,function(){ applyMidpt(rf,d); },
+                      {kind:'midpt',ref:{ent:rf.ent,idx:rf.idx},seg:sg},'Midpoint',
+                      function(c){ return c.kind==='midpt'&&c.ref&&
+                        c.ref.ent===rf.ent&&c.ref.idx===rf.idx; });
+        if(chk.refuse){ setHint(chk.message); drawSnapMark(); return; }
+        if(guardDims(()=>{ applyMidpt(rf,d); storeMidpt(rf,sg); return true; },'Midpoint'))
+          setHint(chk.verdict==='redundant'?chk.message
+            :'Point held at the middle of the line — delete the M badge to free it');
+      }
+    } else if(tool==='symm'){
+      /* Two points, then the line they mirror about — the order SolidWorks and
+         FreeCAD both use. */
+      if(!symmA||!symmB){
+        const pr=nearestPointRef(p,symmA);
+        if(!pr){ setHint(symmA?'Click the second point':'Click the first of the two points'); return; }
+        if(!symmA){ symmA=pr; redrawDraft(null); setHint('Now click the second point'); }
+        else { symmB=pr; redrawDraft(null); setHint('Now click the line they mirror about'); }
+      } else {
+        const d=dimHit(p);
+        if(!d||d.kind!=='seg'){ setHint('Click the straight line they mirror about'); return; }
+        const A=symmA, B=symmB; symmA=null; symmB=null;
+        if(d.entIdx===A.ent&&d.entIdx===B.ent){
+          setHint('That line is the pair itself — pick another to mirror about'); return; }
+        const ab={ent:d.entIdx,seg:d.seg};
+        const chk=gcsAskAfter(editing,function(){ applySymmetric(A,B,d); },
+                      {kind:'symm',a:{ent:A.ent,idx:A.idx},b:{ent:B.ent,idx:B.idx},about:ab},
+                      'Symmetric',
+                      function(c){ return c.kind==='symm'&&c.about&&
+                        c.about.ent===ab.ent&&c.about.seg===ab.seg&&
+                        ((c.a.ent===A.ent&&c.a.idx===A.idx&&c.b.ent===B.ent&&c.b.idx===B.idx)||
+                         (c.a.ent===B.ent&&c.a.idx===B.idx&&c.b.ent===A.ent&&c.b.idx===A.idx)); });
+        if(chk.refuse){ setHint(chk.message); drawSnapMark(); return; }
+        if(guardDims(()=>{ applySymmetric(A,B,d); storeSymm(A,B,ab); return true; },'Symmetric'))
+          setHint(chk.verdict==='redundant'?chk.message
+            :'Points held symmetric about the line — delete the \u22c8 badge to free them');
+      }
     } else if(tool==='mirror'){
       const d=dimHit(p);
       if(!d||d.entIdx==null) setHint(mirrorAxis?'Click a shape to mirror':'Click the line to mirror about');
@@ -7824,18 +7995,27 @@ const CSG = (function(){
       else if(two(x)){ shift(x.a); shift(x.b); }
       else if(x.entIdx>ei)x.entIdx+=delta;
     });
-    // stored constraints ride the same reindex
+    /* Stored constraints ride the same reindex, and they declare their own
+       references rather than being matched by kind: symmetric names three
+       things, midpoint two, tangent two of two different shapes, and a list of
+       special cases is exactly how a new kind ends up silently pointing at
+       whichever entity slid into the vacated slot. Horizontal and vertical are
+       the one shape with no ref object — they carry {ent, seg} on the record
+       itself — and fall through to the tail. */
     if(sk.cons){
-      const pair=c=>c.kind==='paral'||c.kind==='equal';
-      sk.cons=sk.cons.filter(c=>
-        c.kind==='coinc'   ? (!hits(c.a)&&!hits(c.b))
-        : c.kind==='ontrace' ? !hits(c.ref)
-        : pair(c)          ? (c.a.ent!==ei&&c.b.ent!==ei)
-                           : c.ent!==ei);
+      const refsOf=c=>{
+        const out=[];
+        for(const k of ['a','b','ref','seg','about'])
+          if(c[k]&&typeof c[k]==='object'&&c[k].ent!=null)out.push(c[k]);
+        return out;
+      };
+      sk.cons=sk.cons.filter(c=>{
+        const R=refsOf(c);
+        return R.length ? !R.some(hits) : c.ent!==ei;
+      });
       sk.cons.forEach(c=>{
-        if(c.kind==='coinc'){ shift(c.a); shift(c.b); }
-        else if(c.kind==='ontrace')shift(c.ref);
-        else if(pair(c)){ if(c.a.ent>ei)c.a.ent+=delta; if(c.b.ent>ei)c.b.ent+=delta; }
+        const R=refsOf(c);
+        if(R.length)R.forEach(shift);
         else if(c.ent>ei)c.ent+=delta;
       });
     }
@@ -7894,7 +8074,7 @@ const CSG = (function(){
       bump(d.a); bump(d.b); bump(d.ref);
       if(d.entIdx===ei&&d.kind==='seg'&&d.seg>=from)d.seg+=delta;
     }
-    for(const c of sk.cons||[]){ bump(c.a); bump(c.b);
+    for(const c of sk.cons||[]){ bump(c.a); bump(c.b); bump(c.ref);
       if(c.entIdx===ei&&c.seg>=from)c.seg+=delta; }
     if(sk.corners){
       // a removed point takes its corner treatment with it
@@ -8105,11 +8285,75 @@ const CSG = (function(){
     t.b.x=mx + dx*RL/2; t.b.y=my + dy*RL/2;
   }
 
+  /* The one-shot moves the five new relationship tools make before they store
+     anything. Same job as applyParallel's: pick the BRANCH — which way the line
+     swings, which side of the mirror the point lands — from a configuration
+     that is already close, and leave the solver to make everything consistent
+     from there. Without them a tangent or a perpendicular would be asked about
+     from wherever the sketch happens to be, and the answer would be about that
+     configuration rather than the one the tool is about to create. */
+  function applyPerp(refD, tgtD){
+    const r=polySeg(refD), t=polySeg(tgtD); if(!r||!t) return;
+    let dx=r.b.x-r.a.x, dy=r.b.y-r.a.y; const RL=Math.hypot(dx,dy)||1; dx/=RL; dy/=RL;
+    const nx=-dy, ny=dx;                            // the reference, quarter-turned
+    const tl=Math.hypot(t.b.x-t.a.x, t.b.y-t.a.y);
+    const keep=heldEnd(tgtD,t);
+    if(keep){                                       // swing about the anchored end
+      const mv=(keep===t.a)?t.b:t.a;
+      const sgn=((mv.x-keep.x)*nx + (mv.y-keep.y)*ny) < 0 ? -1 : 1;
+      mv.x=keep.x+sgn*nx*tl; mv.y=keep.y+sgn*ny*tl;
+      return;
+    }
+    const mx=(t.a.x+t.b.x)/2, my=(t.a.y+t.b.y)/2;
+    const sgn=((t.b.x-t.a.x)*nx + (t.b.y-t.a.y)*ny) < 0 ? -1 : 1;   // nearer of the two
+    t.a.x=mx - sgn*nx*tl/2; t.a.y=my - sgn*ny*tl/2;
+    t.b.x=mx + sgn*nx*tl/2; t.b.y=my + sgn*ny*tl/2;
+  }
+  /* Collinear is parallel and then a sideways slide onto the reference's
+     infinite line. Sliding rather than rotating is what keeps the correction
+     small: the line ends up where you would have drawn it. */
+  function applyCollinear(refD, tgtD){
+    const r=polySeg(refD); if(!r) return;
+    applyParallel(refD, tgtD);
+    const t=polySeg(tgtD); if(!t) return;
+    let dx=r.b.x-r.a.x, dy=r.b.y-r.a.y; const RL=Math.hypot(dx,dy)||1; dx/=RL; dy/=RL;
+    const nx=-dy, ny=dx;
+    const mx=(t.a.x+t.b.x)/2, my=(t.a.y+t.b.y)/2;
+    const off=(mx-r.a.x)*nx + (my-r.a.y)*ny;        // how far off the line it sits
+    t.a.x-=nx*off; t.a.y-=ny*off; t.b.x-=nx*off; t.b.y-=ny*off;
+  }
+  function applyMidpt(ref, segRef){
+    const p=resolvePt(editing,ref), s=segPts(editing,segRef);
+    if(!p||!s||ref.ent===-1) return;                // the origin never gives
+    p.x=(s.a.x+s.b.x)/2; p.y=(s.a.y+s.b.y)/2;
+  }
+  /* Symmetric moves the SECOND point onto the mirror image of the first, so the
+     pair reads the way it was picked. If the second one is the origin it cannot
+     move, so the first goes instead. */
+  function applySymmetric(ra, rb, aboutRef){
+    let A=ra, B=rb;
+    if(B.ent===-1&&A.ent!==-1){ const t=A; A=B; B=t; }
+    const pa=resolvePt(editing,A), pb=resolvePt(editing,B), s=segPts(editing,aboutRef);
+    if(!pa||!pb||!s||B.ent===-1) return;
+    const q=reflectPt(pa,s.a,s.b);
+    pb.x=q.x; pb.y=q.y;
+  }
   /* ===================== SKETCH DIMENSIONS (driving) =====================
      A dimension writes its value straight back to the shape parameter, so the
      geometry moves to match — true driving behaviour. Each dim is stored on the
      sketch feature and shown as an editable label. */
   let dimInputEl=null, dimLabelEls=[], paralRef=null, equalRef=null, coincRef=null;
+  /* ---- the five relationships the solver already understood ---------------
+     Perpendicular, tangent, symmetric, midpoint and collinear were all in the
+     ported solver from phase 1 and none of them had a tool, so the solver knew
+     more than the dock could say. Each is the same shape as Parallel: pick,
+     pick, ask whether it can hold, run the one-shot move that picks the branch,
+     store the record, settle. What differs is what they pick — two segments, a
+     point and a segment, two points and a line — so each keeps its own pending
+     slot rather than sharing one. */
+  let perpRef=null, collinRef=null, tangRef=null, midptRef=null, symmA=null, symmB=null;
+  function clearRelPicks(){ perpRef=null; collinRef=null; tangRef=null; midptRef=null;
+                            symmA=null; symmB=null; }
   let selCon=null;                       // constraint picked by clicking its badge
   function seg2Dist(p,a,b){
     const dx=b.x-a.x, dy=b.y-a.y, L2=dx*dx+dy*dy;
@@ -8131,6 +8375,11 @@ const CSG = (function(){
       if(e.type==='poly') e.pts.forEach((q,i)=>out.push({ent:ei,idx:i,pt:q}));
       else if(e.type==='rect'){ out.push({ent:ei,idx:0,pt:e.a}); out.push({ent:ei,idx:2,pt:e.b}); }
       else if(e.type==='circle') out.push({ent:ei,idx:0,pt:e.c});
+      else if(e.type==='arc'){
+        out.push({ent:ei,idx:0,pt:e.c});
+        out.push({ent:ei,idx:1,pt:arcEndRef(e,0)});
+        out.push({ent:ei,idx:2,pt:arcEndRef(e,1)});
+      }
       else if(e.type==='polygon'){
         out.push({ent:ei,idx:0,pt:e.c});
         // corners are refs too: idx k+1 is corner k (see polyCornerRef)
@@ -8159,6 +8408,21 @@ const CSG = (function(){
       set y(v){ setPolyCorner(e,k,this.x,v); }
     };
   }
+  /* The same live accessor for an arc's two ends: reading gives where the end
+     is, writing moves the radius and that end's own angle to put it there —
+     the arc's other end follows the radius, which is what a real arc does. */
+  function setArcEnd(e,k,x,y){
+    const dx=x-e.c.x, dy=y-e.c.y, r=Math.hypot(dx,dy);
+    if(r>1e-3){ e.r=r; if(k)e.a1=Math.atan2(dy,dx); else e.a0=Math.atan2(dy,dx); }
+  }
+  function arcEndRef(e,k){
+    return {
+      get x(){ return e.c.x+e.r*Math.cos(arcAngle(e,k)); },
+      get y(){ return e.c.y+e.r*Math.sin(arcAngle(e,k)); },
+      set x(v){ setArcEnd(e,k,v,this.y); },
+      set y(v){ setArcEnd(e,k,this.x,v); }
+    };
+  }
   function resolvePt(sk,ref){
     if(!ref) return null;
     if(ref.ent===-1) return {x:0,y:0};
@@ -8166,6 +8430,7 @@ const CSG = (function(){
     if(e.type==='poly') return e.pts[ref.idx]||null;
     if(e.type==='rect') return ref.idx===0?e.a:e.b;
     if(e.type==='circle') return e.c;
+    if(e.type==='arc') return ref.idx>0?arcEndRef(e,ref.idx-1):e.c;
     if(e.type==='polygon') return ref.idx>0?polyCornerRef(e,ref.idx-1):e.c;
     return null;
   }
@@ -8659,6 +8924,7 @@ const CSG = (function(){
     const e=sk.entities[r.ent]; if(!e)return false;
     if(e.type==='poly')return r.idx>=0&&r.idx<e.pts.length;
     if(e.type==='circle')return r.idx===0;
+    if(e.type==='arc')return r.idx>=0&&r.idx<=2;             // 0 centre, 1 start, 2 end
     if(e.type==='polygon')return r.idx>=0&&r.idx<=e.sides;   // 0 centre, k corner k-1
     if(e.type==='rect')return r.idx===0||r.idx===2;
     return false;
@@ -8676,6 +8942,47 @@ const CSG = (function(){
     const i=cons.findIndex(c=>c.kind===kind&&c.b.ent===tgtD.entIdx&&c.b.seg===tgtD.seg);
     if(i>=0)cons.splice(i,1);
     cons.push({kind:kind,a:{ent:refD.entIdx,seg:refD.seg},b:{ent:tgtD.entIdx,seg:tgtD.seg}});
+  }
+  /* A tangency named a second time on the same pair does not stack up — it
+     TURNS OVER. The solver holds one of the two arrangements (this side of the
+     line or that, outside or nested) and reads which from the geometry at every
+     build; `flip` is the only thing stored, and it is the user's way of asking
+     for the other one. See the tangent branch of gcsAddCon for the whole rule. */
+  function storeTangent(a,b){
+    const cons=consOf(editing);
+    const same=(x,y)=>!!x&&!!y&&x.ent===y.ent&&((x.seg==null&&y.seg==null)||x.seg===y.seg);
+    const i=cons.findIndex(c=>c.kind==='tangent'&&
+      ((same(c.a,a)&&same(c.b,b))||(same(c.a,b)&&same(c.b,a))));
+    if(i>=0){ cons[i].flip=!cons[i].flip; return 'flip'; }
+    cons.push({kind:'tangent',a:a,b:b});
+    return 'new';
+  }
+  function storeSymm(a,b,about){
+    const cons=consOf(editing), key=r=>r.ent+'.'+r.idx;
+    const i=cons.findIndex(c=>c.kind==='symm'&&c.about&&c.about.ent===about.ent&&
+      c.about.seg===about.seg&&
+      ((key(c.a)===key(a)&&key(c.b)===key(b))||(key(c.a)===key(b)&&key(c.b)===key(a))));
+    if(i>=0)cons.splice(i,1);
+    cons.push({kind:'symm',a:{ent:a.ent,idx:a.idx},b:{ent:b.ent,idx:b.idx},
+               about:{ent:about.ent,seg:about.seg}});
+  }
+  // one midpoint per point: a newer one replaces the old, like parallel's rule
+  function storeMidpt(ref,sg){
+    const cons=consOf(editing);
+    const i=cons.findIndex(c=>c.kind==='midpt'&&c.ref&&c.ref.ent===ref.ent&&c.ref.idx===ref.idx);
+    if(i>=0)cons.splice(i,1);
+    cons.push({kind:'midpt',ref:{ent:ref.ent,idx:ref.idx},seg:{ent:sg.ent,seg:sg.seg}});
+  }
+  /* What a click can offer a tangency: a straight segment (a chain's or a
+     polygon's edge) or a round thing (a circle or an arc). One of the two picks
+     has to be round — two straight lines are parallel or perpendicular, never
+     tangent. */
+  function tangPick(d){
+    if(!d||d.entIdx==null)return null;
+    const e=editing.entities[d.entIdx]; if(!e)return null;
+    if(e.type==='circle'||e.type==='arc')return {ent:d.entIdx};
+    if(d.kind==='seg'||d.kind==='pedge')return {ent:d.entIdx,seg:d.seg};
+    return null;
   }
   /* Auto-grounding: a point drawn or dropped onto the origin or a plane trace
      gets a real stored constraint, not a loose coincidence of coordinates.
@@ -9135,10 +9442,18 @@ const CSG = (function(){
       el.className='con-badge'+(selCon===c?' sel':'');
       el.textContent=c.kind==='horiz'?'H':c.kind==='vert'?'V'
         :c.kind==='paral'?'∥':c.kind==='equal'?'='
+        :c.kind==='perp'?'⊥':c.kind==='tangent'?'⌒'
+        :c.kind==='symm'?'⋈':c.kind==='midpt'?'M'
+        :c.kind==='collin'?'↔'
         :c.kind==='ontrace'?'∈'
         :c.via==='conc'?'◎':'⊕';
       el.title=(c.kind==='horiz'?'Horizontal':c.kind==='vert'?'Vertical'
         :c.kind==='paral'?'Parallel':c.kind==='equal'?'Equal length'
+        :c.kind==='perp'?'Perpendicular'
+        :c.kind==='tangent'?('Tangent'+(c.flip?' (the other side)':''))
+        :c.kind==='symm'?'Symmetric about a line'
+        :c.kind==='midpt'?'Midpoint of a line'
+        :c.kind==='collin'?'Collinear'
         :c.kind==='ontrace'?('On the '+c.trace+' plane')
         :c.via==='conc'?'Concentric':'Coincident')+
         ' constraint — click to select, Delete to remove';
@@ -9203,14 +9518,28 @@ const CSG = (function(){
         if(c.kind==='coinc'){
           const P=resolvePt(editing,(c.b&&c.b.ent!==-1)?c.b:c.a);
           if(P)ap={x:P.x+0.7,y:P.y+0.7};
-        } else if(c.kind==='ontrace'){
+        } else if(c.kind==='ontrace'||c.kind==='midpt'){
           const P=resolvePt(editing,c.ref);
           if(P)ap={x:P.x+0.7,y:P.y+0.7};
+        } else if(c.kind==='symm'){
+          const A=resolvePt(editing,c.a), B=resolvePt(editing,c.b);
+          if(A&&B)ap={x:(A.x+B.x)/2+0.7,y:(A.y+B.y)/2+0.7};
+        } else if(c.kind==='tangent'){
+          /* On the round half of the pair — that is the thing the tangency is
+             really about, and it is somewhere to hang a badge even when the
+             other half is a line the badge would sit on top of. */
+          const rnd=(c.a&&c.a.seg==null)?c.a:((c.b&&c.b.seg==null)?c.b:null);
+          if(rnd){ const e=editing.entities[rnd.ent];
+            if(e&&e.c)ap={x:e.c.x+(e.r||0)*0.71+0.5,y:e.c.y+(e.r||0)*0.71+0.5}; }
+          if(!ap){ const sr=(c.a&&c.a.seg!=null)?c.a:c.b;
+            const sg=sr?entSeg(editing,sr.ent,sr.seg||0):null;
+            if(sg)ap={x:(sg.a.x+sg.b.x)/2+0.7,y:(sg.a.y+sg.b.y)/2+0.7}; }
         } else {
           // H/V carry {ent,seg}; parallel/equal badge the following line.
           // entSeg resolves the midpoint for every entity — a chain's stored
           // points or a coupled shape's derived corners alike.
-          const ref=(c.kind==='paral'||c.kind==='equal')?{ent:c.b.ent,seg:c.b.seg}:{ent:c.ent,seg:c.seg};
+          const ref=(c.kind==='paral'||c.kind==='equal'||c.kind==='perp'||c.kind==='collin')
+            ?{ent:c.b.ent,seg:c.b.seg}:{ent:c.ent,seg:c.seg};
           const s=entSeg(editing,ref.ent,ref.seg||0);
           if(s)ap={x:(s.a.x+s.b.x)/2+0.7,y:(s.a.y+s.b.y)/2+0.7};
         }
@@ -10007,6 +10336,11 @@ const CSG = (function(){
     paral:_sw(`<path d="M6 20 12 4M12 20 18 4" stroke="${_G}" stroke-width="2"/>`),
     equal:_sw(`<path d="M6 10h12M6 14h12" stroke="${_G}" stroke-width="2.2"/>`),
     coinc:_sw(`<circle cx="12" cy="12" r="2.6" fill="${_G}" stroke="none"/><path d="M12 3v5M12 16v5M3 12h5M16 12h5" stroke="${_G}"/>`),
+    perp:_sw(`<path d="M3 19h18M10 19V4" stroke="${_G}" stroke-width="2"/><path d="M10 15h4.5v4" stroke="${_B}"/>`),
+    tangent:_sw(`<circle cx="11" cy="14" r="6.5" stroke="${_B}" stroke-width="1.7"/><path d="M2 7.5h20" stroke="${_G}" stroke-width="2"/>`),
+    symm:_sw(`<path d="M12 3v18" stroke="${_B}" stroke-dasharray="3 2.5"/><circle cx="5" cy="12" r="2.3" fill="${_G}" stroke="none"/><circle cx="19" cy="12" r="2.3" fill="${_G}" stroke="none"/>`),
+    midpt:_sw(`<path d="M3 12h18" stroke="${_B}" stroke-width="1.7"/><circle cx="12" cy="12" r="2.7" fill="${_G}" stroke="none"/>`),
+    collin:_sw(`<path d="M2.5 12h7.5M14 12h7.5" stroke="${_G}" stroke-width="2.4"/>`),
     import:_sw(`<path d="M4 14v5h16v-5" stroke="${_B}"/><path d="M12 3v11M7.5 9.5 12 14l4.5-4.5" stroke="${_Y}"/>`),
     erase:_sw(`<path d="M14.5 4.5 20 10l-8.5 8.5H7l-2.5-2.5z" stroke="${_R}"/><path d="M11 8l5.5 5.5" stroke="${_R}"/><path d="M4 20.5h16" stroke="${_B}" opacity=".5"/>`),
     sketch:_sw(`<path d="M4 20V6M4 20h13" stroke="${_B}"/><path d="M9 15 18 6l2 2-9 9-3.4 1.4z" stroke="${_Y}"/>`),
@@ -12673,6 +13007,11 @@ const CSG = (function(){
       else if(tool==='dynmirror')h.innerHTML='<span class="pip"></span> Dynamic mirror: click a line to arm it — what you draw then appears both sides. Click it again to stop';
       else if(tool==='coinc')h.innerHTML='<span class="pip"></span> Coincident: click a point (line ends, polygon corners and centres all count), then the point to lock it to — the pair then moves as one';
       else if(tool==='equal')h.innerHTML='<span class="pip"></span> Equal: click the reference line, then the line to match its length';
+      else if(tool==='perp')h.innerHTML='<span class="pip"></span> Perpendicular: click the reference line, then the line to stand square to it';
+      else if(tool==='collin')h.innerHTML='<span class="pip"></span> Collinear: click the reference line, then the line to lay on the same infinite line';
+      else if(tool==='tangent')h.innerHTML='<span class="pip"></span> Tangent: click a circle or arc, then the line, circle or arc it should touch \u00b7 name the same pair again to take the other side';
+      else if(tool==='midpt')h.innerHTML='<span class="pip"></span> Midpoint: click a point, then the line it should sit halfway along';
+      else if(tool==='symm')h.innerHTML='<span class="pip"></span> Symmetric: click two points, then the line they mirror about';
       else h.innerHTML=`<span class="pip"></span> ${tool}: click two points`;
     } else h.classList.remove('show');
     if(typeof updateHelp==='function')updateHelp();
@@ -13415,7 +13754,7 @@ const CSG = (function(){
       rebuild(); drawSketchSel(); dockSel(); setHint('Dynamic mirror off'); return;
     }
     tool=t;chain=null;mirrorAxis=null;hoverSeg=null;draftStage=0;draftA=null;draftB=null;
-    paralRef=null;equalRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;
+    paralRef=null;equalRef=null;coincRef=null;clearRelPicks();dragVtx=null;dragSnapPt=null;
     hoverSnap=null;dimPick=null;drawSnapMark();redrawHandles();dockSel();};
   const CMD={
     finish   :{ic:'finish', label:'Finish sketch',    fn:()=>finishSketch()},
@@ -13443,6 +13782,11 @@ const CSG = (function(){
     paral    :{ic:'paral',  label:'Parallel',   tool:'paral'},
     equal    :{ic:'equal',  label:'Equal length',tool:'equal'},
     coinc    :{ic:'coinc',  label:'Coincident', tool:'coinc'},
+    perp     :{ic:'perp',   label:'Perpendicular', tool:'perp'},
+    tangent  :{ic:'tangent',label:'Tangent',    tool:'tangent'},
+    symm     :{ic:'symm',   label:'Symmetric',  tool:'symm'},
+    midpt    :{ic:'midpt',  label:'Midpoint',   tool:'midpt'},
+    collin   :{ic:'collin', label:'Collinear',  tool:'collin'},
     normal   :{ic:'normal', label:'Normal to',  fn:()=>viewNormalTo()},
     iso      :{ic:'iso',    label:'Isometric',  fn:()=>viewIso()},
     fit      :{ic:'fit',    label:'Fit all',    fn:()=>fitAll()},
@@ -13452,7 +13796,7 @@ const CSG = (function(){
   const DEFAULT_LAYOUT=[
     {name:'Sketch',          ids:['finish','finishext','cancel']},
     {name:'Sketch entities', ids:['select','line','cline','rect','crect','rect3','crect3','circle','polygon','spline','mirror','dynmirror','dim','erase','corners','trace']},
-    {name:'Relations',       ids:['horiz','vert','paral','equal','coinc']},
+    {name:'Relations',       ids:['horiz','vert','paral','equal','coinc','perp','tangent','symm','midpt','collin']},
     {name:'View',            ids:['normal','iso','fit','proj']}
   ];
   function cloneLayout(L){ return L.map(s=>({name:s.name,ids:s.ids.slice()})); }
@@ -16197,7 +16541,7 @@ const CSG = (function(){
   /* decorate every button with its pictogram; original text becomes a .lbl */
   (function decorate(){
     menu.querySelectorAll('[data-ic]').forEach(b=>{ b.innerHTML=icHTML(b.dataset.ic)+'<span class="lbl">'+b.textContent+'</span>'; });
-    const dockLbl={select:'Pointer',line:'Line',move:'Move',rect:'Rect',circle:'Circle',polygon:'Polygon',cline:'Construction',mirror:'Mirror',dynmirror:'Dyn mirror',dim:'Dim',horiz:'Horiz',vert:'Vert',paral:'Parallel',equal:'Equal',coinc:'Coinc',erase:'Erase'};
+    const dockLbl={select:'Pointer',line:'Line',move:'Move',rect:'Rect',circle:'Circle',polygon:'Polygon',cline:'Construction',mirror:'Mirror',dynmirror:'Dyn mirror',dim:'Dim',horiz:'Horiz',vert:'Vert',paral:'Parallel',equal:'Equal',coinc:'Coinc',perp:'Perp',tangent:'Tangent',symm:'Symmetric',midpt:'Midpoint',collin:'Collinear',erase:'Erase'};
     $('dock').querySelectorAll('button').forEach(b=>{ const t=b.dataset.tool;
       /* the rectangle flyout keeps its own label span and its arrow — decorating
          it like the rest would throw both away */
@@ -16337,7 +16681,7 @@ const CSG = (function(){
       pushUndo('dynamic mirror off'); editing.dynMirror=null; tool='select';
       rebuild(); drawSketchSel(); dockSel(); setHint('Dynamic mirror off'); return;
     }
-    tool=b.dataset.tool;chain=null;mirrorAxis=null;hoverSeg=null;draftStage=0;draftA=null;paralRef=null;equalRef=null;coincRef=null;dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();
+    tool=b.dataset.tool;chain=null;mirrorAxis=null;hoverSeg=null;draftStage=0;draftA=null;paralRef=null;equalRef=null;coincRef=null;clearRelPicks();dragVtx=null;dragSnapPt=null;hoverSnap=null;dimPick=null;drawSnapMark();
     $('dock').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));
     // a line already picked with the Pointer? apply the constraint to it now,
     // rather than making the user click the icon and then the line
@@ -16820,6 +17164,7 @@ const CSG = (function(){
                                numbers, which is what keeps it axis-aligned
                                with no extra equations at all)
        circle   3             base+0..2 = c.x, c.y, r
+       arc      5             base+0..4 = c.x, c.y, r, a0, a1
        polygon  4             base+0..3 = c.x, c.y, r, rot
 
      ent -1 is the sketch origin: a point built from two constants, so it
@@ -16835,6 +17180,19 @@ const CSG = (function(){
      as four degrees of freedom and the corner still works with every
      ported constraint. The first ctx.nGeomVars entries of the vector are
      therefore the sketch's own variables, in entity order, and nothing else.
+
+     AN ARC'S TWO ENDS are the same story, and upstream solves it the same
+     way — this time with upstream's own primitive rather than one of ours.
+     An arc owns five numbers (c.x, c.y, r, a0, a1); its start and end are
+     functions of them. An end that some constraint names gets two auxiliary
+     parameters, tied to the arc by a pair of ConstraintCurveValue equations
+     (System.addConstraintArcRules), one per coordinate:
+
+         start.x - (c.x + r*cos(a0)) = 0     start.y - (c.y + r*sin(a0)) = 0
+
+     Four parameters against four always-independent equations, so an arc
+     still counts as five degrees of freedom, and every ported constraint
+     that speaks about a point reaches an arc's ends unchanged.
 
      TAGS. Each solver constraint carries the tag of the sketch record it
      came from, which is how the diagnosis names a culprit:
@@ -16868,6 +17226,14 @@ const CSG = (function(){
       } else if(e.type==='circle'){
         rec.cx=push(P(e.c.x),ei+'.c.x'); rec.cy=push(P(e.c.y),ei+'.c.y');
         rec.r=push(P(e.r),ei+'.r');
+        rec.circle=new G.Circle(new G.Point(rec.cx,rec.cy),rec.r);
+      } else if(e.type==='arc'){
+        rec.cx=push(P(e.c.x),ei+'.c.x'); rec.cy=push(P(e.c.y),ei+'.c.y');
+        rec.r=push(P(e.r),ei+'.r');
+        rec.a0=push(P(e.a0),ei+'.a0'); rec.a1=push(P(e.a1),ei+'.a1');
+        // centre and radius alone answer every circle-shaped rule (tangent,
+        // concentric, equal radius, a radius dimension); the two ends cost
+        // auxiliary parameters and are built only when something names them
         rec.circle=new G.Circle(new G.Point(rec.cx,rec.cy),rec.r);
       } else if(e.type==='polygon'){
         rec.cx=push(P(e.c.x),ei+'.c.x'); rec.cy=push(P(e.c.y),ei+'.c.y');
@@ -16906,6 +17272,43 @@ const CSG = (function(){
     if(ctx.sys.hasUnknowns)ctx.sys.declareUnknowns(ctx.params);
     return pt;
   }
+  /* An arc's ends, materialised ONE AT A TIME and only when something refers
+     to one — the same device as gcsCorner above, with upstream's CurveValue
+     doing the pinning instead of freyacad's ConstraintPolygonCorner.
+
+     Per end, not both at once, and that is not a saving: it is the difference
+     between an arc that keeps its sweep and one that does not. An end that
+     nobody names has no parameters, so when the arc's centre or radius moves
+     its angle CANNOT absorb any of the correction. Materialise both and the
+     minimum-norm step happily splits the correction between the free end's
+     coordinates and its angle, and an arc silently changes how far it goes
+     round every time its radius is dimensioned. */
+  function gcsArcObj(ctx,ei){
+    const key='arc'+ei, had=ctx.corners.get(key);
+    if(had)return had;
+    const rec=ctx.ents[ei], G=ctx.G, e=ctx.sk.entities[ei];
+    const at=a=>new G.Point({v:e.c.x+e.r*Math.cos(a)},{v:e.c.y+e.r*Math.sin(a)});
+    const start=at(e.a0), end=at(e.a1);
+    const val={arc:new G.Arc(new G.Point(rec.cx,rec.cy),rec.r,rec.a0,rec.a1,start,end),
+               start:start, end:end, made:[false,false]};
+    ctx.corners.set(key,val);
+    return val;
+  }
+  function gcsArcEnd(ctx,ei,k){
+    const o=gcsArcObj(ctx,ei);
+    const p=k?o.end:o.start;
+    if(o.made[k])return p;
+    o.made[k]=true;
+    const nm=k?'end':'start';
+    ctx.params.push(p.x); ctx.varNames.push(ei+'.'+nm+'.x');
+    ctx.params.push(p.y); ctx.varNames.push(ei+'.'+nm+'.y');
+    // tag 0: counted for rank, never blamed — internal alignment, as upstream
+    ctx.sys.addConstraintCurveValue(p,o.arc,k?o.arc.endAngle:o.arc.startAngle,0,true,true);
+    // declared late, like a polygon corner, or the arc would look pinned to a
+    // solver that never heard of the two new numbers
+    if(ctx.sys.hasUnknowns)ctx.sys.declareUnknowns(ctx.params);
+    return p;
+  }
   // {ent,idx} -> a solver point, following entPoints' numbering exactly
   function gcsPoint(ctx,ref){
     if(!ref)return null;
@@ -16921,6 +17324,12 @@ const CSG = (function(){
       return null;
     }
     if(rec.kind==='circle')return idx===0?new G.Point(rec.cx,rec.cy):null;
+    if(rec.kind==='arc'){
+      if(idx===0)return new G.Point(rec.cx,rec.cy);
+      if(idx===1)return gcsArcEnd(ctx,ref.ent,0);
+      if(idx===2)return gcsArcEnd(ctx,ref.ent,1);
+      return null;
+    }
     if(rec.kind==='polygon'){
       if(idx===0)return new G.Point(rec.cx,rec.cy);
       if(idx>=1&&idx<=rec.sides)return gcsCorner(ctx,ref.ent,idx-1);
@@ -16969,7 +17378,7 @@ const CSG = (function(){
   function gcsCircleOf(ctx,ent){
     const rec=ctx.ents[ent];
     if(!rec)return null;
-    if(rec.kind==='circle')return rec.circle;
+    if(rec.kind==='circle'||rec.kind==='arc')return rec.circle;
     if(rec.kind==='polygon')                    // its circumcircle
       return new ctx.G.Circle(new ctx.G.Point(rec.cx,rec.cy),rec.r);
     return null;
@@ -17029,20 +17438,50 @@ const CSG = (function(){
       sys.addConstraintPointOnLine(p,l.p1,l.p2,tag); return true;
     }
     if(k==='tangent'){
+      /* THE SIDE. A tangency has two answers — the circle on this side of the
+         line or on that one, two circles touching outside or one inside the
+         other — and PlaneGCS's constraint holds exactly one of them, decided
+         by a flag that cannot move during a solve (that is what stops it
+         flipping mid-iteration). The decision here is: READ THE SIDE OFF THE
+         GEOMETRY at every build, so the tangency follows the arrangement you
+         can see rather than freezing whichever one held when the badge was
+         first added; and let the record ask for the other one with `flip`,
+         which the tangent tool toggles when you name a pair it already holds.
+         Nothing is stored about the side itself — only the user's wish to
+         have the other one. */
+      const flip=!!c.flip;
       // line-to-circle when one side names a segment, circle-to-circle if not
       const segRef=(c.a&&c.a.seg!=null)?c.a:((c.b&&c.b.seg!=null)?c.b:null);
       const othRef=(segRef===c.a)?c.b:c.a;
       if(segRef){
         const l=gcsLine(ctx,segRef), cc=gcsCircleOf(ctx,othRef&&othRef.ent);
         if(!l||!cc)return false;
-        // which side of the line the centre starts on, held for the solve
         const dx=l.p2.x.v-l.p1.x.v, dy=l.p2.y.v-l.p1.y.v;
         const area=-cc.center.x.v*dy+cc.center.y.v*dx+l.p1.x.v*l.p2.y.v-l.p2.x.v*l.p1.y.v;
-        sys.addConstraintTangentLineCircle(l,cc,area>=0,tag); return true;
+        sys.addConstraintTangentLineCircle(l,cc,(area>=0)!==flip,tag); return true;
       }
       const c1=gcsCircleOf(ctx,c.a&&c.a.ent), c2=gcsCircleOf(ctx,c.b&&c.b.ent);
       if(!c1||!c2)return false;
-      sys.addConstraintTangentCircles(c1,c2,tag); return true;
+      const ddx=c2.center.x.v-c1.center.x.v, ddy=c2.center.y.v-c1.center.y.v;
+      const dd=Math.sqrt(ddx*ddx+ddy*ddy);
+      const inside=(dd<c1.rad.v||dd<c2.rad.v);
+      sys.addConstraintTangentCircumf(c1.center,c2.center,c1.rad,c2.rad,
+                                      inside!==flip,tag);
+      return true;
+    }
+    if(k==='midpt'||k==='midpoint'){
+      // the point sits halfway along the segment: symmetric about it, which is
+      // upstream's own reading (PointOnPerpBisector + PointOnLine)
+      const p=gcsPoint(ctx,c.ref||c.a), sg=gcsSeg(ctx,c.seg||c.b);
+      if(!p||!sg)return false;
+      sys.addConstraintP2PSymmetricPoint(sg.a,sg.b,p,tag); return true;
+    }
+    if(k==='collin'||k==='collinear'){
+      // the same infinite line: parallel, and one point of the second on it
+      const l1=gcsLine(ctx,c.a), l2=gcsLine(ctx,c.b);
+      if(!l1||!l2)return false;
+      sys.addConstraintParallel(l1,l2,tag);
+      sys.addConstraintPointOnLine(l2.p1,l1.p1,l1.p2,tag); return true;
     }
     if(k==='symm'||k==='symmetric'){
       const p1=gcsPoint(ctx,c.a), p2=gcsPoint(ctx,c.b);
@@ -17086,6 +17525,16 @@ const CSG = (function(){
     const n=e.pts.length, ia=seg, ib=(seg+1)%n;
     const A=e.pts[ia], B=e.pts[ib];
     if(!A||!B)return null;
+    /* segPivot is the host's own answer to this exact question. Ask IT when it
+       is reachable, so the two readings cannot drift apart; the rule below is
+       the same one, kept because the node suite evaluates this block on its
+       own with only the structural interface beside it. */
+    if(typeof segPivot==='function'){
+      let q=null;
+      try{ q=segPivot(sk,{ent:ent,seg:seg}); }catch(_){ q=null; }
+      if(q===A)return 0;
+      if(q===B)return 1;
+    }
     const EPS=1e-4;
     if(Math.hypot(A.x,A.y)<EPS)return 0;
     if(Math.hypot(B.x,B.y)<EPS)return 1;
@@ -17315,6 +17764,17 @@ const CSG = (function(){
         e.a.x=rec.ax.v; e.a.y=rec.ay.v; e.b.x=rec.bx.v; e.b.y=rec.by.v;
       } else if(rec.kind==='circle'){
         e.c.x=rec.cx.v; e.c.y=rec.cy.v; e.r=Math.abs(rec.r.v);
+      } else if(rec.kind==='arc'){
+        /* A negative radius is the same circle mirrored through its centre, so
+           Math.abs alone is right for a full circle and WRONG for an arc: the
+           two angles have to turn half a turn with it or the arc lands on the
+           opposite side. Turning them is exact, which is better than the patch
+           the circle branch gets. (gcsInsideOut still treats a solve that got
+           here as a failure — this only makes the state it leaves behind sane.) */
+        e.c.x=rec.cx.v; e.c.y=rec.cy.v;
+        let r=rec.r.v, a0=rec.a0.v, a1=rec.a1.v;
+        if(r<0){ r=-r; a0+=Math.PI; a1+=Math.PI; }
+        e.r=r; e.a0=a0; e.a1=a1;
       } else if(rec.kind==='polygon'){
         e.c.x=rec.cx.v; e.c.y=rec.cy.v; e.r=Math.abs(rec.r.v); e.rot=rec.rot.v;
       }
@@ -17517,7 +17977,7 @@ const CSG = (function(){
     (sk.entities||[]).forEach(function(e){
       a.push(e.type==='poly'?('P'+((e.pts||[]).length)+(e.closed?'c':''))
         :e.type==='polygon'?('G'+Math.max(3,e.sides|0))
-        :e.type==='rect'?'R':e.type==='circle'?'C':'?'); });
+        :e.type==='rect'?'R':e.type==='circle'?'C':e.type==='arc'?'A':'?'); });
     a.push('|');
     (sk.cons||[]).concat(imp||[]).forEach(function(c){
       a.push(c.kind+gcsRefSig(c.a)+gcsRefSig(c.b)+gcsRefSig(c.ref)+gcsRefSig(c.about)+
@@ -17591,7 +18051,8 @@ const CSG = (function(){
     const N={horiz:'a horizontal',vert:'a vertical',paral:'a parallel',perp:'a perpendicular',
              equal:'an equal length',coinc:'a coincident point',conc:'a concentric',
              concentric:'a concentric',ontrace:'a point held on a plane',
-             tangent:'a tangent',symm:'a symmetry',fix:'a fixed point'};
+             tangent:'a tangent',symm:'a symmetry',fix:'a fixed point',
+             midpt:'a midpoint',collin:'a collinear'};
     return N[c.kind]||('a '+c.kind);
   }
   function gcsNameList(sk,list,skipTag){
@@ -17613,6 +18074,7 @@ const CSG = (function(){
       if(e.type==='poly')return (e.pts||[]).map(function(q){ return [q.x,q.y]; });
       if(e.type==='rect')return [e.a.x,e.a.y,e.b.x,e.b.y];
       if(e.type==='circle')return [e.c.x,e.c.y,e.r];
+      if(e.type==='arc')return [e.c.x,e.c.y,e.r,e.a0,e.a1];
       if(e.type==='polygon')return [e.c.x,e.c.y,e.r,e.rot];
       return null; });
   }
@@ -17623,6 +18085,7 @@ const CSG = (function(){
         if(s[k]){ q.x=s[k][0]; q.y=s[k][1]; } });
       else if(e.type==='rect'){ e.a.x=s[0]; e.a.y=s[1]; e.b.x=s[2]; e.b.y=s[3]; }
       else if(e.type==='circle'){ e.c.x=s[0]; e.c.y=s[1]; e.r=s[2]; }
+      else if(e.type==='arc'){ e.c.x=s[0]; e.c.y=s[1]; e.r=s[2]; e.a0=s[3]; e.a1=s[4]; }
       else if(e.type==='polygon'){ e.c.x=s[0]; e.c.y=s[1]; e.r=s[2]; e.rot=s[3]; }
     });
   }
