@@ -2621,3 +2621,152 @@ That suite also records a mistake worth not repeating: its first version asked
 for a `__C.DEMOS` global that does not exist, got `[]`, and *passed* the "the
 boat is gone" check on an empty list. It now opens the real demo menu and reads
 the labels. A check that cannot fail is worse than no check.
+
+## Pick the plane you mean (and the end of U/V)
+
+Three owner notes, one pass. *"For the add new plane tool, to choose the plane
+the new plane will be based off, the user should either click them in the
+feature tree or the viewport, not on the right hand side. Also ditch the
+reference to the 'u' and 'v' axis. No idea what that is all about and don't
+care just ditch it."* — plus a fair question about what the box on the right is
+even called.
+
+### The base plane is now pointed at, not chosen from a list
+
+The plane panel used to carry a segmented control listing every plane in the
+document. It is gone. In its place the panel **states** the base — one button
+reading `Deck`, `Top plane`, or `Missing — click to pick one` — and pressing it
+arms a pick. Then you click the plane you mean: **its row in the feature tree,
+or its own quad in the viewport**. Both routes land in one function,
+`consumePlaneBase(base)`, so there is a single rule about what is allowed.
+
+It is deliberately the SAME machinery as the face pick beside it, not a second
+one: `pendingPlaneBase` mirrors `pendingPlaneFace` (held against the panel's
+DRAFT feature, cleared by `closeProps`), it goes through `showPickCard` /
+`hidePickCard` and `setHint`, it is listed in `armedPick()` so selection stands
+aside for it, `cancelPicks` ends it, Escape and right-click cancel it, and when
+it lands it calls `openProps(propsFeat)` exactly as `consumePlaneFacePick` does
+so the panel redraws from the draft. `helpContext()` gained a case, so the live
+help tracks it too.
+
+**The loop walk is the panel's old one, moved, not copied.** `leansOnMe` was a
+closure inside `buildPropsBody`; it is now `planeLeansOn(id, targetId, seen)` at
+module level with `planeBaseAllowed(f, id)` over it, and the panel, the tree
+rows, the drawn quads and the pick itself all ask that one function. Its comment
+about **one visited set PER walk** moved with it — that was a real bug once, and
+it would come back the moment someone hoists the set out to share it.
+
+A refused pick **says why and stays armed**: *"Upper already leans on Shelf —
+basing it there would run in a circle. Pick another."*, or *"A plane cannot be
+built on itself"*. Silence would read as a dead click, which is what the list
+used to give you by simply omitting the option.
+
+### Borrowing the planes you have to be able to see
+
+A plane you cannot see is a plane you cannot click, and the origin planes are
+hidden by default. `updateDatumVis` gained a `bpPick` term beside the `skPick`
+one the sketch pick already had, so while a base pick is armed all three origin
+planes are drawn — and **`datumShow` is never touched**. That matters: the
+comment above `setTreeHover` says `updateDatumVis` is the only thing allowed to
+decide datum visibility, and it is right. Nothing is stored and nothing has to
+be put back; the moment the pick ends, the same function hands the planes
+straight back to whatever the tree had them set to. Pin Top from the tree, arm a
+pick, cancel it, and Top is still pinned while Front and Right go back to
+hidden. `planepick.js` check 6 asserts exactly that sequence, and it fails if
+you "fix" this by writing `datumShow` on the way in (I tried the mutation; it
+catches it).
+
+Datum-plane features are drawn by `drawRefGeometry` and are always visible
+already, so what they needed was not visibility but **candidacy**: while a pick
+is armed each quad is tinted teal if this plane may stand on it, amber if it is
+under the cursor, and dimmed almost out of sight if taking it would build a
+loop. The same three states appear on the tree rows as `.cand` / `.nocand`, in
+the same teal the row hover already uses, so tree and viewport read as one
+gesture. With no pick armed not a single pixel of `drawRefGeometry` changed —
+`offsetplane.js` check 7 still asserts the old blue/amber exactly.
+
+Three small things worth knowing:
+
+- The quads carry `userData.dplaneId`, so a click on one knows its feature
+  without a second search. `planeBaseAt(e)` raycasts the origin quads and those
+  together and takes the **nearest**, so a plane behind another cannot steal the
+  click — the same rule the sketch pick applies between a plane and the solid.
+- `canvas`'s `pointerleave` clears the hover. Without it, moving from the
+  viewport to the tree left a plane lit, promising a click that had become the
+  tree's.
+- **Switching `Start from` now puts down whichever pick was in hand.** It never
+  did for the face pick either: arm one, switch to the other kind of base, and
+  the armed pick was still there waiting to quietly flip `baseKind` back on the
+  next click. Both are dropped on the switch now.
+
+### What replaced "Its U axis" / "Its V axis"
+
+The record is untouched — `about` is still `'u'` or `'v'`, so every saved
+document resolves identically. Only the two buttons changed, and they are now
+computed from the base frame by `tiltAxisLabels(pf)`:
+
+- **`Along X` / `Along Y` / `Along Z`** when that in-plane direction lies along
+  a world axis (|dot| > 0.999). On a plane based on Top the buttons read *Along
+  X* and *Along Z*; on Front, *Along X* and *Along Y*; on Right, *Along Z* and
+  *Along Y*. This is the overwhelmingly common case and it is exactly true.
+- **`Near X`** and friends when it lines up with nothing — a base that is itself
+  tilted, or an oblique face. "Near" is the honest word: it names the axis the
+  direction comes closest to and does not claim an alignment it has not got. On
+  a plane standing on a 30&deg;-tilted base the buttons read *Along X* and
+  *Near Z*, which is the truth.
+- The axis for each direction is chosen by scoring **both at once** over the six
+  orderings, not greedily one after the other. Two perpendicular directions can
+  both be nearest the same world axis (40&deg; and 50&deg; off X, say); greedy
+  naming would have printed the same label twice.
+- If the base frame cannot be resolved at all — a deleted base, a lost reference
+  face — the buttons fall back to `One direction` / `The other`. That plane is
+  showing a red **!** anyway; at that point there is no truthful axis to name,
+  and inventing one would be worse than saying nothing.
+
+`help.html` says the same, and a grep of every string the app displays turned up
+no other U/V leakage. The sketch code's internal `u`/`v` is untouched — the text
+feature already displays *Slide across* / *Slide up / down*, and the `H`/`V`
+constraint badges are horizontal/vertical, nothing to do with this.
+
+### The box on the right is called Feature properties
+
+The owner asked, and the manual genuinely never said. The live help already
+called it **Feature properties**; the manual now has a section of that name
+(`#props`, under Interface, with a nav entry) and a row in the layout table.
+Verified before writing rather than assumed: it opens by itself when a feature
+is added, and reopens on **double-click** of a tree row or **Edit feature** /
+**Edit plane** from the row's right-click menu — a sketch row is the exception,
+because double-clicking a sketch opens the sketch. The section covers the live
+rebuild, Done as one undo step, Cancel deleting a feature that was only just
+added, and the fact that some panels ask you to point at something instead of
+typing. Code, live help and manual now use the one name.
+
+### offsetplane moved, on purpose
+
+`offsetplane.js` check 13 used to read the segmented base list and assert it
+offered `Top,Front,Right,Free` — a control that no longer exists. The rule it
+was protecting has not changed, only where it is enforced: it is now checked at
+the pick. The rewritten check asserts the panel has no list and states the base,
+that arming marks Free and the origin rows as candidates and A/B/C as not, and
+that clicking A is refused with a reason and leaves the pick armed. Same truth,
+new place. Everything else in that suite is untouched and still passes,
+including check 10's label list — the field is still labelled `Base plane`, it
+just holds a button now instead of a row of them.
+
+### What is still weak
+
+- **The tree row's × still deletes while a pick is armed.** The pick check sits
+  after the twist / error / delete guards, so those keep working; it is a
+  deliberate order, but a delete during an armed pick is an odd thing to allow.
+- **`planeBaseHover` is only updated from the canvas.** Hovering a tree row
+  lights the plane through `setFeatHover`'s ghost, which looks right, but the
+  two mechanisms are separate and the quad's own candidate tint does not follow
+  the tree hover.
+- **A pick armed from the panel of a plane that is rolled back** would offer
+  planes drawn from `features.slice(0, rollbackIndex)` in the viewport but every
+  plane in the tree. Nobody can reach that today (the panel closes on rollback),
+  but the two lists are not derived from one source.
+- **`tiltAxisLabels` calls `dplaneBaseFrame` on every panel build.** For a face
+  base that is a map hit after a rebuild, but the first call of a session can
+  resolve the face reference — cheap here, and worth remembering if the panel is
+  ever rebuilt per keystroke.
