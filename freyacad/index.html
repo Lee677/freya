@@ -324,7 +324,7 @@ if(!window.THREE){
   .rollbar .grip{position:absolute;left:50%;transform:translateX(-50%);background:var(--g-yellow);color:#000;font-family:var(--mono);font-size:8.5px;font-weight:700;letter-spacing:.1em;padding:1px 8px;border-radius:20px;box-shadow:0 0 12px var(--g-yellow)}
   .rollbar:active{cursor:grabbing}
 
-  .viewport{grid-row:2/3;grid-column:2/3;position:relative;overflow:hidden;background:radial-gradient(120% 100% at 50% 0%,#0d1117 0%,#000000 75%)}
+  .viewport{grid-row:2/3;grid-column:2/3;position:relative;overflow:hidden;background:radial-gradient(130% 115% at 50% 4%,#141d2a 0%,#0c121b 52%,#080d14 100%)}
   canvas{display:block;position:absolute;inset:0}
 
   /* Every dock measurement is driven by --ui-scale so one control resizes them
@@ -1067,7 +1067,25 @@ const CSG = (function(){
   ground.rotation.x=-Math.PI/2; ground.position.y=-0.002; ground.receiveShadow=true; scene.add(ground);
   const GRID=24;
   const grid=new THREE.GridHelper(GRID,GRID,0x2c3a45,0x18222a);
-  grid.material.opacity=0.85; grid.material.transparent=true; scene.add(grid);
+  grid.material.opacity=0.85; grid.material.transparent=true;
+  /* Fade the grid toward its rim. A GridHelper stops dead at its own square,
+     and that hard edge — over a backdrop gradient that used to reach pure
+     black exactly where the floor sits — is what made the space between the
+     lines read as a solid slab rather than as open ground. Scaling the vertex
+     colours down with distance blends the far lines into the backdrop, which
+     on a dark ground IS a fade: no alpha, no shader, no second material and
+     nothing new to sort. */
+  (function(){
+    const g=grid.geometry, pos=g.attributes.position, col=g.attributes.color;
+    const half=GRID/2;
+    for(let i=0;i<pos.count;i++){
+      const d=Math.min(1,Math.max(Math.abs(pos.getX(i)),Math.abs(pos.getZ(i)))/half);
+      const k=Math.max(0.10,1-d*d);          // flat through the middle, quick at the rim
+      col.setXYZ(i,col.getX(i)*k,col.getY(i)*k,col.getZ(i)*k);
+    }
+    col.needsUpdate=true;
+  })();
+  scene.add(grid);
   const axMat=c=>new THREE.LineBasicMaterial({color:c,transparent:true,opacity:0.5});
   scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-GRID/2,0.002,0),new THREE.Vector3(GRID/2,0.002,0)]),axMat(0xc0584f)));
   scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0.002,-GRID/2),new THREE.Vector3(0,0.002,GRID/2)]),axMat(0x4f86c0)));
@@ -7962,18 +7980,27 @@ const CSG = (function(){
       else if(two(x)){ shift(x.a); shift(x.b); }
       else if(x.entIdx>ei)x.entIdx+=delta;
     });
-    // stored constraints ride the same reindex
+    /* Stored constraints ride the same reindex, and they declare their own
+       references rather than being matched by kind: symmetric names three
+       things, midpoint two, tangent two of two different shapes, and a list of
+       special cases is exactly how a new kind ends up silently pointing at
+       whichever entity slid into the vacated slot. Horizontal and vertical are
+       the one shape with no ref object — they carry {ent, seg} on the record
+       itself — and fall through to the tail. */
     if(sk.cons){
-      const pair=c=>c.kind==='paral'||c.kind==='equal';
-      sk.cons=sk.cons.filter(c=>
-        c.kind==='coinc'   ? (!hits(c.a)&&!hits(c.b))
-        : c.kind==='ontrace' ? !hits(c.ref)
-        : pair(c)          ? (c.a.ent!==ei&&c.b.ent!==ei)
-                           : c.ent!==ei);
+      const refsOf=c=>{
+        const out=[];
+        for(const k of ['a','b','ref','seg','about'])
+          if(c[k]&&typeof c[k]==='object'&&c[k].ent!=null)out.push(c[k]);
+        return out;
+      };
+      sk.cons=sk.cons.filter(c=>{
+        const R=refsOf(c);
+        return R.length ? !R.some(hits) : c.ent!==ei;
+      });
       sk.cons.forEach(c=>{
-        if(c.kind==='coinc'){ shift(c.a); shift(c.b); }
-        else if(c.kind==='ontrace')shift(c.ref);
-        else if(pair(c)){ if(c.a.ent>ei)c.a.ent+=delta; if(c.b.ent>ei)c.b.ent+=delta; }
+        const R=refsOf(c);
+        if(R.length)R.forEach(shift);
         else if(c.ent>ei)c.ent+=delta;
       });
     }
@@ -8032,7 +8059,7 @@ const CSG = (function(){
       bump(d.a); bump(d.b); bump(d.ref);
       if(d.entIdx===ei&&d.kind==='seg'&&d.seg>=from)d.seg+=delta;
     }
-    for(const c of sk.cons||[]){ bump(c.a); bump(c.b);
+    for(const c of sk.cons||[]){ bump(c.a); bump(c.b); bump(c.ref);
       if(c.entIdx===ei&&c.seg>=from)c.seg+=delta; }
     if(sk.corners){
       // a removed point takes its corner treatment with it

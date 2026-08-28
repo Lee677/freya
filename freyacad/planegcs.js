@@ -34,9 +34,10 @@
  * WHAT IS PORTED FROM UPSTREAM (structure and mathematics kept faithfully;
  * C++ "double*" parameters become JS objects {v:number}, whose identity plays
  * the role the pointer played):
- *   - DeriVector2, Point, Line, Circle, Arc, and the Curve contract the
- *     three curves answer: value(u,du,dp), the parametric point and its
- *     derivative                                          (Geo.h/Geo.cpp)
+ *   - DeriVector2, Point, Line, Circle, Arc, and the Curve contract the three
+ *     curves answer: value(u,du,dp) — the parametric point and its derivative
+ *     — and copy(), which is Curve::Copy with the parameter objects shared
+ *     rather than cloned                                   (Geo.h/Geo.cpp)
  *   - Constraint base + Equal, Difference, P2PDistance, P2PAngle,
  *     P2LDistance, PointOnLine, PointOnPerpBisector, Parallel, Perpendicular,
  *     L2LAngle, MidpointOnLine, TangentCircumf, EqualLineLength, CurveValue,

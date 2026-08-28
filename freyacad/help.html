@@ -671,7 +671,7 @@ end coincident with one, dimension to it, or snap a line onto it while drawing �
 polygon so that edge lies flat or stands upright (which is also how you put two corners
 vertically above each other). Anything touching or locked to a polygon's corners or centre
 rides along when the polygon is dragged, spun or stretched.</p>
-<p>Five constraints live in the tool dock. Horizontal and vertical work either way round:</p>
+<p>Ten constraints live in the tool dock. Horizontal and vertical work either way round:</p>
 <ul>
   <li><b>Select first</b> — click a line with the pointer, then click the H or V icon.</li>
   <li><b>Tool first</b> — click the H or V icon, then click the line.</li>
@@ -694,13 +694,35 @@ and a ⊕ appears; onto a plane trace and an ∈ (on-plane) appears — the poin
 slide along the plane but never off it. Release a dragged point onto another point and
 the join is stored as a coincident. What snapped, holds — until you delete the badge.</p>
 <p>Badges appear only for relationships you could not otherwise read off the sketch:
-ground (origin, plane) and concentric. Two line ends joined to each other show nothing —
-the join is plain to see, and a marker on every corner would only be clutter.</p>
+ground (origin, plane), concentric, and each of the relationships above — ∥, =, ⊥, ↔, M,
+⋈ and ⌒ — which sit up-right of whatever they hold and delete the same way. Two line ends
+joined to each other show nothing — the join is plain to see, and a marker on every corner
+would only be clutter.</p>
 <p><b>Parallel</b> (∥) and <b>equal</b> (=) relate two lines, so they always want a
 reference first: click the icon (or have a line selected when you click it), click the
 line to copy from, then click the line to change. Parallel matches its direction; equal
 matches its length. Both persist exactly like H and V — the badge sits on the following
 line, and deleting it is what dissolves the relationship.</p>
+<p><b>Perpendicular</b> (⊥) and <b>collinear</b> (↔) take a reference and a follower, the
+same way parallel does: click the icon, click the line to measure from, then the line to
+change. Perpendicular stands the second line square to the first; collinear lays it on
+the first line's <em>infinite</em> line, so two separate lines read as one straight run
+with a gap in it. Both swing the follower the short way round, from where it already is,
+so nothing leaps.</p>
+<p><b>Midpoint</b> (M) holds a point at the middle of a line — click the point, then the
+line. The point is what moves; the line stays where it is, and afterwards the point
+tracks the middle however the line is dragged or dimensioned.</p>
+<p><b>Symmetric</b> (⋈) is three clicks: the first point, the second point, then the line
+they mirror about. The second point is the one that moves onto the first one's reflection.
+The mirror line can be construction geometry — that is what a centreline is for — and
+once the pair is symmetric, moving either one moves the other.</p>
+<p><b>Tangent</b> (⌒) makes a circle touch a line, or two circles touch each other: click
+the round thing, then the line or the other circle. A tangency has two answers — the
+circle above the line or below it, two circles side by side or one nested inside the
+other — and freyacad reads which one you meant <em>off the sketch as it stands</em>, so
+the arrangement you can see is the one that holds. <b>To take the other one, name the same
+pair again</b>: the second click-through turns the tangency over rather than adding a
+second badge, and the hint says so. It turns back the same way.</p>
 <p>Every constraint holds through everything: drags, other constraints, and typed
 dimension changes all settle together, so a line that says H <em>is</em> horizontal —
 if a dimension edit would bend it, the free geometry moves instead.</p>
@@ -1515,12 +1537,15 @@ three view keys — can all be changed under <b>Customise tools… → Keyboard<
 <h2 id="limits">Known limits</h2>
 <p>Stated plainly, so nothing surprises you mid-part:</p>
 <ul>
-  <li><b>No perpendicular, tangent or symmetric constraint in the dock.</b> Horizontal,
-      vertical, parallel, equal, concentric and coincident are the ones you can draw with;
-      the solver underneath understands more than the tools currently offer.</li>
-  <li><b>Sketch arcs are not constrained geometry.</b> Corner fillets and splines are
-      drawn and dimensioned, but the solver treats a spline's control points as points
-      and does not hold the curve itself.</li>
+  <li><b>Perpendicular, tangent, symmetric, midpoint and collinear reach lines and
+      circles.</b> They do not reach a spline's curve, and the tangent tool wants a
+      straight segment or a round shape on at least one side — two straight lines are
+      parallel or perpendicular, never tangent.</li>
+  <li><b>There is no arc tool yet.</b> The solver understands a real arc — centre, radius
+      and two ends that constraints can reach — but nothing in the sketcher draws one yet.
+      Round a corner with <b>Sketch corners</b> and the curve you get is part of that
+      outline rather than a shape of its own. Splines are drawn and
+      dimensioned, but the solver holds their control points, not the curve.</li>
   <li><b>STL imports are faceted.</b> A mesh has no true surfaces, so an imported STL
       can be viewed, placed and exported but not filleted or chamfered.</li>
   <li><b>Phones and tablets stay outside</b>, by design. freyacad drives with a mouse,
@@ -1556,7 +1581,7 @@ no build step and no framework.</p>
 rel="noopener">github.com/Lee677/freya</a></p>
 
 <footer>
-  freyacad manual · revised 27 August 2026 · part of <a href="https://freya.co.nz">freya.co.nz</a><br>
+  freyacad manual · revised 28 August 2026 · part of <a href="https://freya.co.nz">freya.co.nz</a><br>
   This manual is kept in step with the application; if something here doesn't match what
   you see, the manual is the thing that's wrong.
 </footer>
