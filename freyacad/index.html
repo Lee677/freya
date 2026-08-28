@@ -453,6 +453,15 @@ if(!window.THREE){
   .seg button{border:0;border-radius:0;background:transparent;padding:7px 0;flex:1;font-size:11.5px;color:var(--muted);justify-content:center;box-shadow:none}
   .seg button+button{border-left:1px solid var(--line)}
   .seg button.active{background:rgba(66,133,244,.15);color:#fff;text-shadow:0 0 4px rgba(66,133,244,0.8)}
+  /* Four choices with real names do not fit one 230px row — the last of them
+     was being rendered off the right-hand edge, unreadable and unclickable.
+     This wraps THAT control to a 2x2 and leaves every other segmented control
+     in the app exactly as it was. */
+  .seg.seg-2up{flex-wrap:wrap}
+  .seg.seg-2up button{flex:1 1 46%;min-width:0;white-space:normal;line-height:1.25;padding:6px 5px}
+  .seg.seg-2up button+button{border-left:0}
+  .seg.seg-2up button:nth-child(even){border-left:1px solid var(--line)}
+  .seg.seg-2up button:nth-child(n+3){border-top:1px solid var(--line)}
   input[type=number],input[type=text]{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12.5px;padding:7px 9px;outline:none;transition:all 0.2s}
   input[type=number]:focus,input[type=text]:focus{border-color:var(--g-blue);box-shadow:0 0 8px rgba(66,133,244,0.3)}
   input[type=number]:disabled{opacity:0.5}
@@ -10993,11 +11002,13 @@ const CSG = (function(){
       /* The method switch puts down whichever pick was in hand: one armed for
          a circular face is not what "two planes" asked for, and a click meant
          for a plane must not land on a face. */
-      add(fieldSeg('Defined by',[{l:'Two planes',v:'planes'},{l:'Normal to a plane',v:'normal'},
+      const defBy=fieldSeg('Defined by',[{l:'Two planes',v:'planes'},{l:'Normal to a plane',v:'normal'},
         {l:'Position + direction',v:'dir'},{l:'Centre of a circle',v:'circ'}],
         f.method||'dir',v=>{ endPlanePick();
           if(pendingAxisPick===f){ pendingAxisPick=null; hidePickCard(); }
-          f.method=v;rerun();openProps(f);}));
+          f.method=v;rerun();openProps(f);});
+      defBy.querySelector('.seg').classList.add('seg-2up');
+      add(defBy);
       if((f.method||'dir')==='circ'){
         const pick=document.createElement('button');
         pick.className='btn-primary';pick.style.cssText='margin:4px 0;font-size:12px';
