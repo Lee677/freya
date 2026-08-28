@@ -9376,7 +9376,7 @@ const CSG = (function(){
     endPlanePick();              // puts the origin planes and the quads back
     pendingSketchPick=false; pendingTextFace=false; pendingAxisPick=null; pendingFaceSketch=false;
     pendingPlaneFace=null; pendingBodyColor=false; pendingFaceColor=false;
-    hidePickCard(); updateDatumVis();
+    hidePickCard(); updateDatumVis(); refreshPropsBody();
     if(had&&msg)setHint(msg);
     return had;
   }
@@ -9787,7 +9787,20 @@ const CSG = (function(){
     if(!planePick)return;
     planePick=null; planePickHover=null; setDatumHover(null);
     hidePickCard(); updateDatumVis(); refreshTree(); redrawRefGeometry();
+    refreshPropsBody();
     if(typeof updateHelp==='function')updateHelp();
+  }
+  /* A pick button reads "Click a plane…" for as long as it is waiting. Put the
+     pick down — Esc, right-click, the cancel on the card — and the button has
+     to go back to NAMING the plane that is actually chosen, or the panel is
+     telling you something is armed when nothing is. Redraws the body only;
+     openProps would rebuild the model with it, and nothing about the model
+     changed. */
+  function refreshPropsBody(){
+    if(!propsEl||!propsFeat||!draftFeat)return;
+    const body=propsEl.querySelector('#pbody');
+    if(!body)return;
+    body.innerHTML=''; buildPropsBody(body,draftFeat);
   }
   /* One gate for both routes in and for all three callers. A pick that cannot
      be taken is REFUSED OUT LOUD — silence would read as a dead click — and

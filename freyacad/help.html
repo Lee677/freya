@@ -109,6 +109,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line-soft);
   <a href="#tree">The feature tree</a>
   <a href="#datum">Datum geometry</a>
   <a href="#offsetplane">Planes you add</a>
+  <a href="#mirrorplane">Mirroring about a plane</a>
   <a href="#undo">Undo</a>
   <div class="grp">Files</div>
   <a href="#save">Saving &amp; opening</a>
@@ -884,7 +885,8 @@ sketch, or an existing solid — stay greyed out until it exists.</p>
     distance</b> for an asymmetric bevel, and <b>distance × angle</b> where the angle is
     measured from the first face.</td></tr>
   <tr><td><b>Mirror</b></td><td>A solid</td><td>Reflects the whole body, or just the
-    features you choose, across a plane. Model half a symmetrical part, mirror the rest.</td></tr>
+    features you choose, across a plane you <b>click</b> — an origin plane or one you added.
+    Model half a symmetrical part, mirror the rest.</td></tr>
   <tr><td><b>Linear pattern</b></td><td>A solid</td><td>Repeats along a direction at a fixed
     spacing — the whole body, or chosen features.</td></tr>
   <tr><td><b>Circular pattern</b></td><td>A solid</td><td>Repeats around an axis — bolt
@@ -1020,6 +1022,20 @@ re-picks the face while keeping everything else. Starting the Text tool again wh
 <em>that</em> text rather than starting a second one — press Done first if a second text is
 what you want. The letters become real solid geometry, so the text mirrors, patterns and
 exports like anything else you model.</p>
+<h3 id="mirrorplane">Which plane a mirror reflects about</h3>
+<p>You choose it by <b>clicking the plane you mean</b>. Press the <b>Mirror plane</b> button
+at the top of the panel and then click either its <b>row in the feature tree</b> or the
+<b>plane itself in the viewport</b>. While the pick waits, the origin planes are shown
+whether or not you had them on, every plane you may pick is marked in teal in both the tree
+and the viewport, and the one under the cursor lights amber. The button keeps saying which
+plane the mirror is using; press it again to change your mind, or <kbd>Esc</kbd> to put the
+pick down.</p>
+<p>That covers Top, Front and Right <em>and</em> any plane you added yourself — a mirror
+uses a plane, it does not define one, so nothing it points at can run in a circle and
+nothing is refused. Reflecting about a plane you placed 20&nbsp;mm out is often exactly what
+a symmetrical assembly wants. Make the plane <em>before</em> the mirror and the reflection
+follows it whenever you move the plane.</p>
+
 <h3 id="scope">What a mirror or pattern copies</h3>
 <p>Mirror, linear pattern and circular pattern all ask the same question, at the top of
 their panel:</p>
@@ -1096,9 +1112,22 @@ your own:</p>
       <b>position and direction</b>, or the <b>centre of a circle</b> — press the pick
       button and click anything circular on the model: a hole wall, a cylinder, a
       <b>revolved wall</b>, a round face, a rim, or just the <b>arc of a rounded
-      corner</b>. The axis lands at its centre,
-      pointing along it. Parallel planes are refused — they never meet.</li>
+      corner</b>. The axis lands at its centre, pointing along it.</li>
 </ul>
+<p>Wherever the axis panel asks for a <b>plane</b>, you answer by clicking the plane you
+mean. Press <b>First plane</b> (or <b>Second plane</b>, or just <b>Plane</b> for
+<em>normal to a plane</em>) and then click either its <b>row in the feature tree</b> or the
+<b>plane itself in the viewport</b>. While the pick waits, the origin planes are shown
+whether or not you had them on, every plane you may pick is marked in teal in both the tree
+and the viewport, and the one under the cursor lights amber. The button keeps saying which
+plane is in force, so the panel reads as an answer rather than a menu; press it again to
+change your mind. <kbd>Esc</kbd> or a right-click puts the pick down.</p>
+<p>Two planes only share a line if they actually cross, so for <em>two planes</em> the pick
+<b>refuses</b> the plane that is already the other one, and refuses any plane
+<b>parallel</b> to it — it says which and why, and stays armed for the next click, rather
+than letting you build an axis that cannot exist. Both refused planes are dimmed in the
+tree and the viewport before you click them. <em>Normal to a plane</em> uses one plane and
+refuses nothing.</p>
 
 <h3 id="offsetplane">Planes you add</h3>
 <p>The <b>Add plane</b> panel reads top to bottom the way the plane is built: <b>start
