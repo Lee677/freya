@@ -34,11 +34,13 @@
  * WHAT IS PORTED FROM UPSTREAM (structure and mathematics kept faithfully;
  * C++ "double*" parameters become JS objects {v:number}, whose identity plays
  * the role the pointer played):
- *   - DeriVector2, Point, Line, Circle                       (Geo.h/Geo.cpp)
+ *   - DeriVector2, Point, Line, Circle, Arc, and the Curve contract the
+ *     three curves answer: value(u,du,dp), the parametric point and its
+ *     derivative                                          (Geo.h/Geo.cpp)
  *   - Constraint base + Equal, Difference, P2PDistance, P2PAngle,
  *     P2LDistance, PointOnLine, PointOnPerpBisector, Parallel, Perpendicular,
- *     L2LAngle, MidpointOnLine, TangentCircumf, EqualLineLength, with their
- *     error(), grad() and maxStep() bodies                   (Constraints.cpp)
+ *     L2LAngle, MidpointOnLine, TangentCircumf, EqualLineLength, CurveValue,
+ *     with their error(), grad() and maxStep() bodies        (Constraints.cpp)
  *   - SubSystem: parameter redirection, residual, Jacobian, gradient, maxStep,
  *     applySolution                                          (SubSystem.cpp)
  *   - System: declareUnknowns, addConstraint* helpers, initSolution with
@@ -49,8 +51,8 @@
  *     conflicting/redundant/partially-redundant classification   (GCS.cpp)
  *   - qp_eq, the equality-constrained QP the SQP step needs      (qp_eq.cpp)
  *
- * WHAT IS NOT PORTED: arcs, ellipses, hyperbolas, parabolas, B-splines and
- * every constraint that only they reach; the sparse-QR diagnosis path (the
+ * WHAT IS NOT PORTED: ellipses, hyperbolas, parabolas, B-splines and every
+ * constraint that only they reach; the sparse-QR diagnosis path (the
  * dense path is used unconditionally — see qrAlgorithm below); Boost graph
  * (the connected-components pass is a plain union-find here); the debug and
  * solver-reporting scaffolding.
@@ -362,9 +364,67 @@ Point.prototype.reconstruct=function(pvec,cnt){ this.x=pvec[cnt.i++]; this.y=pve
 function Line(p1,p2){ this.p1=p1; this.p2=p2; }
 Line.prototype.pushOwnParams=function(pvec){ return this.p1.pushOwnParams(pvec)+this.p2.pushOwnParams(pvec); };
 Line.prototype.reconstruct=function(pvec,cnt){ this.p1.reconstruct(pvec,cnt); this.p2.reconstruct(pvec,cnt); };
+Line.prototype.copy=function(){ return new Line(new Point(this.p1.x,this.p1.y),new Point(this.p2.x,this.p2.y)); };
 function Circle(center,rad){ this.center=center; this.rad=rad; }
 Circle.prototype.pushOwnParams=function(pvec){ const n=this.center.pushOwnParams(pvec); pvec.push(this.rad); return n+1; };
 Circle.prototype.reconstruct=function(pvec,cnt){ this.center.reconstruct(pvec,cnt); this.rad=pvec[cnt.i++]; };
+Circle.prototype.copy=function(){ return new Circle(new Point(this.center.x,this.center.y),this.rad); };
+/* Curve::Value — the point at parameter u, differentiated with respect to one
+   parameter at a time.  A line takes u as the fraction along it; a circle and
+   an arc take u as the angle.  This is the contract ConstraintCurveValue is
+   written against, which is how an arc's endpoints become functions of its
+   centre, radius and angles rather than free numbers. */
+Line.prototype.value=function(u,du,dp){
+  const p1v=dvFromPoint(this.p1,dp), p2v=dvFromPoint(this.p2,dp);
+  return p1v.sum(p2v.subtr(p1v).multD(u,du));
+};
+Circle.prototype.value=function(u,du,dp){
+  const cv=dvFromPoint(this.center,dp);
+  const r=this.rad.v, dr=(dp===this.rad)?1.0:0.0;
+  const ex=new DeriVector2(r,0.0,dr,0.0), ey=ex.rotate90ccw();
+  const si=Math.sin(u), dsi=du*Math.cos(u);
+  const co=Math.cos(u), dco=du*(-Math.sin(u));
+  return cv.sum(ex.multD(co,dco).sum(ey.multD(si,dsi)));
+};
+Circle.prototype.calculateNormal=function(p,dp){
+  return dvFromPoint(this.center,dp).subtr(dvFromPoint(p,dp));
+};
+/* Arc: a circle plus the two angles that bound it, plus its two endpoints.
+   Upstream keeps the endpoints as PARAMETERS of their own and ties them to the
+   angles with a pair of CurveValue equations each (System::addConstraintArcRules)
+   — four parameters against four equations, so an arc still costs five degrees
+   of freedom (centre, radius, two angles) and every constraint that speaks
+   about a point works on an arc's ends unchanged.  That device is the same one
+   the ellipse focus uses, and the same one ConstraintPolygonCorner borrows. */
+function Arc(center,rad,startAngle,endAngle,start,end){
+  Circle.call(this,center,rad);
+  this.startAngle=startAngle; this.endAngle=endAngle;
+  this.start=start||new Point(param(0),param(0));
+  this.end=end||new Point(param(0),param(0));
+}
+Arc.prototype=Object.create(Circle.prototype);
+Arc.prototype.constructor=Arc;
+Arc.prototype.pushOwnParams=function(pvec){
+  let n=Circle.prototype.pushOwnParams.call(this,pvec);
+  n+=this.start.pushOwnParams(pvec);
+  n+=this.end.pushOwnParams(pvec);
+  pvec.push(this.startAngle); n++;
+  pvec.push(this.endAngle);   n++;
+  return n;
+};
+Arc.prototype.reconstruct=function(pvec,cnt){
+  Circle.prototype.reconstruct.call(this,pvec,cnt);
+  this.start.reconstruct(pvec,cnt);
+  this.end.reconstruct(pvec,cnt);
+  this.startAngle=pvec[cnt.i++];
+  this.endAngle=pvec[cnt.i++];
+};
+Arc.prototype.copy=function(){
+  return new Arc(new Point(this.center.x,this.center.y),this.rad,
+                 this.startAngle,this.endAngle,
+                 new Point(this.start.x,this.start.y),
+                 new Point(this.end.x,this.end.y));
+};
 
 /* DeriVector2: a vector and its derivative with respect to whichever single
    parameter the gradient is being taken for.  Forward-mode differentiation
@@ -392,6 +452,7 @@ DeriVector2.prototype.crossProdZ=function(v2,out){
 DeriVector2.prototype.sum=function(v2){ return new DeriVector2(this.x+v2.x,this.y+v2.y,this.dx+v2.dx,this.dy+v2.dy); };
 DeriVector2.prototype.subtr=function(v2){ return new DeriVector2(this.x-v2.x,this.y-v2.y,this.dx-v2.dx,this.dy-v2.dy); };
 DeriVector2.prototype.mult=function(v){ return new DeriVector2(this.x*v,this.y*v,this.dx*v,this.dy*v); };
+DeriVector2.prototype.multD=function(v,dv){ return new DeriVector2(this.x*v,this.y*v,this.dx*v+this.x*dv,this.dy*v+this.y*dv); };
 DeriVector2.prototype.rotate90ccw=function(){ return new DeriVector2(-this.y,this.x,-this.dy,this.dx); };
 
 /* ===================================================================== */
@@ -400,7 +461,7 @@ DeriVector2.prototype.rotate90ccw=function(){ return new DeriVector2(-this.y,thi
 
 const CT={None:0,Equal:1,Difference:2,P2PDistance:3,P2PAngle:4,P2LDistance:5,PointOnLine:6,
   PointOnPerpBisector:7,Parallel:8,Perpendicular:9,L2LAngle:10,MidpointOnLine:11,
-  TangentCircumf:12,EqualLineLength:25,PolygonCorner:900};
+  TangentCircumf:12,CurveValue:20,EqualLineLength:25,PolygonCorner:900};
 
 const EG={err:0,grad:0};                       // scratch for errorgrad, single-threaded
 
@@ -922,6 +983,40 @@ ConstraintEqualLineLength.prototype.errorgrad=function(dp,out){
   out.grad=g;
 };
 
+/* ---- CurveValue: a point coordinate against a curve's parametric point ---
+   err = p.<coord> - curve.value(u).<coord>.  Two of these — one per coordinate
+   — pin a point to the place on a curve that its own parameter names, which is
+   what turns an arc's endpoint parameters into functions of centre, radius and
+   angle.  Upstream decides which coordinate it is by comparing the pcoord
+   pointer with p.x; here the same test is object identity, and it survives
+   parameter redirection because both entries redirect through the same map. */
+function ConstraintCurveValue(p,pcoord,crv,u){
+  Constraint.call(this);
+  this.crv=crv.copy();
+  this.p=new Point(null,null);
+  this.pvec.push(p.x); this.pvec.push(p.y); this.pvec.push(pcoord); this.pvec.push(u);
+  this.crv.pushOwnParams(this.pvec);
+  this.origpvec=this.pvec.slice();
+  this.reconstructGeomPointers(); this.rescale();
+}
+extend(ConstraintCurveValue,CT.CurveValue);
+ConstraintCurveValue.prototype.reconstructGeomPointers=function(){
+  const cnt={i:0};
+  this.p.x=this.pvec[cnt.i++]; this.p.y=this.pvec[cnt.i++];
+  cnt.i++;                                   // pcoord: read straight off pvec[2]
+  cnt.i++;                                   // u:      read straight off pvec[3]
+  this.crv.reconstruct(this.pvec,cnt);
+};
+ConstraintCurveValue.prototype.errorgrad=function(dp,out){
+  const up=this.pvec[3];
+  const u=up.v, du=(dp===up)?1.0:0.0;
+  const Pto=this.crv.value(u,du,dp);         // where the curve says the point is
+  const Pfrom=dvFromPoint(this.p,dp);        // where the point actually is
+  const e=Pfrom.subtr(Pto);
+  if(this.pvec[2]===this.p.x){ out.err=e.x; out.grad=e.dx; }
+  else { out.err=e.y; out.grad=e.dy; }
+};
+
 /* ---- PolygonCorner (freyacad, not upstream) ---------------------------
    freyacad stores a regular polygon as centre, circumradius and rotation —
    four numbers, whatever the side count.  Its corners are therefore not
@@ -1320,6 +1415,21 @@ System.prototype.addConstraintTangentCircles=function(c1,c2,tagId,driving){
   const d=Math.sqrt(dx*dx+dy*dy);
   return this.addConstraintTangentCircumf(c1.center,c2.center,c1.rad,c2.rad,
     (d<c1.rad.v||d<c2.rad.v),tagId,driving); };
+/* An arc's two endpoints are parameters tied to its angles by CurveValue —
+   two equations per endpoint, four in all, tagged as internal alignment so the
+   rank counts them and the diagnosis never blames them. */
+System.prototype.addConstraintCurveValue=function(p,crv,u,tagId,driving,internal){
+  tagged(this,new ConstraintCurveValue(p,p.x,crv,u),tagId,driving,internal);
+  return tagged(this,new ConstraintCurveValue(p,p.y,crv,u),tagId,driving,internal); };
+System.prototype.addConstraintArcRules=function(a,tagId,driving,internal){
+  this.addConstraintCurveValue(a.start,a,a.startAngle,tagId,driving,internal);
+  return this.addConstraintCurveValue(a.end,a,a.endAngle,tagId,driving,internal); };
+System.prototype.addConstraintPointOnArc=function(p,a,tagId,driving){
+  return this.addConstraintP2PDistance(p,a.center,a.rad,tagId,driving); };
+System.prototype.addConstraintTangentLineArc=function(l,a,ccw,tagId,driving){
+  return this.addConstraintP2LDistance(a.center,l,a.rad,ccw,tagId,driving); };
+System.prototype.addConstraintArcRadius=function(a,radius,tagId,driving){
+  return this.addConstraintEqual(a.rad,radius,tagId,driving); };
 System.prototype.addConstraintCircleRadius=function(c,radius,tagId,driving){
   return this.addConstraintEqual(c.rad,radius,tagId,driving); };
 System.prototype.addConstraintCircleDiameter=function(c,diameter,tagId,driving){
@@ -1998,7 +2108,7 @@ System.prototype.maxResidual=function(){
 };
 
 global.PlaneGCS={
-  Param:param, Point:Point, Line:Line, Circle:Circle,
+  Param:param, Point:Point, Line:Line, Circle:Circle, Arc:Arc,
   System:System, SubSystem:SubSystem, Constraint:Constraint,
   ConstraintEqual:ConstraintEqual, ConstraintDifference:ConstraintDifference,
   ConstraintP2PDistance:ConstraintP2PDistance, ConstraintP2PAngle:ConstraintP2PAngle,
@@ -2008,6 +2118,7 @@ global.PlaneGCS={
   ConstraintL2LAngle:ConstraintL2LAngle, ConstraintMidpointOnLine:ConstraintMidpointOnLine,
   ConstraintTangentCircumf:ConstraintTangentCircumf,
   ConstraintEqualLineLength:ConstraintEqualLineLength,
+  ConstraintCurveValue:ConstraintCurveValue,
   ConstraintPolygonCorner:ConstraintPolygonCorner,
   ConstraintType:CT, Algorithm:Algorithm, SolveStatus:SolveStatus,
   DogLegGaussStep:DogLegGaussStep,
@@ -2019,7 +2130,7 @@ global.PlaneGCS={
   upstream:{project:'FreeCAD PlaneGCS', licence:'LGPL-2.1-or-later',
             commit:'fda5c1438057ec84fb1d5bd0f45fb29e94e0c8e1',
             url:'https://github.com/FreeCAD/FreeCAD/tree/main/src/Mod/Sketcher/App/planegcs'},
-  version:1
+  version:2
 };
 })(typeof globalThis!=='undefined'?globalThis:this);
 // plain <script> in the browser; require() in node for the test suite
