@@ -3305,3 +3305,66 @@ refused.
   limits" bullets were replaced — "no perpendicular, tangent or symmetric
   constraint in the dock" is gone, and "sketch arcs are not constrained
   geometry" became the honest "there is no arc tool yet". Both dates bumped.
+
+## Two pixel tripwires that had to be rebaselined
+
+The owner asked for the black between the top-plane grid lines to stop reading as
+a solid slab. Two changes did it: the `.viewport` gradient no longer reaches pure
+`#000000` (it bottoms out at `#080d14`), and the floor grid now dissolves into the
+backdrop instead of stopping at the hard square edge of its own extent. On a dark
+ground, blending a line into the backdrop IS a fade — no alpha ramp, no shader, no
+second material and nothing new to sort.
+
+**The grid is no longer a `GridHelper`, and it had to stop being one.** The first
+attempt kept the helper and scaled its vertex colours down by each vertex's
+distance from the middle. That cannot work, and it is worth knowing why before
+someone tries it again: `GridHelper` emits each line as ONE segment spanning the
+whole grid — `push(-a,0,h, a,0,h)` — so **both** of a line's vertices sit at the
+extreme, every vertex reads distance 1, and the scale factor collapses to its floor
+everywhere. The result was not a fade at all; it was the whole grid uniformly dimmed
+to a tenth, with the square edge still perfectly crisp. A vertex colour can only dim
+a line as a whole unless the line has interior vertices.
+
+So the grid is built by hand: every line cut at each division, each vertex coloured
+by `1 - d³` of its radial distance, `name='floorGrid'` so a suite that must ignore
+the floor can find it. Radial rather than square, so the corners — the part that
+most gave the square away — go first.
+
+That tripped **two lighting suites**, and it is worth writing down why, because the
+next deliberate visual change will trip them again if nobody does:
+
+- `lighttool-main.js` check 8 — "with no stored key the workshop view is
+  byte-identical to HEAD"
+- `lights.js` check 9 — "with no lamps and the panel shut, the workshop AND
+  rendered frames are byte-identical to the pre-lights build"
+
+Both capture the WebGL canvas and compare every pixel against a build from before
+the feature landed. Both reported 8924 (workshop) and 8921 (rendered) pixels of
+315000 touched, `maxChannelDelta` 255 — while every piece of lighting state either
+side was identical (`lights: 0`, `sceneLights: 1`, ground `opacity 0.3` at
+`y −0.002`, exposure 1, tone 0, hemi 0.4). The 255 is not alarming: `frameBytes`
+draws the WebGL canvas onto a transparent 2D canvas and reads it back
+**unpremultiplied**, so an antialiased grid-line pixel with alpha near zero has its
+RGB divided by almost nothing. The whole diff was the grid's rim.
+
+The fix was NOT to re-pin the baselines to a newer commit — that would throw away
+the one thing those checks mean, which is *the lighting feature is inert when you
+do not use it*. Instead `frameBytes` in both suites now hides every `GridHelper` in
+the baseline page and the lane page alike before rendering, and restores it after.
+The model, its shadow and the shadow-catching ground stay compared; nothing the
+lights feature can touch is hidden, so no coverage is lost. What is lost is the
+suites' dependence on floor styling they were never testing.
+
+**If you change how the viewport backdrop or the grid looks, these two checks are
+now indifferent to it. If you change the ground, the model or the shadow, they are
+not — and that is the point.** Note this is a different fault from the one still
+open against `lighttool-main.js` check 8: that check builds its baseline from
+`git show HEAD:freyacad/index.html`, so once the lane is committed it compares a
+tree against itself and can no longer fail at all. `lights.js` check 9 does it
+properly — it walks `git rev-list` back to the last commit whose `index.html`
+lacks the feature. Check 8 should learn the same trick.
+
+`gcsSig` also gained `'A'` for an arc. It letters entity types for the solver's
+cache key and had no arc branch, so an arc signed as `'?'` — the same as any type
+the function has never heard of. Nothing in the sketcher makes an arc yet, so this
+was latent rather than live.
