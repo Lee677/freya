@@ -9304,6 +9304,30 @@ const CSG = (function(){
         }
         continue;
       }
+      /* Perpendicular, the same shape as parallel but a quarter turn off, and
+         it has to be here for a reason that only started applying now: a
+         rotatable rectangle is the first thing the APP ITSELF stores a `perp`
+         for. Before that a perp only existed if someone added one on purpose,
+         and a sketch with no solver simply never met one. Without this branch
+         such a rectangle shears into a parallelogram the moment you drag a
+         corner on a build where planegcs.js did not load — measured at 130
+         and 50 degrees where it should read 90. Length is kept and the nearer
+         of the two square directions wins, so the side turns the short way
+         rather than flipping end for end. */
+      if(c.kind==='perp'){
+        let ra=c.a, rb=c.b;
+        if(onSegC(c.b)&&!onSegC(c.a)){ ra=c.b; rb=c.a; }   // the dragged side leads
+        const A=segPts(sk,{ent:ra.ent,seg:ra.seg}), B=segPts(sk,{ent:rb.ent,seg:rb.seg});
+        if(!A||!B)continue;
+        const pv=segPivot(sk,{ent:rb.ent,seg:rb.seg})||B.a;
+        const mv=(pv===B.a)?B.b:B.a;
+        let dx=A.b.x-A.a.x, dy=A.b.y-A.a.y; const AL=Math.hypot(dx,dy)||1; dx/=AL; dy/=AL;
+        const nx=-dy, ny=dx;
+        const L=Math.hypot(mv.x-pv.x,mv.y-pv.y);
+        const sgn=((mv.x-pv.x)*nx+(mv.y-pv.y)*ny)<0?-1:1;
+        mv.x=pv.x+sgn*nx*L; mv.y=pv.y+sgn*ny*L;
+        continue;
+      }
       if(c.kind==='horiz'||c.kind==='vert'){
         /* segAlign swings a free line about the dragged end when the hand
            is on it (the held-end reading otherwise), and spins a coupled
@@ -9348,8 +9372,8 @@ const CSG = (function(){
         // one direction spent — a spin or a swing, whatever entSeg resolves
         if(entSeg(sk,i,c.seg||0))n++;
       }
-      // parallel/equal each cost the following line one freedom
-      else if((c.kind==='paral'||c.kind==='equal')&&c.b&&c.b.ent===i){
+      // parallel, equal and perpendicular each cost the following line one freedom
+      else if((c.kind==='paral'||c.kind==='equal'||c.kind==='perp')&&c.b&&c.b.ent===i){
         const s=segPts(sk,{ent:i,seg:c.b.seg}); if(s)n++;
       }
       // a point held on a plane loses one translation

@@ -3613,3 +3613,40 @@ first fault hides every fault after it.
   moment they are drawn. Same limitation as the point above, same fix.
 - `gcsSig` already letters an arc `'A'` — that landed with the arcs round and
   the note at the end of the previous section records it. Nothing to do.
+
+## Perpendicular on the path with no solver
+
+A rotatable rectangle is the first thing **the app itself** stores a `perp` for.
+Until now a `perp` only existed if someone added one on purpose, so the sketcher's
+fallback — the path taken when `planegcs.js` does not load — had simply never met
+one, and `applyCons` had no branch for it. The result was silent and ugly: drag a
+corner of a three-point rectangle on such a build and it sheared into a
+parallelogram, measured at **130° and 50°** where it should read 90°.
+
+`applyCons` now handles `perp` the same way it handles `paral`, a quarter turn
+off: the follower keeps its length and turns about its pivot, and the nearer of
+the two square directions wins so it turns the short way rather than flipping end
+for end. `consOn` charges a `perp` one freedom against the following line, the way
+it already charged `paral` and `equal`, or a rectangle reads one degree looser
+than it is.
+
+`gcsoff.js` gained three checks that build a rotatable rectangle at 30°, drag a
+corner, and measure all three interior angles plus the corner gaps. **Verified
+able to fail**: with the `applyCons` branch removed the "stays square" check goes
+red at 129.9° / 50.1°; with it, 90.0° / 90.0° / 89.7°.
+
+### Two things the fixture had to get right, and one of them bit
+
+- **A guard that the drag actually happened.** The first run passed the angle
+  checks on a rectangle that had *never moved* — every angle was exactly 90
+  because nothing had touched it. The suite now asserts a side's length changed
+  before it believes the angles mean anything. Without that assertion this would
+  have been another test that cannot fail.
+- **Keep the fixture off the origin.** `pinsOn` treats a point at exactly (0,0)
+  as held by the origin, so a rectangle with a corner there is ground-anchored,
+  `defineState` reads every side as fully defined and the sketcher refuses the
+  drag outright with "Fully defined — change a dimension to move this point".
+  That is the existing no-solver arithmetic being conservative, not a regression:
+  it behaves the same way with the solver absent for any origin-touching shape,
+  and with the solver present `gcsStateOf` answers instead and the drag works.
+  Still worth knowing that the arithmetic over-counts a ring of coincidences.
