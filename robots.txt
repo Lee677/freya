@@ -1,0 +1,6 @@
+# freya.co.nz — everything is public except the scratch page.
+User-agent: *
+Allow: /
+Disallow: /test/
+
+Sitemap: https://freya.co.nz/sitemap.xml
