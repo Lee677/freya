@@ -1064,14 +1064,14 @@ fixture* below.
 
 ### What is in the file
 
-`DEMO_GENIE` is one `{components,mates}` record, ~19 KB inline beside `DEMO_LAMP`, and
-`DEMOS` gains `{key:'genie', kind:'assembly', …}`. 78 features across three components:
+`DEMO_GENIE` is one `{components,mates}` record, ~62 KB inline beside `DEMO_LAMP`, and
+`DEMOS` gains `{key:'genie', kind:'assembly', …}`. 188 features across three components:
 
-| part | features | how it is built |
-|---|---|---|
-| Lamp | 42 | revolve + loft + loft + sweep + revolve, then a lofted cut and a cut |
-| Lid | 2 | one revolved spline profile |
-| Genie | 34 | two ruled lofts, one sweep, one cut |
+| part | features | bodies | how it is built |
+|---|---|---|---|
+| Lamp | 152 | 15 | revolve + loft + loft + **lofted scroll** + revolve + two medallions, a lofted cut and a cut — then fourteen ornament bodies that touch no boolean |
+| Lid | 2 | 1 | one revolved spline profile |
+| Genie | 34 | 1 | two ruled lofts, one sweep, one cut |
 
 **The hull is a loft, not a revolve.** Six horizontal sections on six offset `dplane`s
 based on Top, each a closed spline round a *superellipse* — `|x/a|^n + |y/b|^n = 1` at
@@ -1088,7 +1088,8 @@ another 6° (5° at the lip) and floats about 3 mm further — which composes in
 arc, because `planeFrame` tilts first and *then* offsets along the tilted normal. The
 sections are circles: Ø4.0 buried in the hull, tapering to Ø1.7 at the neck, then
 flaring back out to Ø2.6 at the lip. **A sweep cannot make that**: `MakePipeShell`
-carries one constant profile. The handle *is* a sweep, because it is a constant tube.
+carries one constant profile. The handle used to be a sweep, because it used to be a
+constant tube; it is a run of tilted planes now too — see *the ornament* below.
 
 **The genie is faceted on purpose.** Every section is a hexagon (`polygon`, 6 sides) and
 both of its lofts are `ruled:true`, so the whole figure is flat panels and reads as
@@ -1101,11 +1102,117 @@ a single spline path: two arms for the price of one sweep.
 
 ### Numbers, if you change it and want to know what moved
 
-Volumes from the meshes: **lamp 1349.8, lid 71.9, genie 230.6**. Lamp box
-x −22.79…21.76, y 0…18.39, z ±7. Cold build of the whole assembly, headless with
-swiftshader: **14–17 s** (the old single-solid lamp was 6.7–6.9 s). Both mates solve to
-**0.0 exactly** on load — the components ship in their solved positions, so the first
+Volumes from the meshes: **lamp 1454.3 over fifteen bodies (1393.2 of it the merged
+one), lid 71.9, genie 230.6**. Lamp box x −21.26…21.76, y 0…19.04, z ±7.54 (the foot's
+scallops are the widest thing on it). Cold build of the whole assembly, headless with
+swiftshader: **21.7–23.7 s** measured round `loadDemo('genie')` (it was 14–17 s before
+the ornament; the old single-solid lamp was 6.7–6.9 s). Both mates solve to **0.0
+exactly** on load — the components ship in their solved positions, so the first
 `solveMates` has nothing to do.
+
+### The ornament: a scrolled handle and gold relief (owner's ask, 2026-09)
+
+*"the handle especially is way too simple — look at the photos again, make the handle and
+the body more ornate."* The photograph is a cast brass lamp with teal enamel: a thick
+**scroll** handle that leaves the top of the body as a broad ribbon, sweeps up into a big
+open C and curls inward into a spiral, with a counter-curl where it meets the body; and a
+hull covered in raised gold — a cartouche each side, swirls, beaded rims round the collar
+and the foot, a scalloped foot and small red cabochons.
+
+**The handle is a ribbon lofted up a run of tilted planes**, the spout's trick turned
+sideways. The spout's chain leans on `Top` and turns about `v`, so its normal sweeps the
+XZ plane; the handle's chain leans on **`Right`** and turns about `u`, so its normal stays
+in **XY** and the section's own x runs across the lamp. One anchor plane reaches the first
+station in polar form (`angle` = the bearing, `offset` = the distance), and every plane
+after it stands square to the step that arrives at it — so **the run of planes IS the
+centreline**, and the sums of `angle` and `offset` are the turn and the length of the
+ribbon's path. That is what check 22 reads. A sweep could not do this: `MakePipeShell`
+carries one constant profile, and the whole point is that the ribbon **tapers**, 4.0 × 2.1
+where it leaves the hull down to 0.2 at the tip of the spiral.
+
+It is three lofts, not one:
+
+| piece | stations | merge | why |
+|---|---|---|---|
+| Handle arm | 14 | **true** | the C: buried in the hull's shoulder, up over the top, round the back and under. Fused, so the lamp is one solid where a hand would hold it |
+| Handle scroll | 13 | false | the inward spiral, 476° of turning into a 3.1 mm footprint. Its own body |
+| Handle leaf | 6 | false | the counter-curl at the root, turning the other way |
+
+**Every loft in the handle is `ruled`, and that is load-bearing.** A smooth loft fits one
+B-spline down the whole run; through sections a fifth of a turn apart it swings wide of
+them — measured **1.9 mm past the arm's own first section** — and the solid then crosses
+itself. Nothing complains: `IsDone` is true, the body meshes, the volume looks plausible.
+Then the batched fuse eats a third of the hull, silently (1300 mm³ in, 945 out). `ruled`
+skins section to section and lands exactly on the stations, and the fuse is then clean.
+`--sabotage smooth` in `genie.js` puts the smooth version back and check 21 goes red on
+the volume; that is the whole reason check 21 exists.
+
+**Everything else is a separate body, and that is a price, not a preference.** Fusing a
+tool into the hull costs about **0.3 s per lateral face** that crosses the hull's one
+B-spline surface — measured, not guessed:
+
+| tool | faces crossing the hull | cost |
+|---|---|---|
+| medallion, a 10-sided ellipse | 10 | 1.4 s each side |
+| scrollwork, nine outlines of ~18 segments | ~162 | **40–73 s** each side |
+
+So the medallions are merged (they are the volume-monotonic proof, and a cartouche wants
+to be part of the casting) and everything else is `merge:false`: the scrollwork, six bead
+rings, the foot's scallops, three sets of jewels, the handle's scroll and leaf. Fourteen
+bodies, **zero booleans**, 0.5 s for the lot. A body costs a mesh; a fuse costs a boolean,
+and what bills is the number of booleans (trap 26).
+
+Two rules follow from that, and both are easy to break by accident:
+
+1. **A ring of small things is ONE feature, not N.** `OCK.extrude` builds one prism per
+   closed region of the sketch and `unionOne`s them, and `unionAll` groups by bounding box
+   first — so 26 circles whose boxes do not touch come back as one compound of 26 solids
+   with **no boolean at all**. Every bead ring is one sketch of circles on one datum plane.
+   The corollary is that overlapping outlines in one sketch DO cost a fuse: the first
+   version of the flank relief had five overlapping palmette leaves and two crossing
+   strokes, and paid 2.7 s a side for it. They are laid out bbox-disjoint now (the shell
+   sits where the strokes are not, the strokes are split above and below) and it costs
+   0.05 s.
+2. **Every merge:true feature must come BEFORE every merge:false one.** `applyPending`
+   fuses its tools against *all* of `resultShapes`, and `unionAll` groups by bounding box —
+   so a merge that runs after a separate body has been pushed drags that body into the
+   fuse with it. Interleaving the two flanks (medallion, scrollwork, medallion,
+   scrollwork) cost **24 s** for exactly that reason: the near flank's relief, already a
+   body, was swept into the far medallion's fuse. The tree is ordered merges → cuts →
+   bodies, and the comment in the demo says so.
+
+What the ornament is, body by body: the handle's **scroll** and **leaf**; **gold relief**
+on each flank (four tapering arc-band strokes and a six-lobed scallop shell, on a plane
+0.5 mm outside the skin); **six bead rings** (stem, collar, collar rim, foot, and two on
+the spout — the spout's ride on the spout's own tilted planes, so they sit square to it);
+the **foot's scallops**, fourteen half-buried discs round the rim; and **three sets of red
+cabochons**, three a side on the hull plus one on the spout, coloured through
+`appearance.bodies` by body index. The medallion each side is merged. Gold needs no
+paint at all: the component's colour IS gold and the hull's teal is painted per face, so
+every raised body reads as relief over enamel exactly as the photograph does.
+
+**The enamel's face signature had to be re-pinned.** Merging the medallions re-fits the
+hull's one big surface, and its fitted direction moved from `[-0.346,-0.938,0]` to
+`[-0.141,-0.990,0]` — a dot of 0.977 against `sigMatch`'s 0.985 floor, so the teal fell
+off the hull and the count in check 13 went 5 → 4. The stored signature in
+`appearance.faces[0]` is re-measured off the built model (`$SP/ornate/faces.json` is how,
+and `build.js` writes it in); the other four were untouched. If you change the hull or
+what is fused into it, expect to do this again — and check 13 is what tells you.
+
+**Cost of the whole thing.** The lamp's construction is 14.1 s of the assembly's 22 s:
+2.8 s foot + hull + spout, 2.9 s for the arm's fuse, 0.8 s collar, 2.9 s for the two
+medallions, 2 s for the two bores, 0.5 s for all fourteen bodies. The rest is meshing
+(44 k triangles now, against 24 k), the lid, the genie and the first solve. The budget was
+25 s and it measures **21.7–23.7 s** cold on the headless box.
+
+**Left out on purpose.** The spout's enamel panels edged in gold (the photograph has them;
+they need either a per-face paint the loft cannot give — the spout is one face — or a
+dozen more merged tools at 0.3 s a face). The rope moulding that runs along the real
+handle's spine, for the same reason. A medallion with a raised *rim* rather than a solid
+oval boss: an annular sketch doubles the faces crossing the hull and doubles that 1.4 s.
+And the beads are extruded circles rather than hemispheres — a ring of spheres cannot be
+one feature in this kernel (a revolve turns about one axis), and 26 revolves would be 26
+bodies for a detail 0.3 mm across.
 
 ### Job A: what the plumbing had to learn
 
@@ -1169,35 +1276,67 @@ suites ask for.
   would fix it in one line — **and would break `lights.js` check 9**, which requires the
   old lamp's frames to be byte-identical to a pre-lights build. Do it in the same commit
   as a deliberate rebaseline of those two suites, or not at all.
-- **A self-intersecting swept tube is silently poisonous**, and this cost an hour. The
+- **A self-intersecting merged tool is silently poisonous**, and this cost an hour. The
   first handle looped back so tightly that its return arm ran through its outbound arm.
   `OCK.sweep` was happy — `IsDone`, `MakeSolid` and the volume check all passed, and the
   tube alone measured and drew correctly. But the batched fuse that followed **dropped the
   hull entirely** and reported no error: 1320 mm³ of foot + hull + spout went in and 443
   mm³ of foot + handle came out, `comp.error` null, no page error. If a merged feature
-  makes an earlier one vanish, suspect an invalid *argument*, not the boolean. The handle
-  is now a ring that stops 2.4 mm short of where it started, so it never crosses itself.
-- The build is slow: ~15 s cold. Four lofts, two sweeps, two cuts and a batched fuse over
-  a spline hull. It is a demo you choose rather than the boot default (that is still
-  `pillow`), so it is tolerable, but it is the reason not to add a fifth loft casually.
+  makes an earlier one vanish, suspect an invalid *argument*, not the boolean.
+  Two things are known about it now (2026-09). A **swept tube** on a self-crossing path no
+  longer reproduces it on this build: seven paths were tried against the ornate lamp —
+  crossing, doubling back, retracing itself exactly, closing into a loop, turning tighter
+  than the tube is wide — and every one of them fused correctly, volume rising by the
+  tube's own volume each time. A **coarse smooth loft** reproduces it perfectly: five
+  sections a fifth of a turn apart, skinned smooth, swings 1.9 mm wide of its own end
+  section and the fuse then deletes a third of the hull (1300.5 → 945.2 mm³, no error).
+  That is what `--sabotage smooth` does and what check 21 catches. The rule stands
+  whatever the kernel version does with a given shape: **after every merged feature the
+  volume must go up**, and the suite now asserts it step by step.
+- The build is slow: **~22 s cold**, against ~15 s before the ornament and 6.7 s for the
+  old single-solid lamp. Seven lofts, two cuts, one batched fuse over a spline hull and
+  fifteen meshes. It is a demo you choose rather than the boot default (that is still
+  `pillow`), so it is tolerable — but the budget is 25 s and there is now only about 3 s
+  of room. Anything else that has to be *merged* costs ~0.3 s per face it crosses the hull
+  with; anything that can be its own body costs a mesh and nothing else.
 - The genie is placed with `fixed:true` and a transform rather than a mate to the spout's
   mouth. A coincident mate there would be nicer and would survive the spout being edited;
   it was left out because the demo's contract is "two mates", both of them the lid's.
 
 ### Tests
 
-`$SP/newdemos/genie.js`, 21 checks: the registry (hidden/offered, and the *rendered* menu
+`$SP/newdemos/genie.js`, 23 checks: the registry (hidden/offered, and the *rendered* menu
 opened with a real click), `demoPref`'s mapping, the load (3 components, 2 mates, no
-lights, every component `error===null`), the volumes, both mate errors, **the lid measured
-in world** (the collar's rim plane and the lid's underside plane recovered from the built
-faces through each component's world matrix and compared as planes and axes — not read
-back off the mate), the bore/spigot fit, the look and its cache key, the painted overlay
-counts, the rendered-view round trip, the hidden lamp's shape counts as a canary, and the
-round trip out to a part demo and back.
+lights, every component `error===null`), **the bodies and features each part ships with**
+(15/152, 1/2, 1/34 — losing a body silently is what a bad merge looks like), the volumes,
+both mate errors, **the lid measured in world** (the collar's rim plane and the lid's
+underside plane recovered from the built faces through each component's world matrix and
+compared as planes and axes — not read back off the mate), the bore/spigot fit, the look
+and its cache key, the painted overlay counts, the rendered-view round trip, the hidden
+lamp's shape counts as a canary, the round trip out to a part demo and back, and two that
+came with the ornament:
+
+- **21, every merged feature makes the lamp bigger.** The lamp is rebuilt through
+  `buildPartShapes` at each `merge:true` solid feature and the total mesh volume must rise
+  every time: 427.0 → 1253.6 → 1300.5 → 1371.5 → 1419.1 → 1425.0 → 1432.7 mm³. Seven
+  builds, ~12 s. This is the check that catches a self-intersecting tool, which OCCT
+  answers by deleting a *different* argument without an error.
+- **22, the handle is a tapered scroll.** Read off the run of tilted planes, which is the
+  centreline: the arm turns 281° and the coil 476°, the coil's path is 6.09 mm long and
+  its whole footprint is 3.12 mm, and the coil weighs 6.6 mm³ against the 13.1 a ribbon of
+  its starting section would weigh over that length — so it turns, it coils, and it
+  tapers. Then the coil is built on its own and matched by volume against one of the
+  lamp's shipped bodies, so the check is about the model and not about the numbers in it.
+
+It also writes `$SP/ornate-workshop.png` and `$SP/ornate-rendered.png`, the two pictures
+the ornament is judged by, and reports `summary.coldBuildMs`.
 
 **Verified able to fail.** `--sabotage mate` drops a mate (checks 4 and 7 go red);
 `--sabotage opacity` makes the genie solid (11 and 15); `--sabotage enamel` strips the
-overlays (13); `--sabotage lid` shoves the lid 3 up and 2 across (7, 9 and 10).
+overlays (13); `--sabotage lid` shoves the lid 3 up and 2 across (7, 9 and 10);
+`--sabotage handle` puts the old constant swept tube back in place of the scroll (22);
+`--sabotage smooth` draws the arm the way it was first drawn, five sections and a smooth
+skin, and the fuse eats the hull (21 goes red naming `Handle arm`, 1300.5 → 945.2).
 
 Three of the twenty-one are about the autosave, because `restoreAutosave` had to change:
 `asmSig` must ignore the build's bookkeeping and not the user's edits; an assembly demo left
