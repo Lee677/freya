@@ -1145,7 +1145,7 @@ It is three lofts, not one:
 B-spline down the whole run; through sections a fifth of a turn apart it swings wide of
 them — measured **1.9 mm past the arm's own first section** — and the solid then crosses
 itself. Nothing complains: `IsDone` is true, the body meshes, the volume looks plausible.
-Then the batched fuse eats a third of the hull, silently (1300 mm³ in, 945 out). `ruled`
+Then the batched fuse eats half the hull, silently (1300 mm³ in, 701 out). `ruled`
 skins section to section and lands exactly on the stations, and the fuse is then clean.
 `--sabotage smooth` in `genie.js` puts the smooth version back and check 21 goes red on
 the volume; that is the whole reason check 21 exists.
@@ -1157,7 +1157,7 @@ B-spline surface — measured, not guessed:
 | tool | faces crossing the hull | cost |
 |---|---|---|
 | medallion, an 8-sided ellipse lofted | 8 | 1.2 s each side |
-| scrollwork, nine outlines of ~18 segments | ~162 | **40–73 s** each side |
+| the flank relief as it was first drawn, nine outlines of ~18 segments | ~162 | **40–73 s** each side |
 
 So the medallions are merged (they are the volume-monotonic proof, and a cartouche wants
 to be part of the casting) and everything else is `merge:false`: the relief, six bead
@@ -1195,8 +1195,8 @@ Two rules follow from that, and both are easy to break by accident:
 
 1. **A ring of small things is ONE feature, not N.** `OCK.extrude` builds one prism per
    closed region of the sketch and `unionOne`s them, and `unionAll` groups by bounding box
-   first — so 26 circles whose boxes do not touch come back as one compound of 26 solids
-   with **no boolean at all**. Every bead ring is one sketch of circles on one datum plane.
+   first — so twenty polygons whose boxes do not touch come back as one compound of twenty
+   solids with **no boolean at all**. Every bead ring is one sketch on one datum plane.
    The corollary is that overlapping outlines in one sketch DO cost a fuse: the first
    version of the flank relief had five overlapping palmette leaves and two crossing
    strokes, and paid 2.7 s a side for it. They are laid out bbox-disjoint now (the shell
@@ -1216,7 +1216,7 @@ one sketch, so `regions` reads the inner one as a hole and the boss comes out as
 six tapering arc-band strokes, six florets, two pointed leaves and a six-lobed scallop
 shell; **six bead rings** (stem, collar, collar rim, foot, and two on
 the spout — the spout's ride on the spout's own tilted planes, so they sit square to it);
-the **foot's scallops**, fourteen half-buried discs round the rim; and **three sets of red
+the **foot's scallops**, twelve half-buried lobes round the rim; and **three sets of red
 cabochons**, three a side on the hull plus one on the spout, coloured through
 `appearance.bodies` by body index. The medallion each side is merged. Gold needs no
 paint at all: the component's colour IS gold and the hull's teal is painted per face, so
@@ -1224,17 +1224,18 @@ every raised body reads as relief over enamel exactly as the photograph does.
 
 **The enamel's face signature had to be re-pinned.** Merging the medallions re-fits the
 hull's one big surface, and its fitted direction moved from `[-0.346,-0.938,0]` to
-`[-0.141,-0.990,0]` — a dot of 0.977 against `sigMatch`'s 0.985 floor, so the teal fell
+`[-0.172,-0.985,0]` — a dot of 0.977 against `sigMatch`'s 0.985 floor, so the teal fell
 off the hull and the count in check 13 went 5 → 4. The stored signature in
 `appearance.faces[0]` is re-measured off the built model (`$SP/ornate/faces.json` is how,
 and `build.js` writes it in); the other four were untouched. If you change the hull or
 what is fused into it, expect to do this again — and check 13 is what tells you.
 
-**Cost of the whole thing.** The lamp's construction is 14.1 s of the assembly's 22 s:
-2.8 s foot + hull + spout, 2.9 s for the arm's fuse, 0.8 s collar, 2.9 s for the two
-medallions, 2 s for the two bores, 0.5 s for all fourteen bodies. The rest is meshing
-(44 k triangles now, against 24 k), the lid, the genie and the first solve. The budget was
-25 s and it measures **21.7–23.7 s** cold on the headless box.
+**Cost of the whole thing.** The lamp's construction is 12.7 s of the assembly's 22 s:
+3.2 s foot + hull + spout, **4.6 s for the ONE fuse that carries the arm into the hull**,
+0.8 s collar, 2.4 s for the two medallions, 1 s for the two bores and 0.5 s for all
+eighteen bodies. The rest is meshing (26 k triangles, 2.8 s), the lid, the genie, the
+first solve and the tree. The budget was 25 s and it measures **21.6–23.4 s** cold on the
+headless box, which moves about ±1.5 s with the box's own load.
 
 **Left out on purpose.** The spout's enamel panels edged in gold (the photograph has them;
 they need either a per-face paint the loft cannot give — the spout is one face — or a
@@ -1348,7 +1349,7 @@ suites ask for.
 `$SP/newdemos/genie.js`, 23 checks: the registry (hidden/offered, and the *rendered* menu
 opened with a real click), `demoPref`'s mapping, the load (3 components, 2 mates, no
 lights, every component `error===null`), **the bodies and features each part ships with**
-(15/152, 1/2, 1/34 — losing a body silently is what a bad merge looks like), the volumes,
+(19/176, 1/2, 1/34 — losing a body silently is what a bad merge looks like), the volumes,
 both mate errors, **the lid measured in world** (the collar's rim plane and the lid's
 underside plane recovered from the built faces through each component's world matrix and
 compared as planes and axes — not read back off the mate), the bore/spigot fit, the look
