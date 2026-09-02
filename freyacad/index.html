@@ -1496,6 +1496,11 @@ const CSG = (function(){
      short of full metalness, so the demo lamp's teal stays enamelled while
      its gold turns to plate. Rec.601 luma, threshold set by eye on the lamp. */
   const ENAMEL_LUMA=0.5;
+  /* Roughness, metalness and the environment — and DELIBERATELY nothing else.
+     A material may also carry a LOOK (below): opacity and emissive, which say
+     what the thing is rather than how the room falls on it. Those are the
+     model's, not the view's, so the rendered-view toggle must not touch them
+     or a ghost turns solid the moment someone presses the button. */
   function applyRenderLook(m){
     if(renderedView){
       const c=m.color, enamel=(0.299*c.r+0.587*c.g+0.114*c.b)<ENAMEL_LUMA;
@@ -1507,19 +1512,58 @@ const CSG = (function(){
     }
     m.needsUpdate=true;
   }
+  /* ---- a LOOK: the part of a colour that is not a colour --------------------
+     `{opacity, emissive}`. A colour says what something is painted; a look says
+     whether you can see through it and whether it glows on its own. An assembly
+     has no lights at all (loadDocData resets them, by design), so a body that
+     has to read as spectral rather than as pale plastic can only do it with
+     emissive — there is nothing in the scene to light it.
+
+     It rides in the MATERIAL CACHE KEY rather than being applied to a material
+     after the fact. Two components in the same hex with different looks are two
+     materials, one component's look never leaks into another's, and
+     `eachBodyMaterial` still reaches every one of them — which is what keeps
+     the rendered-view toggle and the lighting sliders working over a ghost.
+
+     Transparency in three.js is a sorting problem, not a colour one:
+     `depthWrite:false` so the body does not occlude what is behind it, and
+     FrontSide so its own back faces do not sort against its front ones — a
+     DoubleSide ghost renders its inside over its outside and the lamp inside
+     it disappears. The mesh's renderOrder (see buildComponent) is the other
+     half: draw the ghost after everything opaque. */
+  function lookKey(look){
+    if(!look)return '';
+    const o=look.opacity==null?1:+look.opacity;
+    const e=look.emissive||'';
+    return (o>=1&&!e)?'':('|o'+o+'|e'+e);
+  }
+  function applyLook(m,look){
+    if(!look)return m;
+    const o=look.opacity==null?1:+look.opacity;
+    if(isFinite(o)&&o<1){
+      m.transparent=true; m.opacity=Math.max(0,o);
+      m.depthWrite=false; m.side=THREE.FrontSide;
+    }
+    if(look.emissive){ m.emissive.set(look.emissive); m.emissiveIntensity=1; }
+    return m;
+  }
   const matCache=new Map();
-  function matFor(hex){
-    if(!hex)return solidMat;
-    let m=matCache.get(hex);
-    if(!m){ m=solidMat.clone(); m.color.set(hex); applyRenderLook(m); matCache.set(hex,m); }
+  function matFor(hex,look){
+    const lk=lookKey(look);
+    if(!hex&&!lk)return solidMat;
+    const key=(hex||'')+lk;
+    let m=matCache.get(key);
+    if(!m){ m=solidMat.clone(); if(hex)m.color.set(hex);
+      applyLook(m,look); applyRenderLook(m); matCache.set(key,m); }
     return m;
   }
   const faceMatCache=new Map();
-  function faceMatFor(hex){
-    let m=faceMatCache.get(hex);
+  function faceMatFor(hex,look){
+    const key=hex+lookKey(look);
+    let m=faceMatCache.get(key);
     if(!m){ m=solidMat.clone(); m.color.set(hex);
       m.polygonOffset=true; m.polygonOffsetFactor=-1.5; m.polygonOffsetUnits=-2;
-      applyRenderLook(m); faceMatCache.set(hex,m); }
+      applyLook(m,look); applyRenderLook(m); faceMatCache.set(key,m); }
     return m;
   }
   /* Exposure is the one number the studio is finally judged by, so it goes
@@ -3289,6 +3333,29 @@ const CSG = (function(){
   /* Gold with teal enamel on the hull, the trumpet foot and the lid's tiers —
      surface colours matched by signature, so they survive a rebuild. */
   const DEMO_LAMP_APP={"part":"#e7bb45","bodies":{},"faces":[{"sig":{"k":"rev","p":[0,11.558,0],"d":[0,1,0],"r":0,"a":740.059},"color":"#17909f"},{"sig":{"k":"rev","p":[0,2.257,0],"d":[0,1,0],"r":0,"a":146.956},"color":"#17909f"},{"sig":{"k":"rev","p":[0,16.278,0],"d":[0,1,0],"r":3.05,"a":26.213},"color":"#17909f"},{"sig":{"k":"rev","p":[0,17.643,0],"d":[0,1,0],"r":2.5,"a":18.509},"color":"#17909f"},{"sig":{"k":"rev","p":[0,18.79,0],"d":[0,1,0],"r":1.74,"a":10.204},"color":"#17909f"}]};
+  /* ---- the magic lamp, as an assembly ----
+     Three parts and two mates, and the reason the demo menu had to learn about
+     assemblies at all. The lamp is drawn the way the object is actually made
+     rather than the way a revolve wants it to be: a round stepped foot IS a
+     revolve and stays one, but the boat-shaped hull is a LOFT through six
+     horizontal sections that grow, reach their widest just below the shoulder
+     and close to the collar, and the spout is a loft up a chain of TILTED
+     planes, each based on the one before it and turned a few more degrees, so
+     the run is a discretised arc. A sweep could not make that spout: it tapers
+     from Ø4 at the hull to Ø1.7 at the neck and then flares back out at the
+     lip, and a sweep carries one constant profile. The handle IS a sweep,
+     because it is a constant tube.
+
+     The lid is its own part, dropped into the collar by a concentric and a
+     coincident mate — pick it up and it comes off, which is what an assembly
+     feature buys you over a lid fused into the same solid.
+
+     The genie is faceted on purpose: every section is a hexagon and both of
+     its lofts are RULED, so it is all flat panels and reads as machined
+     rather than drawn. It carries a LOOK rather than lights, because an
+     assembly has none. */
+  const DEMO_GENIE={"components":[{"id":1,"name":"Lamp","fixed":true,"color":"#e7bb45","t":{"x":0,"y":0,"z":0,"rx":0,"ry":0,"rz":0},"features":[{"suppressed":false,"id":1,"type":"sketch","name":"Foot profile","plane":{"kind":"datum","name":"Front"},"entities":[{"type":"poly","closed":false,"pts":[{"x":0,"y":0},{"x":7,"y":0}]},{"type":"poly","closed":false,"pts":[{"x":7,"y":0},{"x":7,"y":0.55}]},{"type":"poly","spline":true,"tan":[],"closed":false,"pts":[{"x":7,"y":0.55},{"x":6.55,"y":1.35},{"x":5.5,"y":2.35},{"x":4.1,"y":3.15},{"x":3,"y":3.6}]},{"type":"poly","closed":false,"pts":[{"x":3,"y":3.6},{"x":3,"y":4.05}]},{"type":"poly","closed":false,"pts":[{"x":3,"y":4.05},{"x":1.95,"y":4.45}]},{"type":"poly","closed":false,"pts":[{"x":1.95,"y":4.45},{"x":1.95,"y":4.8}]},{"type":"poly","spline":true,"tan":[],"closed":false,"pts":[{"x":1.95,"y":4.8},{"x":1.55,"y":5.35},{"x":1.45,"y":5.9},{"x":1.5,"y":6.4}]},{"type":"poly","closed":false,"pts":[{"x":1.5,"y":6.4},{"x":0,"y":6.4}]},{"type":"poly","closed":false,"pts":[{"x":0,"y":6.4},{"x":0,"y":0}]}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":2,"type":"revolve","name":"Foot & stem","sketchId":1,"angle":360,"axis":"v","operation":"add","merge":true,"segments":64},{"suppressed":false,"id":3,"type":"dplane","name":"Hull plane 1","base":"Top","about":"u","angle":0,"offset":6.2,"flip":false},{"suppressed":false,"id":4,"type":"sketch","name":"Hull section 1","plane":{"kind":"dplane","refId":3},"entities":[{"type":"poly","spline":true,"tan":[],"closed":true,"pts":[{"x":1.65,"y":0},{"x":1.4289,"y":0.5058},{"x":0.86,"y":1.1394},{"x":0.2076,"y":1.5449},{"x":-0.2076,"y":1.5449},{"x":-0.86,"y":1.1394},{"x":-1.4289,"y":0.5058},{"x":-1.65,"y":0},{"x":-1.4289,"y":-0.5058},{"x":-0.86,"y":-1.1394},{"x":-0.2076,"y":-1.5449},{"x":0.2076,"y":-1.5449},{"x":0.86,"y":-1.1394},{"x":1.4289,"y":-0.5058}]}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":5,"type":"dplane","name":"Hull plane 2","base":"Top","about":"u","angle":0,"offset":8,"flip":false},{"suppressed":false,"id":6,"type":"sketch","name":"Hull section 2","plane":{"kind":"dplane","refId":5},"entities":[{"type":"poly","spline":true,"tan":[],"closed":true,"pts":[{"x":6.6,"y":0},{"x":5.7158,"y":1.0431},{"x":3.4399,"y":2.3501},{"x":0.8306,"y":3.1864},{"x":-0.8306,"y":3.1864},{"x":-3.4399,"y":2.3501},{"x":-5.7158,"y":1.0431},{"x":-6.6,"y":0},{"x":-5.7158,"y":-1.0431},{"x":-3.4399,"y":-2.3501},{"x":-0.8306,"y":-3.1864},{"x":0.8306,"y":-3.1864},{"x":3.4399,"y":-2.3501},{"x":5.7158,"y":-1.0431}]}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":7,"type":"dplane","name":"Hull plane 3","base":"Top","about":"u","angle":0,"offset":10,"flip":false},{"suppressed":false,"id":8,"type":"sketch","name":"Hull section 3","plane":{"kind":"dplane","refId":7},"entities":[{"type":"poly","spline":true,"tan":[],"closed":true,"pts":[{"x":11.2,"y":0},{"x":9.6995,"y":1.4857},{"x":5.8375,"y":3.3471},{"x":1.4094,"y":4.5382},{"x":-1.4094,"y":4.5382},{"x":-5.8375,"y":3.3471},{"x":-9.6995,"y":1.4857},{"x":-11.2,"y":0},{"x":-9.6995,"y":-1.4857},{"x":-5.8375,"y":-3.3471},{"x":-1.4094,"y":-4.5382},{"x":1.4094,"y":-4.5382},{"x":5.8375,"y":-3.3471},{"x":9.6995,"y":-1.4857}]}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":9,"type":"dplane","name":"Hull plane 4","base":"Top","about":"u","angle":0,"offset":11.6,"flip":false},{"suppressed":false,"id":10,"type":"sketch","name":"Hull section 4","plane":{"kind":"dplane","refId":9},"entities":[{"type":"poly","spline":true,"tan":[],"closed":true,"pts":[{"x":12.7,"y":0},{"x":10.9985,"y":1.5805},{"x":6.6193,"y":3.5607},{"x":1.5982,"y":4.8279},{"x":-1.5982,"y":4.8279},{"x":-6.6193,"y":3.5607},{"x":-10.9985,"y":1.5805},{"x":-12.7,"y":0},{"x":-10.9985,"y":-1.5805},{"x":-6.6193,"y":-3.5607},{"x":-1.5982,"y":-4.8279},{"x":1.5982,"y":-4.8279},{"x":6.6193,"y":-3.5607},{"x":10.9985,"y":-1.5805}]}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":11,"type":"dplane","name":"Hull plane 5","base":"Top","about":"u","angle":0,"offset":13.4,"flip":false},{"suppressed":false,"id":12,"type":"sketch","name":"Hull section 5","plane":{"kind":"dplane","refId":11},"entities":[{"type":"poly","spline":true,"tan":[],"closed":true,"pts":[{"x":10.2,"y":0},{"x":8.8335,"y":1.3276},{"x":5.3163,"y":2.991},{"x":1.2836,"y":4.0554},{"x":-1.2836,"y":4.0554},{"x":-5.3163,"y":2.991},{"x":-8.8335,"y":1.3276},{"x":-10.2,"y":0},{"x":-8.8335,"y":-1.3276},{"x":-5.3163,"y":-2.991},{"x":-1.2836,"y":-4.0554},{"x":1.2836,"y":-4.0554},{"x":5.3163,"y":-2.991},{"x":8.8335,"y":-1.3276}]}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":13,"type":"dplane","name":"Hull plane 6","base":"Top","about":"u","angle":0,"offset":15.3,"flip":false},{"suppressed":false,"id":14,"type":"sketch","name":"Hull section 6","plane":{"kind":"dplane","refId":13},"entities":[{"type":"poly","spline":true,"tan":[],"closed":true,"pts":[{"x":2.6,"y":0},{"x":2.2517,"y":0.6954},{"x":1.3551,"y":1.5667},{"x":0.3272,"y":2.1243},{"x":-0.3272,"y":2.1243},{"x":-1.3551,"y":1.5667},{"x":-2.2517,"y":0.6954},{"x":-2.6,"y":0},{"x":-2.2517,"y":-0.6954},{"x":-1.3551,"y":-1.5667},{"x":-0.3272,"y":-2.1243},{"x":0.3272,"y":-2.1243},{"x":1.3551,"y":-1.5667},{"x":2.2517,"y":-0.6954}]}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":15,"type":"loft","name":"Hull","profiles":[4,6,8,10,12,14],"ruled":false,"merge":true},{"suppressed":false,"id":16,"type":"dplane","name":"Spout base","base":"Top","about":"u","angle":0,"offset":11,"flip":false},{"suppressed":false,"id":17,"type":"dplane","name":"Spout plane 1","base":"dp:16","about":"v","angle":84,"offset":8.547,"flip":false},{"suppressed":false,"id":18,"type":"sketch","name":"Spout section 1","plane":{"kind":"dplane","refId":17},"entities":[{"type":"circle","c":{"x":0,"y":0},"r":2}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":19,"type":"dplane","name":"Spout plane 2","base":"dp:17","about":"v","angle":-6,"offset":3,"flip":false},{"suppressed":false,"id":20,"type":"sketch","name":"Spout section 2","plane":{"kind":"dplane","refId":19},"entities":[{"type":"circle","c":{"x":0,"y":0},"r":1.6}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":21,"type":"dplane","name":"Spout plane 3","base":"dp:19","about":"v","angle":-6,"offset":3,"flip":false},{"suppressed":false,"id":22,"type":"sketch","name":"Spout section 3","plane":{"kind":"dplane","refId":21},"entities":[{"type":"circle","c":{"x":0,"y":0},"r":1.25}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":23,"type":"dplane","name":"Spout plane 4","base":"dp:21","about":"v","angle":-6,"offset":3,"flip":false},{"suppressed":false,"id":24,"type":"sketch","name":"Spout section 4","plane":{"kind":"dplane","refId":23},"entities":[{"type":"circle","c":{"x":0,"y":0},"r":1}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":25,"type":"dplane","name":"Spout plane 5","base":"dp:23","about":"v","angle":-6,"offset":2.8,"flip":false},{"suppressed":false,"id":26,"type":"sketch","name":"Spout section 5","plane":{"kind":"dplane","refId":25},"entities":[{"type":"circle","c":{"x":0,"y":0},"r":0.85}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":27,"type":"dplane","name":"Spout plane 6","base":"dp:25","about":"v","angle":-5,"offset":1.9,"flip":false},{"suppressed":false,"id":28,"type":"sketch","name":"Spout section 6","plane":{"kind":"dplane","refId":27},"entities":[{"type":"circle","c":{"x":0,"y":0},"r":1.3}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":29,"type":"loft","name":"Spout","profiles":[18,20,22,24,26,28],"ruled":false,"merge":true},{"suppressed":false,"id":30,"type":"sketch","name":"Handle path","plane":{"kind":"datum","name":"Front"},"entities":[{"type":"poly","spline":true,"tan":[],"closed":false,"pts":[{"x":0,"y":11.2},{"x":-5.5,"y":11.6},{"x":-10,"y":12.8},{"x":-13.5,"y":14.5},{"x":-16.32,"y":16.15},{"x":-18.2,"y":17.59},{"x":-20.55,"y":17.29},{"x":-21.99,"y":15.4},{"x":-21.69,"y":13.05},{"x":-19.8,"y":11.61},{"x":-17.45,"y":11.92},{"x":-16.01,"y":13.8}]}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":31,"type":"sketch","name":"Handle profile","plane":{"kind":"datum","name":"Right"},"entities":[{"type":"circle","c":{"x":0,"y":11.2},"r":0.72}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":32,"type":"sweep","name":"Handle","sketchId":31,"pathId":30,"operation":"add","merge":true},{"suppressed":false,"id":33,"type":"sketch","name":"Collar profile","plane":{"kind":"datum","name":"Front"},"entities":[{"type":"poly","closed":false,"pts":[{"x":0,"y":14.9},{"x":3.3,"y":14.9}]},{"type":"poly","closed":false,"pts":[{"x":3.3,"y":14.9},{"x":3.3,"y":15.3}]},{"type":"poly","closed":false,"pts":[{"x":3.3,"y":15.3},{"x":3,"y":15.6}]},{"type":"poly","closed":false,"pts":[{"x":3,"y":15.6},{"x":3,"y":16.55}]},{"type":"poly","closed":false,"pts":[{"x":3,"y":16.55},{"x":0,"y":16.55}]},{"type":"poly","closed":false,"pts":[{"x":0,"y":16.55},{"x":0,"y":14.9}]}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":34,"type":"revolve","name":"Collar","sketchId":33,"angle":360,"axis":"v","operation":"add","merge":true,"segments":64},{"suppressed":false,"id":35,"type":"dplane","name":"Spout mouth clear","base":"dp:27","about":"v","angle":0,"offset":0.6,"flip":false},{"suppressed":false,"id":36,"type":"sketch","name":"Bore section 1","plane":{"kind":"dplane","refId":21},"entities":[{"type":"circle","c":{"x":0,"y":0},"r":0.72}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":37,"type":"sketch","name":"Bore section 2","plane":{"kind":"dplane","refId":25},"entities":[{"type":"circle","c":{"x":0,"y":0},"r":0.5}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":38,"type":"sketch","name":"Bore section 3","plane":{"kind":"dplane","refId":35},"entities":[{"type":"circle","c":{"x":0,"y":0},"r":1}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":39,"type":"loftcut","name":"Spout bore","profiles":[36,37,38],"ruled":false},{"suppressed":false,"id":40,"type":"dplane","name":"Collar bore plane","base":"Top","about":"u","angle":0,"offset":16.7,"flip":false},{"suppressed":false,"id":41,"type":"sketch","name":"Collar bore","plane":{"kind":"dplane","refId":40},"entities":[{"type":"circle","c":{"x":0,"y":0},"r":1.9}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":42,"type":"cut","name":"Collar bore","sketchId":41,"depth":3.5,"through":false,"flip":true}],"appearance":{"part":null,"bodies":{},"faces":[{"sig":{"k":"other","p":[-0.342,10.935,-0.001],"d":[-0.346,-0.938,0],"r":0,"a":476.121},"color":"#17909f"},{"sig":{"k":"rev","p":[0,2.127,0],"d":[0,1,0],"r":0,"a":168.786},"color":"#17909f"},{"sig":{"k":"cyl","p":[0,15.1,0],"d":[0,1,0],"r":3.3,"a":8.29},"color":"#17909f"},{"sig":{"k":"rev","p":[0,15.448,0],"d":[0,1,0],"r":3.3,"a":8.387},"color":"#17909f"},{"sig":{"k":"plane","p":[0,13.15,0],"d":[0,1,0],"r":0,"a":11.319},"color":"#123b44"}]}},{"id":2,"name":"Lid","fixed":false,"color":null,"t":{"x":0,"y":16.55,"z":0,"rx":0,"ry":0,"rz":0},"features":[{"suppressed":false,"id":1,"type":"sketch","name":"Lid profile","plane":{"kind":"datum","name":"Front"},"dims":[],"cons":[],"fillet":0,"chamfer":0,"entities":[{"type":"poly","closed":false,"pts":[{"x":0,"y":-0.9},{"x":1.8,"y":-0.9}]},{"type":"poly","closed":false,"pts":[{"x":1.8,"y":-0.9},{"x":1.8,"y":0}]},{"type":"poly","closed":false,"pts":[{"x":1.8,"y":0},{"x":3.15,"y":0}]},{"type":"poly","closed":false,"pts":[{"x":3.15,"y":0},{"x":3.15,"y":0.4}]},{"type":"poly","closed":false,"pts":[{"x":3.15,"y":0.4},{"x":2.8,"y":0.68}]},{"type":"poly","closed":false,"pts":[{"x":2.8,"y":0.68},{"x":2.8,"y":1.05}]},{"type":"poly","closed":false,"pts":[{"x":2.8,"y":1.05},{"x":2.45,"y":1.32}]},{"type":"poly","spline":true,"tan":[],"closed":false,"pts":[{"x":2.45,"y":1.32},{"x":2.2,"y":1.95},{"x":1.8,"y":2.6},{"x":1.3,"y":3.2},{"x":0.85,"y":3.75}]},{"type":"poly","closed":false,"pts":[{"x":0.85,"y":3.75},{"x":0.98,"y":3.92}]},{"type":"poly","closed":false,"pts":[{"x":0.98,"y":3.92},{"x":0.62,"y":4.25}]},{"type":"poly","closed":false,"pts":[{"x":0.62,"y":4.25},{"x":0.72,"y":4.42}]},{"type":"poly","spline":true,"tan":[],"closed":false,"pts":[{"x":0.72,"y":4.42},{"x":0.45,"y":5.05},{"x":0.2,"y":5.6},{"x":0.06,"y":5.95},{"x":0,"y":6.1}]},{"type":"poly","closed":false,"pts":[{"x":0,"y":6.1},{"x":0,"y":-0.9}]}]},{"suppressed":false,"id":2,"type":"revolve","name":"Lid","sketchId":1,"angle":360,"axis":"v","operation":"add","merge":true,"segments":64}],"appearance":{"part":"#e7bb45","bodies":{},"faces":[{"sig":{"k":"rev","p":[0,0.537,0],"d":[0,1,0],"r":3.15,"a":8.367},"color":"#17909f"},{"sig":{"k":"rev","p":[0,1.182,0],"d":[0,1,0],"r":2.8,"a":7.28},"color":"#17909f"},{"sig":{"k":"rev","p":[0,4.072,0],"d":[0,1,0],"r":0.98,"a":2.451},"color":"#17909f"}]}},{"id":3,"name":"Genie","fixed":true,"color":"#8fd4e8","t":{"x":20.601,"y":16.808,"z":0,"rx":0,"ry":0,"rz":0},"features":[{"suppressed":false,"id":2,"type":"dplane","name":"Body plane 1","base":"Top","about":"u","angle":0,"offset":0,"flip":false},{"suppressed":false,"id":3,"type":"sketch","name":"Body section 1","plane":{"kind":"dplane","refId":2},"entities":[{"type":"polygon","c":{"x":0,"y":0},"r":1,"sides":6,"rot":0}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":4,"type":"dplane","name":"Body plane 2","base":"Top","about":"u","angle":0,"offset":1.4,"flip":false},{"suppressed":false,"id":5,"type":"sketch","name":"Body section 2","plane":{"kind":"dplane","refId":4},"entities":[{"type":"polygon","c":{"x":-0.55,"y":0},"r":1.18,"sides":6,"rot":0}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":6,"type":"dplane","name":"Body plane 3","base":"Top","about":"u","angle":0,"offset":3,"flip":false},{"suppressed":false,"id":7,"type":"sketch","name":"Body section 3","plane":{"kind":"dplane","refId":6},"entities":[{"type":"polygon","c":{"x":-2,"y":0},"r":1.5,"sides":6,"rot":0}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":8,"type":"dplane","name":"Body plane 4","base":"Top","about":"u","angle":0,"offset":4.8,"flip":false},{"suppressed":false,"id":9,"type":"sketch","name":"Body section 4","plane":{"kind":"dplane","refId":8},"entities":[{"type":"polygon","c":{"x":-4.1,"y":0},"r":2.1,"sides":6,"rot":0}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":10,"type":"dplane","name":"Body plane 5","base":"Top","about":"u","angle":0,"offset":6.8,"flip":false},{"suppressed":false,"id":11,"type":"sketch","name":"Body section 5","plane":{"kind":"dplane","refId":10},"entities":[{"type":"polygon","c":{"x":-6.1,"y":0},"r":3,"sides":6,"rot":0}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":12,"type":"dplane","name":"Body plane 6","base":"Top","about":"u","angle":0,"offset":8.8,"flip":false},{"suppressed":false,"id":13,"type":"sketch","name":"Body section 6","plane":{"kind":"dplane","refId":12},"entities":[{"type":"polygon","c":{"x":-7.4,"y":0},"r":3.55,"sides":6,"rot":0}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":14,"type":"dplane","name":"Body plane 7","base":"Top","about":"u","angle":0,"offset":10.6,"flip":false},{"suppressed":false,"id":15,"type":"sketch","name":"Body section 7","plane":{"kind":"dplane","refId":14},"entities":[{"type":"polygon","c":{"x":-7.9,"y":0},"r":2.6,"sides":6,"rot":0}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":16,"type":"dplane","name":"Body plane 8","base":"Top","about":"u","angle":0,"offset":12,"flip":false},{"suppressed":false,"id":17,"type":"sketch","name":"Body section 8","plane":{"kind":"dplane","refId":16},"entities":[{"type":"polygon","c":{"x":-8,"y":0},"r":1.2,"sides":6,"rot":0}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":1,"type":"loft","name":"Plume & torso","profiles":[3,5,7,9,11,13,15,17],"ruled":true,"merge":true},{"suppressed":false,"id":19,"type":"dplane","name":"Head plane 1","base":"Top","about":"u","angle":0,"offset":11.4,"flip":false},{"suppressed":false,"id":20,"type":"sketch","name":"Head section 1","plane":{"kind":"dplane","refId":19},"entities":[{"type":"polygon","c":{"x":-7.95,"y":0},"r":1.1,"sides":6,"rot":0}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":21,"type":"dplane","name":"Head plane 2","base":"Top","about":"u","angle":0,"offset":13,"flip":false},{"suppressed":false,"id":22,"type":"sketch","name":"Head section 2","plane":{"kind":"dplane","refId":21},"entities":[{"type":"polygon","c":{"x":-8.3,"y":0},"r":2.8,"sides":6,"rot":0}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":23,"type":"dplane","name":"Head plane 3","base":"Top","about":"u","angle":0,"offset":14.4,"flip":false},{"suppressed":false,"id":24,"type":"sketch","name":"Head section 3","plane":{"kind":"dplane","refId":23},"entities":[{"type":"polygon","c":{"x":-8.4,"y":0},"r":2.95,"sides":6,"rot":0}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":25,"type":"dplane","name":"Head plane 4","base":"Top","about":"u","angle":0,"offset":15.6,"flip":false},{"suppressed":false,"id":26,"type":"sketch","name":"Head section 4","plane":{"kind":"dplane","refId":25},"entities":[{"type":"polygon","c":{"x":-8.4,"y":0},"r":1.7,"sides":6,"rot":0}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":27,"type":"dplane","name":"Head plane 5","base":"Top","about":"u","angle":0,"offset":16.4,"flip":false},{"suppressed":false,"id":28,"type":"sketch","name":"Head section 5","plane":{"kind":"dplane","refId":27},"entities":[{"type":"polygon","c":{"x":-8.4,"y":0},"r":0.5,"sides":6,"rot":0}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":18,"type":"loft","name":"Head","profiles":[20,22,24,26,28],"ruled":true,"merge":true},{"suppressed":false,"id":29,"type":"sketch","name":"Arms path","plane":{"kind":"datum","name":"Front"},"entities":[{"type":"poly","spline":true,"tan":[],"closed":false,"pts":[{"x":-0.8,"y":6.4},{"x":-3,"y":8.9},{"x":-5.5,"y":10.3},{"x":-7.9,"y":10.6},{"x":-10.3,"y":10.3},{"x":-12.8,"y":8.9},{"x":-15,"y":6.4}]}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":30,"type":"dplane","name":"Arm profile plane","base":"Right","about":"u","angle":0,"offset":-0.8,"flip":false},{"suppressed":false,"id":31,"type":"sketch","name":"Arm profile","plane":{"kind":"dplane","refId":30},"entities":[{"type":"polygon","c":{"x":0,"y":6.4},"r":0.62,"sides":6,"rot":0}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":32,"type":"sweep","name":"Arms","sketchId":31,"pathId":29,"operation":"add","merge":true},{"suppressed":false,"id":33,"type":"sketch","name":"Face","plane":{"kind":"datum","name":"Front"},"entities":[{"type":"circle","c":{"x":-9.65,"y":13.7},"r":0.66},{"type":"circle","c":{"x":-7.15,"y":13.7},"r":0.66},{"type":"rect","a":{"x":-9.6,"y":12.15},"b":{"x":-7.2,"y":12.6}}],"dims":[],"cons":[],"fillet":0,"chamfer":0},{"suppressed":false,"id":34,"type":"cut","name":"Eyes & mouth","sketchId":33,"depth":3,"through":true,"flip":true}],"look":{"opacity":0.34,"emissive":"#2e6f86"}}],"mates":[{"id":1,"kind":"concentric","name":"Lid on the collar","a":{"comp":1,"p":[0,16.55,0],"d":[0,1,0],"r":1.9},"b":{"comp":2,"p":[0,-0.45,0],"d":[0,1,0],"r":1.8}},{"id":2,"kind":"coincident","name":"Lid on the rim","a":{"comp":1,"p":[0,16.55,0],"d":[0,1,0],"r":0},"b":{"comp":2,"p":[0,0,0],"d":[0,-1,0],"r":0}}]};
+
   const DEMO_BENCHY=[{"suppressed": false, "id": 1, "type": "sketch", "name": "Hull plan", "plane": {"kind": "datum", "name": "Top"}, "entities": [{"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -16, "y": 7}, {"x": -9, "y": 9.3}, {"x": 4, "y": 10}, {"x": 17, "y": 8.8}, {"x": 27, "y": 5.6}, {"x": 34, "y": 0}, {"x": 27, "y": -5.6}, {"x": 17, "y": -8.8}, {"x": 4, "y": -10}, {"x": -9, "y": -9.3}, {"x": -16, "y": -7}]}, {"type": "poly", "closed": false, "pts": [{"x": -16, "y": -7}, {"x": -16, "y": 7}]}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0}, {"suppressed": false, "id": 2, "type": "extrude", "name": "Hull", "sketchId": 1, "depth": 13, "symmetric": false, "flip": false, "merge": true}, {"suppressed": false, "id": 3, "type": "sketch", "name": "Keel shape", "plane": {"kind": "datum", "name": "Front"}, "entities": [{"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 6, "y": 0}, {"x": 14, "y": 0.8}, {"x": 22, "y": 3.2}, {"x": 29, "y": 7.5}, {"x": 35, "y": 12.5}]}, {"type": "poly", "closed": false, "pts": [{"x": 35, "y": 12.5}, {"x": 37, "y": 12.5}]}, {"type": "poly", "closed": false, "pts": [{"x": 37, "y": 12.5}, {"x": 37, "y": -3}]}, {"type": "poly", "closed": false, "pts": [{"x": 37, "y": -3}, {"x": 6, "y": -3}]}, {"type": "poly", "closed": false, "pts": [{"x": 6, "y": -3}, {"x": 6, "y": 0}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": -8, "y": 0}, {"x": -12, "y": 0.7}, {"x": -16, "y": 2.8}]}, {"type": "poly", "closed": false, "pts": [{"x": -16, "y": 2.8}, {"x": -18, "y": 2.8}]}, {"type": "poly", "closed": false, "pts": [{"x": -18, "y": 2.8}, {"x": -18, "y": -3}]}, {"type": "poly", "closed": false, "pts": [{"x": -18, "y": -3}, {"x": -8, "y": -3}]}, {"type": "poly", "closed": false, "pts": [{"x": -8, "y": -3}, {"x": -8, "y": 0}]}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0}, {"suppressed": false, "id": 4, "type": "cut", "name": "Hull shaping", "sketchId": 3, "depth": 3, "through": true, "flip": true}, {"suppressed": false, "id": 5, "type": "sketch", "name": "Cockpit", "plane": {"kind": "datum", "name": "Front"}, "entities": [{"type": "poly", "closed": false, "pts": [{"x": -13, "y": 9}, {"x": -4, "y": 9}]}, {"type": "poly", "closed": false, "pts": [{"x": -4, "y": 9}, {"x": -4, "y": 22}]}, {"type": "poly", "closed": false, "pts": [{"x": -4, "y": 22}, {"x": -13, "y": 22}]}, {"type": "poly", "closed": false, "pts": [{"x": -13, "y": 22}, {"x": -13, "y": 9}]}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0}, {"suppressed": false, "id": 6, "type": "cut", "name": "Cockpit well", "sketchId": 5, "depth": 6.8, "through": false, "flip": false}, {"suppressed": false, "id": 7, "type": "mirror", "name": "Cockpit mirror", "plane": "Front", "merge": false, "scope": [6]}, {"suppressed": false, "id": 8, "type": "sketch", "name": "Cabin side", "plane": {"kind": "datum", "name": "Front"}, "entities": [{"type": "poly", "closed": false, "pts": [{"x": 4.5, "y": 10}, {"x": 17.5, "y": 10}]}, {"type": "poly", "closed": false, "pts": [{"x": 17.5, "y": 10}, {"x": 16.6, "y": 23.2}]}, {"type": "poly", "closed": false, "pts": [{"x": 16.6, "y": 23.2}, {"x": 5.3, "y": 24.2}]}, {"type": "poly", "closed": false, "pts": [{"x": 5.3, "y": 24.2}, {"x": 4.5, "y": 10}]}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0}, {"suppressed": false, "id": 9, "type": "extrude", "name": "Cabin", "sketchId": 8, "depth": 14.4, "symmetric": true, "flip": false, "merge": true}, {"suppressed": false, "id": 10, "type": "sketch", "name": "Portholes", "plane": {"kind": "datum", "name": "Front"}, "entities": [{"type": "circle", "c": {"x": 11, "y": 17}, "r": 2.7}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0}, {"suppressed": false, "id": 11, "type": "cut", "name": "Porthole cut", "sketchId": 10, "depth": 40, "through": true, "flip": true}, {"suppressed": false, "id": 12, "type": "sketch", "name": "Funnel profile", "plane": {"kind": "datum", "name": "Front"}, "entities": [{"type": "poly", "closed": false, "pts": [{"x": 0, "y": 8}, {"x": 3.4, "y": 8}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 3.4, "y": 8}, {"x": 2.8, "y": 13}, {"x": 2.2, "y": 24}]}, {"type": "poly", "closed": false, "pts": [{"x": 2.2, "y": 24}, {"x": 2.9, "y": 24.6}]}, {"type": "poly", "closed": false, "pts": [{"x": 2.9, "y": 24.6}, {"x": 2.9, "y": 29.5}]}, {"type": "poly", "spline": true, "tan": [], "closed": false, "pts": [{"x": 2.9, "y": 29.5}, {"x": 2.6, "y": 30.2}, {"x": 1.8, "y": 30.6}]}, {"type": "poly", "closed": false, "pts": [{"x": 1.8, "y": 30.6}, {"x": 0, "y": 30.6}]}, {"type": "poly", "closed": false, "pts": [{"x": 0, "y": 30.6}, {"x": 0, "y": 8}]}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0}, {"suppressed": false, "id": 13, "type": "revolve", "name": "Funnel", "sketchId": 12, "angle": 360, "axis": "v", "operation": "add", "merge": true, "segments": 48}, {"suppressed": false, "id": 14, "type": "sketch", "name": "Hawse hole", "plane": {"kind": "datum", "name": "Front"}, "entities": [{"type": "circle", "c": {"x": 30.5, "y": 10.8}, "r": 1.1}], "dims": [], "cons": [], "fillet": 0, "chamfer": 0}, {"suppressed": false, "id": 15, "type": "cut", "name": "Hawse cut", "sketchId": 14, "depth": 10, "through": true, "flip": true}];
 
   /* One registry drives the Demo menu, the big centre button and the startup
@@ -3298,7 +3365,16 @@ const CSG = (function(){
      sub:'11 features · fillets, chamfers, bolt holes', data:DEMO_PART,
      cam:{t:[0,3.75,0], s:[26,1.05,0.7]},
      hint:'Pillow-block bearing — double-click any feature in the tree to edit it'},
-    {key:'lamp', kind:'part', label:'Magic lamp',
+    {key:'genie', kind:'assembly', label:'Magic lamp',
+     sub:'3 parts · 78 features, a lofted hull and spout, a lid on mates and a genie',
+     data:DEMO_GENIE, cam:{t:[0,15,0], s:[74,1.42,0.5]},
+     hint:'Magic lamp — the hull and spout are lofts, the lid is a separate part on two mates, and the genie is one component with a see-through look'},
+    /* HIDDEN, and deliberately unedited. The single-solid lamp is the fixture
+       three suites pin their numbers and their pixels to, so it stays exactly
+       as it was and stays loadable by key — it is only off the menu. `replaces`
+       names the demo that took its place, which is where a stored preference
+       for this key now lands. */
+    {key:'lamp', kind:'part', hidden:true, replaces:'genie', label:'Magic lamp',
      sub:'10 features · a revolved hull, a stepped lid and two swept tubes', data:DEMO_LAMP,
      cam:{t:[1,11,0], s:[60,1.42,0.36]}, app:DEMO_LAMP_APP,
      hint:'Magic lamp — gold with teal enamel; the spout and handle are swept tubes, so open their path sketches to bend them'},
@@ -3312,6 +3388,28 @@ const CSG = (function(){
 
   function loadDemo(key){
     const d=demoByKey(key||demoPref()||'pillow');
+    /* An ASSEMBLY demo goes in through loadDocData's assembly branch rather
+       than round it: that branch reissues the component ids, remaps the mates
+       onto them and runs the first solve, and a second copy of all three here
+       would be a second thing to keep in step. It clears the part document and
+       switches docMode on the way in, so coming from a part needs nothing
+       extra; the part branch below already clears an assembly coming back. */
+    if(d.kind==='assembly'){
+      loadDocData({type:'assembly',
+        components:JSON.parse(JSON.stringify(d.data.components||[])),
+        mates:JSON.parse(JSON.stringify(d.data.mates||[]))}, d.key);
+      /* loadDocData is a FILE path and files are not demos, so it clears
+         demoActive; a demo is what this is, and the Demo button has to know. */
+      demoActive=d.key; docName=d.key;
+      selectedEdges=[]; hoveredEdge=null; hoveredFace=null; selectedFace=null; drawFaceHl();
+      closeProps(); setMode('model');
+      controls.target.set(d.cam.t[0],d.cam.t[1],d.cam.t[2]);
+      controls.sph.set(d.cam.s[0],d.cam.s[1],d.cam.s[2]);
+      controls.unlock(); controls.update();
+      setHint(d.hint);
+      refreshDemoTgl(); refreshAsmUI();
+      return;
+    }
     if(docMode!=='part'){ clearAsm(); setDocMode('part'); }
     /* Deliberately NOT dropping checkpoints. They are keyed on feature content,
        so one belonging to another model can never match; and reloading the model
@@ -3342,12 +3440,20 @@ const CSG = (function(){
     refreshDemoTgl();
   }
   /* '0' means the user hid the demo and wants it to stay hidden; a key names the
-     model to bring back. '1' is what older builds stored for "show it". */
+     model to bring back. '1' is what older builds stored for "show it".
+
+     A HIDDEN entry is off the menu but still loadable by key — that is how a
+     superseded demo stays in the file as a fixture for the suites that pin it,
+     without being offered to anyone. Its `replaces` names the demo that took
+     its place, and a stored preference pointing at it lands there instead: a
+     visitor who last chose the old lamp gets the new one on the next visit
+     rather than the ghost of what they picked. */
   function bootDemo(){ loadDemo(demoPref()); }
   function demoPref(){ try{
       const v=localStorage.getItem('fcad-demo');
       if(v==='0')return null;
-      if(v&&DEMOS.some(d=>d.key===v))return v;
+      const d=v&&DEMOS.find(x=>x.key===v);
+      if(d)return (d.hidden&&d.replaces&&DEMOS.some(x=>x.key===d.replaces))?d.replaces:d.key;
       return 'pillow';
     }catch(_){ return 'pillow'; } }
   function refreshDemoTgl(){ const b=$('btn-demo-tgl');
@@ -3371,10 +3477,10 @@ const CSG = (function(){
     m.innerHTML='';
     const sect=document.createElement('div');
     sect.className='menu-sect'; sect.textContent='Demo models'; m.appendChild(sect);
-    DEMOS.forEach(d=>{
+    DEMOS.filter(d=>!d.hidden).forEach(d=>{
       const btn=document.createElement('button');
       btn.className=(demoActive===d.key?'on':'');
-      btn.title='Opens as a part';
+      btn.title=d.kind==='assembly'?'Opens as an assembly':'Opens as a part';
       btn.innerHTML='<span class="dm-t">'+d.label+
         '</span><span class="dm-sub">'+d.sub+'</span>';
       btn.addEventListener('click',()=>{ m.classList.remove('open'); pickDemo(d.key); });
@@ -11720,6 +11826,23 @@ const CSG = (function(){
   }
   window.addEventListener('pagehide',autosaveNow);
   document.addEventListener('visibilitychange',()=>{ if(document.hidden)autosaveNow(); });
+  /* An assembly reduced to what a person could have changed about it. Derived
+     state is dropped: `error` and `_previewGeoms` are hung on a feature by the
+     build, `frame` is a sketch's resolved plane (and holds Vector3s, not
+     numbers), and component ids are reissued on every load. Transforms round to
+     a micron, which is what the solver itself rounds to. */
+  function asmSig(a){
+    const num=v=>Math.round((+v||0)*1e6)/1e6;
+    const t=o=>['x','y','z','rx','ry','rz'].map(k=>num((o||{})[k]));
+    const feat=f=>{ const o={};
+      for(const k in f) if(k!=='error'&&k!=='frame'&&k[0]!=='_') o[k]=f[k];
+      return o; };
+    const end=e=>e?(e.datum?['d',e.datum]:['c',e.p,e.d,e.r||0]):null;
+    return JSON.stringify({
+      c:(a.components||[]).map(c=>[c.name||'',!!c.fixed,t(c.t),
+        (c.features||[]).map(feat),c.color||null,c.appearance||null,c.look||null]),
+      m:(a.mates||[]).map(m=>[m.kind,end(m.a),end(m.b)])});
+  }
   function restoreAutosave(){
     let p=null;
     try{ p=JSON.parse(localStorage.getItem(AUTOSAVE_KEY)||'null'); }catch(_){ }
@@ -11729,13 +11852,18 @@ const CSG = (function(){
        the message. An edited demo is their work, and comes back still knowing
        which demo it grew from. */
     if(p.demo){
-      /* A part demo compares exactly. Assembly demos are gone, but an old
-         session may still have stored one — its form cannot be compared, so
-         it boots fresh rather than restoring a pristine demo as "your work". */
-      if(p.mode==='asm')return false;
       try{
         const d=demoByKey(p.demo);
-        if(d&&d.data&&JSON.stringify(d.data)===JSON.stringify(p.data))return false;
+        if(p.mode==='asm'){
+          /* An assembly cannot be compared byte for byte the way a part list
+             can: the loader reissues the component ids, the solver rewrites the
+             transforms and the build hangs an `error` and a resolved `frame` on
+             what it touched. So compare what the USER could have changed —
+             the feature lists, the placements and the relations — and leave the
+             bookkeeping out of it. */
+          if(d&&d.kind==='assembly'&&d.data&&asmSig(d.data)===asmSig(p.data))return false;
+        }
+        else if(d&&d.data&&JSON.stringify(d.data)===JSON.stringify(p.data))return false;
       }catch(_){ }
     }
     try{
@@ -14483,19 +14611,39 @@ const CSG = (function(){
       m.rotation.set(comp.t.rx*D2R,comp.t.ry*D2R,comp.t.rz*D2R);
     }
   }
+  /* Selection is drawn by lighting the body up, which means writing over the
+     material's emissive — so a component whose LOOK glows on its own has to
+     get that glow back when it is deselected, or picking it once would put it
+     out for good. */
   function refreshAsmSel(){
     asm.components.forEach((c2,i)=>{
-      for(const m of asmMeshes[i]||[]) m.material.emissive.setHex(c2.id===asmSel?0x274a12:0x000000);
+      const glow=(c2.look&&c2.look.emissive)||0x000000;
+      for(const m of asmMeshes[i]||[]) m.material.emissive.set(c2.id===asmSel?0x274a12:glow);
     });
+  }
+  /* A component may carry, beside its `color`:
+       appearance  the same {part,bodies,faces} record a part has, painted by
+                   the shared face painter, so a part keeps its enamel here
+       look        {opacity,emissive} — see matFor
+     Both are plain JSON and both are optional; without them a component builds
+     exactly as it always did. */
+  function compTranslucent(c){
+    const o=c&&c.look&&c.look.opacity;
+    return o!=null&&isFinite(+o)&&+o<1;
   }
   function buildComponent(comp){
     const {shapes,errs}=buildPartShapes(comp.features);
     comp.error=errs.length?errs.join('; '):null;
     const group=[];
+    const mat=hex=>matFor(hex,comp.look), fmat=hex=>faceMatFor(hex,comp.look);
+    const ghost=compTranslucent(comp);
     for(const s of shapes){
       let g; try{ g=OCK.mesh(s); }catch(_){ continue; }
-      const mesh=new THREE.Mesh(g,matFor(comp.color));
-      mesh.castShadow=true;mesh.receiveShadow=true;
+      const mesh=new THREE.Mesh(g,mat(comp.color));
+      mesh.castShadow=!ghost;mesh.receiveShadow=true;
+      /* A see-through body drawn in tree order sorts against whatever happens
+         to be in the list before it; drawn last it sorts against nothing. */
+      if(ghost)mesh.renderOrder=10;
       let cpolys=[]; try{ cpolys=OCK.edgeMesh(s); }catch(_){ }
       if(!cpolys.length)cpolys=featureEdges(g).map(e2=>[e2.a,e2.b]);
       const el=new THREE.LineSegments(edgeOverlayGeom(cpolys),edgeMat.clone());
@@ -14506,6 +14654,7 @@ const CSG = (function(){
       scene.add(mesh);group.push(mesh);
     }
     asmMeshes.push(group);asmShapes.push(shapes);
+    if(comp.appearance)paintBodies(group, normApp(comp.appearance), comp.color, mat, fmat);
     applyCompTransform(comp);
     syncZoomRange();
   }
@@ -14513,7 +14662,10 @@ const CSG = (function(){
     const i=asm.components.indexOf(comp); if(i<0)return;
     cancelMate(true);            // its highlights hang off the meshes about to go
     dropMatesFor(comp);          // a relation to a part that's gone is no relation
-    for(const m of asmMeshes[i]){scene.remove(m);m.geometry.dispose();}
+    for(const m of asmMeshes[i]){ scene.remove(m); m.geometry.dispose();
+      /* the surface-colour overlays are children, and their geometry is a copy
+         of the face's triangles rather than a view of the body's */
+      for(const c of m.children) if(c.userData&&c.userData.faceCol)c.geometry.dispose(); }
     for(const s of asmShapes[i]){try{s.delete();}catch(_){}}
     asm.components.splice(i,1);asmMeshes.splice(i,1);asmShapes.splice(i,1);
     if(asmSel===comp.id)asmSel=null;
@@ -14887,8 +15039,8 @@ const CSG = (function(){
     bg.computeVertexNormals();
     return bg;
   }
-  function faceOverlay(g,ids,hex){
-    const mm=new THREE.Mesh(faceTriGeom(g,ids),faceMatFor(hex));
+  function faceOverlay(g,ids,hex,fmat){
+    const mm=new THREE.Mesh(faceTriGeom(g,ids),(fmat||faceMatFor)(hex));
     mm.userData.faceCol=true; mm.castShadow=false;
     return mm;
   }
@@ -15017,30 +15169,54 @@ const CSG = (function(){
     setHint('Axis placed through the face’s own axis — Done keeps it');
   }
   let appearanceRev=1;
-  function applyAppearance(){
-    resultMeshes.forEach((m,i)=>{
+  /* ---- the face painter, for any list of bodies ---------------------------
+     One implementation, two callers. The open part hands it `resultMeshes` and
+     the document's own `appearance`; a component hands it its own meshes and
+     its own appearance record, so enamel painted on a part survives being
+     dropped into an assembly instead of collapsing to the one flat colour a
+     component used to get.
+
+     `base` is what a body wears when the appearance names no colour for it —
+     null in a part (which then falls through to solidMat), the component's
+     `color` in an assembly, so `comp.color` keeps working exactly as it did and
+     `appearance.part` simply outranks it. `mat`/`fmat` are passed in rather
+     than called directly because a component may also carry a LOOK, and the
+     look belongs in the material's cache key.
+
+     Returns how many stored face colours actually found a face — the honest
+     answer to "did the enamel land", which a test can read. */
+  function paintBodies(meshes, app, base, mat, fmat){
+    mat=mat||matFor; fmat=fmat||faceMatFor;
+    meshes.forEach((m,i)=>{
       for(const c of [...m.children]) if(c.userData&&c.userData.faceCol){ m.remove(c); c.geometry.dispose(); }
-      m.material=matFor(bodyColorOf(i));
+      m.material=mat((app&&app.bodies&&app.bodies[i])||(app&&app.part)||base||null);
       for(const c of m.children) if(c.isLineSegments)c.visible=!renderedView;
-      m.userData.appRev=appearanceRev;
     });
-    if(!appearance.faces.length)return;
+    const want=(app&&app.faces)||[];
+    if(!want.length)return 0;
     /* every region of every body, signed once, then each stored colour takes
        its best match (nearest centroid among the matches) */
     const cand=[];
-    for(const m of resultMeshes){
+    for(const m of meshes){
       const g=m.geometry;
       for(const reg of regionsOf(g))cand.push({m,g,reg,sig:faceSig(g,reg.seed)});
     }
-    for(const fc of appearance.faces){
+    let hits=0;
+    for(const fc of want){
       let best=null,bd=Infinity;
       for(const c of cand){
         if(!sigMatch(c.sig,fc.sig))continue;
         const dp=Math.hypot(c.sig.p[0]-fc.sig.p[0],c.sig.p[1]-fc.sig.p[1],c.sig.p[2]-fc.sig.p[2]);
         if(dp<bd){bd=dp;best=c;}
       }
-      if(best)best.m.add(faceOverlay(best.g,best.reg.ids,fc.color));
+      if(best){ best.m.add(faceOverlay(best.g,best.reg.ids,fc.color,fmat)); hits++; }
     }
+    return hits;
+  }
+  function applyAppearance(){
+    const n=paintBodies(resultMeshes, appearance, null, matFor, faceMatFor);
+    resultMeshes.forEach(m=>{ m.userData.appRev=appearanceRev; });
+    return n;
   }
   function bumpAppearance(){
     appearanceRev++;
@@ -15625,7 +15801,9 @@ const CSG = (function(){
       asmMeshes.flat().forEach(m=>{m.updateMatrixWorld(true);
         geoms.push(m.geometry.clone().applyMatrix4(m.matrixWorld));
         const comp=asm.components.find(c=>c.id===m.userData.compId);
-        cols.push((comp&&comp.color)||null);});
+        /* same rule the viewport paints by: a component's own appearance
+           outranks its plain colour */
+        cols.push((comp&&((comp.appearance&&comp.appearance.part)||comp.color))||null);});
       return {geoms,cols};
     }
     return {geoms:resultMeshes.map(m=>{m.updateMatrixWorld(true);
@@ -18554,6 +18732,11 @@ const CSG = (function(){
     get draw(){ return draw; }, addDrawView, buildView, renderSheet, fitScale,
     sheetSVGText, removeDrawView, rebuildDrawViews, sheetSize, addDrawView, buildView,
     get draw(){ return draw; }, renderSheet, addAllCentreMarks, toSheet, fitScale, loadDemo,
+    demoPref, get demoActive(){ return demoActive; }, asmSig,
+    /* the registry as the menu sees it: key, kind and whether it is offered */
+    get demos(){ return DEMOS.map(d=>({key:d.key, kind:d.kind, label:d.label, sub:d.sub,
+      hidden:!!d.hidden, replaces:d.replaces||null})); },
+    matFor, faceMatFor, paintBodies,
     startMate, cancelMate, fitFace, faceRegion, applyMate, applyCompTransform,
     faceAt, datumAt, edgeCircAt, mateEndAt, chainSegRun, fitEdgeCircle, fitEdgeCircleAround,
     pickEdge, get pendingAxisPick(){ return pendingAxisPick; }, sketchBox,

@@ -76,7 +76,10 @@ re-apply, don't "fix" it into guessing). A part with any colour saves as
 `{type:'part',appearance,features}`; a bare array still means an uncoloured part, and every
 part-file reader goes through `partFileData()`. Body colours key by resultShapes INDEX (bodies
 mostly append; a deleted body-creating feature can shift them — known, accepted).
-`comp.color` tints assembly components (`matFor` shared material cache), drawing shaded
+`comp.color` tints assembly components (`matFor` shared material cache), and a component may
+now ALSO carry `appearance` (the same `{part,bodies,faces}` record, painted by the shared
+`paintBodies`) and `look:{opacity,emissive}` (which rides in the material cache key) — see
+*The Magic lamp as an assembly*. Drawing shaded
 views tint per body via `drawSourceGeoms()` `{geoms,cols}` and `tri.c`, and `drawViewsStale`
 re-projects the sheet on entry after colour edits. `setRenderedView` (btn-render, persisted
 `fcad-render`) is a material/edge-visibility swap only. **The document library** (owner's
@@ -1050,6 +1053,165 @@ the spout's cap), and the circular edge it clicks is still a **48**-chord circle
 Cold build of the reshaped lamp: **6.7–6.9 s** headless (it was 4.2 s), of which
 the construction is only ~1.6 s — the rest is the one batched fuse of hull +
 spout + handle + lid and the mesh that follows it.
+
+## The Magic lamp as an assembly (the genie demo)
+
+The lamp demo was one merged solid: a revolved hull, two swept tubes and a revolved
+lid, all fused together. It is now **three parts and two mates**, and it is drawn the
+way the object on the owner's reference photograph is actually made rather than the
+way a revolve wants it to be. The old model has not been touched — see *the hidden
+fixture* below.
+
+### What is in the file
+
+`DEMO_GENIE` is one `{components,mates}` record, ~19 KB inline beside `DEMO_LAMP`, and
+`DEMOS` gains `{key:'genie', kind:'assembly', …}`. 78 features across three components:
+
+| part | features | how it is built |
+|---|---|---|
+| Lamp | 42 | revolve + loft + loft + sweep + revolve, then a lofted cut and a cut |
+| Lid | 2 | one revolved spline profile |
+| Genie | 34 | two ruled lofts, one sweep, one cut |
+
+**The hull is a loft, not a revolve.** Six horizontal sections on six offset `dplane`s
+based on Top, each a closed spline round a *superellipse* — `|x/a|^n + |y/b|^n = 1` at
+n = 1.45, fourteen points. n < 2 is what pinches the ends into a boat's lens; n = 2 is
+an ellipse and the hull reads as a barrel. The sections grow from 1.65 × 1.60 at the
+stem to 12.70 × 5.00 at the shoulder (y = 11.6) and close to 2.60 × 2.20 under the
+collar. Smooth, not ruled.
+
+**The spout is a loft up a chain of tilted planes**, and this is the case lofts were
+built for. `Spout base` stands off Top at y = 11; `Spout plane 1` is based on it, turned
+**84°** about the base's `v` so its normal points out along +X and 6° up, and floated
+8.547 along that new normal. Every plane after it is based on the one before, turns
+another 6° (5° at the lip) and floats about 3 mm further — which composes into a discretised
+arc, because `planeFrame` tilts first and *then* offsets along the tilted normal. The
+sections are circles: Ø4.0 buried in the hull, tapering to Ø1.7 at the neck, then
+flaring back out to Ø2.6 at the lip. **A sweep cannot make that**: `MakePipeShell`
+carries one constant profile. The handle *is* a sweep, because it is a constant tube.
+
+**The genie is faceted on purpose.** Every section is a hexagon (`polygon`, 6 sides) and
+both of its lofts are `ruled:true`, so the whole figure is flat panels and reads as
+machined rather than drawn — which is the joke the owner asked for ("AGI genie"). The
+plume starts in the spout's mouth, leans back over the lamp, swells into a chest and
+finishes in a head with **eye sockets and a mouth cut clean through** (one `cut` with
+`through:true` on a Front-plane sketch holding two circles and a rectangle — one sketch,
+one boolean). The arms are ONE hexagonal bar swept hand-to-hand across the shoulders on
+a single spline path: two arms for the price of one sweep.
+
+### Numbers, if you change it and want to know what moved
+
+Volumes from the meshes: **lamp 1349.8, lid 71.9, genie 230.6**. Lamp box
+x −22.79…21.76, y 0…18.39, z ±7. Cold build of the whole assembly, headless with
+swiftshader: **14–17 s** (the old single-solid lamp was 6.7–6.9 s). Both mates solve to
+**0.0 exactly** on load — the components ship in their solved positions, so the first
+`solveMates` has nothing to do.
+
+### Job A: what the plumbing had to learn
+
+1. **`loadDemo` handles `kind:'assembly'`** by going *through* `loadDocData`'s assembly
+   branch rather than round it: that branch reissues component ids, remaps the mates onto
+   them and runs the first solve, and a second copy of all three in `loadDemo` would be a
+   second thing to keep in step. It clears the part document on the way in, and the part
+   branch already clears an assembly coming back, so both directions work. `loadDocData`
+   is a *file* path and files are not demos, so it sets `demoActive=false`; `loadDemo`
+   sets it again afterwards, or the Demo button goes dark on its own demo.
+2. **Hidden demos.** `{hidden:true}` keeps an entry loadable by key but off the menu
+   (`openDemoMenu` filters), and `replaces` names the demo that took its place —
+   `demoPref()` maps a stored preference for a hidden key to that heir, so a visitor
+   whose last pick was the old lamp gets the new one rather than a ghost.
+3. **Per-component appearance.** The face painter is now `paintBodies(meshes, app, base,
+   mat, fmat)` and `applyAppearance()` is a one-line caller of it. `buildComponent` is the
+   other caller, so `comp.appearance` — the same `{part,bodies,faces}` record a part has —
+   paints a component face by face. `base` is what a body wears when the appearance names
+   no colour: null in a part, `comp.color` in an assembly, so `comp.color` behaves exactly
+   as it did and `appearance.part` simply outranks it. The demo exercises **both** routes
+   on purpose: the lamp carries `comp.color` and no `appearance.part`, the lid carries
+   `appearance.part` and `color:null`.
+4. **Per-component look.** `comp.look = {opacity, emissive}` goes into the **material
+   cache key** (`matFor(hex, look)` / `faceMatFor(hex, look)` via `lookKey`), not onto a
+   material after the fact — so two components in the same hex with different looks are
+   two materials, `eachBodyMaterial` still reaches both, and the rendered-view toggle and
+   the lighting sliders keep working over a ghost. `applyRenderLook` writes roughness,
+   metalness and envMapIntensity and **nothing else**, which is what keeps a ghost a ghost
+   across the toggle; there is now a comment there saying so.
+
+Three things about a translucent component that are not obvious:
+
+- `depthWrite:false` **and** `side:FrontSide`. A DoubleSide ghost sorts its own back faces
+  against its front ones and the lamp inside it disappears.
+- `mesh.renderOrder = 10` so it is drawn after everything opaque. Without it the ghost
+  sorts against whatever happens to precede it in the component list.
+- `refreshAsmSel` writes the selection highlight into `material.emissive`. It now restores
+  `comp.look.emissive` on deselect instead of 0 — otherwise picking the genie once would
+  put its glow out for good.
+
+### The hidden fixture
+
+`DEMO_LAMP` and `DEMO_LAMP_APP` are **byte-identical** to what they were, and the entry is
+`{key:'lamp', hidden:true, replaces:'genie', …unchanged…}`. That is deliberate and it is
+load-bearing: `brepsel.js` pins 47 real edges / 21 faces / 2 planes / 14765 triangles /
+48-of-48 whole-edge on that exact solid, and `lights.js` check 9 and `lighttool-main`
+compare the lamp's rendered and workshop **frames byte for byte against a pre-lights
+build**. Anything that changes that model, or how its painted faces shade, breaks a
+pixel contract in another suite. `loadDemo('lamp')` still works, which is all those
+suites ask for.
+
+### What is still wrong
+
+- **A loft through closed splines is ONE face.** The whole hull skin signs as a single
+  `k:'other'` surface of 476 mm², so the enamel can paint it as one panel and cannot paint
+  the several the photograph has. If per-panel colour on a lofted body ever matters, the
+  answer is more features (separate lofts, or cut grooves), not a cleverer painter.
+- **Painted faces shade flat.** `faceTriGeom` un-indexes the face's triangles and calls
+  `computeVertexNormals()`, which gives flat normals, so the teal hull and foot look
+  faceted next to the smooth gold beside them. Copying the source geometry's normals
+  would fix it in one line — **and would break `lights.js` check 9**, which requires the
+  old lamp's frames to be byte-identical to a pre-lights build. Do it in the same commit
+  as a deliberate rebaseline of those two suites, or not at all.
+- **A self-intersecting swept tube is silently poisonous**, and this cost an hour. The
+  first handle looped back so tightly that its return arm ran through its outbound arm.
+  `OCK.sweep` was happy — `IsDone`, `MakeSolid` and the volume check all passed, and the
+  tube alone measured and drew correctly. But the batched fuse that followed **dropped the
+  hull entirely** and reported no error: 1320 mm³ of foot + hull + spout went in and 443
+  mm³ of foot + handle came out, `comp.error` null, no page error. If a merged feature
+  makes an earlier one vanish, suspect an invalid *argument*, not the boolean. The handle
+  is now a ring that stops 2.4 mm short of where it started, so it never crosses itself.
+- The build is slow: ~15 s cold. Four lofts, two sweeps, two cuts and a batched fuse over
+  a spline hull. It is a demo you choose rather than the boot default (that is still
+  `pillow`), so it is tolerable, but it is the reason not to add a fifth loft casually.
+- The genie is placed with `fixed:true` and a transform rather than a mate to the spout's
+  mouth. A coincident mate there would be nicer and would survive the spout being edited;
+  it was left out because the demo's contract is "two mates", both of them the lid's.
+
+### Tests
+
+`$SP/newdemos/genie.js`, 21 checks: the registry (hidden/offered, and the *rendered* menu
+opened with a real click), `demoPref`'s mapping, the load (3 components, 2 mates, no
+lights, every component `error===null`), the volumes, both mate errors, **the lid measured
+in world** (the collar's rim plane and the lid's underside plane recovered from the built
+faces through each component's world matrix and compared as planes and axes — not read
+back off the mate), the bore/spigot fit, the look and its cache key, the painted overlay
+counts, the rendered-view round trip, the hidden lamp's shape counts as a canary, and the
+round trip out to a part demo and back.
+
+**Verified able to fail.** `--sabotage mate` drops a mate (checks 4 and 7 go red);
+`--sabotage opacity` makes the genie solid (11 and 15); `--sabotage enamel` strips the
+overlays (13); `--sabotage lid` shoves the lid 3 up and 2 across (7, 9 and 10).
+
+Three of the twenty-one are about the autosave, because `restoreAutosave` had to change:
+`asmSig` must ignore the build's bookkeeping and not the user's edits; an assembly demo left
+untouched must boot as the demo rather than as "restored your unsaved work"; and an EDITED
+one must come back, with its look and its enamel. The last of those is not optional — without
+it the middle one would pass on a `restoreAutosave` that simply never restores an assembly,
+which is exactly what the code used to do.
+
+One thing that is NOT this lane's fault, found while running the battery: **`boltnut.js` is
+flaky**, about one run in three, on unmodified HEAD as well as on this branch. It fails on
+its second click ("That is not a flat face"), which is a screen-coordinate click taken 300 ms
+after `controls.update()` — under swiftshader that is a handful of frames and the camera can
+still be moving when the point is projected. Re-running passes and the output then matches
+`$SP/bat-boltnut.json` exactly. A longer settle before that click would fix it.
 
 ## Loft
 

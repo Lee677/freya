@@ -127,7 +127,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--line-soft);
 <main>
 <h1>freyacad</h1>
 <p class="tagline">Parametric solid modelling that runs entirely in your browser.</p>
-<p class="stamp" id="stamp">Manual — last revised 28 August 2026</p>
+<p class="stamp" id="stamp">Manual — last revised 2 September 2026</p>
 
 <h2 id="start">Start here</h2>
 <p class="lede">freyacad is a small CAD program with a real geometry kernel. You sketch on a
@@ -173,15 +173,23 @@ and stops.</p>
 of you, feature by feature, so you can watch the tree fill in and see what a normal
 modelling session looks like. Then open the tree items and see how each was made. Whichever
 you pick is the one that comes back the next time you launch. <b>Hide the demo</b> at the
-foot of the menu starts you empty instead.</p>
+foot of the menu starts you empty instead. One of them opens as a whole
+<a href="#assembly">assembly</a> rather than as a single part; the menu says which.</p>
 <table>
   <tr><th>Demo</th><th>What it shows</th></tr>
   <tr><td><b>Pillow-block bearing</b></td><td>Eleven features. The everyday vocabulary —
     sketch, extrude, cut, fillet, chamfer, bolt holes. Start here.</td></tr>
-  <tr><td><b>Magic lamp</b></td><td>Eight features: the body, lid and finial are one revolved
-    spline profile, and the spout and handle are <b>swept tubes</b> — a circle profile
-    following a curved path sketch. Open <em>Spout path</em> or <em>Handle path</em> and drag
-    a control point to bend them.</td></tr>
+  <tr><td><b>Magic lamp</b></td><td>An <b>assembly</b>: three parts, 78 features and two
+    mates. The round foot is a revolve, because it really is round — but the boat-shaped
+    hull is a <a href="#loft"><b>loft</b></a> through six horizontal sections, and the spout
+    is a loft up a run of <a href="#offsetplane"><b>tilted planes</b></a>, each built on the
+    plane before it and turned a few more degrees, so the sections follow the spout's rising
+    arc. That spout tapers and then flares again at the lip, which is the shape a sweep
+    cannot make. The handle <em>is</em> a <a href="#sweep">sweep</a>, because it is a
+    constant tube. The <b>lid is a separate part</b>, held on the collar by a concentric and
+    a coincident <a href="#assembly">mate</a> — lift it off and put it back. The genie is
+    a third part, and it is see-through because a component can carry a <b>look</b> as well
+    as a colour.</td></tr>
 </table>
 
 <h3 id="speed">If a model feels slow</h3>
@@ -1425,6 +1433,19 @@ and nothing moves, rather than half-applied.</p>
 <p>Mates are saved with the assembly. Reopening the file replays the relations and solves the
 positions from them, so a mated assembly comes back mated.</p>
 
+<h3>How a component looks</h3>
+<p>A component keeps its own colours. Give it one colour for the whole part, or bring in a
+part that was already painted <a href="#appearance">face by face</a> and it arrives with its
+enamel intact — the surface colours travel with the component, not only the body colour.
+The Magic lamp demo's lamp and lid are painted that way.</p>
+<p>A component can also carry a <b>look</b>: how see-through it is, and whether it glows on
+its own. That is what makes the genie in that demo a ghost rather than a solid pale blue
+part. It matters more here than it would in a part document, because <b>an assembly has no
+lights</b> — the lamps you place belong to a part and are left behind at the door — so a
+body that has to read as spectral has to bring its own glow. Two components can share a
+colour and wear different looks, and the <a href="#appearance">rendered view</a> restyles
+both without touching either.</p>
+
 <h2 id="gridfinity">Gridfinity</h2>
 <p><b>Gridfinity bin</b> and <b>Gridfinity baseplate</b> sit in the Features menu and need no
 sketch: pick one and a real, editable solid lands in the tree. The panel speaks Gridfinity
@@ -1625,7 +1646,7 @@ no build step and no framework.</p>
 rel="noopener">github.com/Lee677/freya</a></p>
 
 <footer>
-  freyacad manual · revised 28 August 2026 · part of <a href="https://freya.co.nz">freya.co.nz</a><br>
+  freyacad manual · revised 2 September 2026 · part of <a href="https://freya.co.nz">freya.co.nz</a><br>
   This manual is kept in step with the application; if something here doesn't match what
   you see, the manual is the thing that's wrong.
 </footer>
