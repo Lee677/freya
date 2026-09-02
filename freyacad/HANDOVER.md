@@ -1064,12 +1064,12 @@ fixture* below.
 
 ### What is in the file
 
-`DEMO_GENIE` is one `{components,mates}` record, ~62 KB inline beside `DEMO_LAMP`, and
-`DEMOS` gains `{key:'genie', kind:'assembly', …}`. 188 features across three components:
+`DEMO_GENIE` is one `{components,mates}` record, ~70 KB inline beside `DEMO_LAMP`, and
+`DEMOS` gains `{key:'genie', kind:'assembly', …}`. 212 features across three components:
 
 | part | features | bodies | how it is built |
 |---|---|---|---|
-| Lamp | 152 | 15 | revolve + loft + loft + **lofted scroll** + revolve + two medallions, a lofted cut and a cut — then fourteen ornament bodies that touch no boolean |
+| Lamp | 176 | 19 | revolve + loft + loft + **lofted scroll** + revolve + two lofted medallions, a lofted cut and a cut — then eighteen ornament bodies that touch no boolean |
 | Lid | 2 | 1 | one revolved spline profile |
 | Genie | 34 | 1 | two ruled lofts, one sweep, one cut |
 
@@ -1102,11 +1102,14 @@ a single spline path: two arms for the price of one sweep.
 
 ### Numbers, if you change it and want to know what moved
 
-Volumes from the meshes: **lamp 1454.3 over fifteen bodies (1393.2 of it the merged
-one), lid 71.9, genie 230.6**. Lamp box x −21.26…21.76, y 0…19.04, z ±7.54 (the foot's
-scallops are the widest thing on it). Cold build of the whole assembly, headless with
-swiftshader: **21.7–23.7 s** measured round `loadDemo('genie')` (it was 14–17 s before
-the ornament; the old single-solid lamp was 6.7–6.9 s). Both mates solve to **0.0
+Volumes from the meshes: **lamp 1442.4 over nineteen bodies (1388.3 of it the merged
+one), lid 71.9, genie 230.6**; 26 k triangles for the lamp. Lamp box x −21.26…21.76,
+y 0…19.04, z ±7.54 (the foot's scallops are the widest thing on it). Cold build of the
+whole assembly, headless with swiftshader: **22.0 s**, and 21.7–24.9 s over a dozen runs
+on a box whose own load moves it about ±1.5 s (it was 14–17 s before the ornament; the
+old single-solid lamp was 6.7–6.9 s). Of that 22 s the lamp is **15.8**: 12.7 s of
+construction, 2.8 s to mesh nineteen bodies, 0.3 s of edge meshes and 0.1 s of face
+painting — measured with `$SP/ornate/phases.js`. Both mates solve to **0.0
 exactly** on load — the components ship in their solved positions, so the first
 `solveMates` has nothing to do.
 
@@ -1153,14 +1156,40 @@ B-spline surface — measured, not guessed:
 
 | tool | faces crossing the hull | cost |
 |---|---|---|
-| medallion, a 10-sided ellipse | 10 | 1.4 s each side |
+| medallion, an 8-sided ellipse lofted | 8 | 1.2 s each side |
 | scrollwork, nine outlines of ~18 segments | ~162 | **40–73 s** each side |
 
 So the medallions are merged (they are the volume-monotonic proof, and a cartouche wants
-to be part of the casting) and everything else is `merge:false`: the scrollwork, six bead
-rings, the foot's scallops, three sets of jewels, the handle's scroll and leaf. Fourteen
+to be part of the casting) and everything else is `merge:false`: the relief, six bead
+rings, the foot's scallops, three sets of jewels, the handle's scroll and leaf. Eighteen
 bodies, **zero booleans**, 0.5 s for the lot. A body costs a mesh; a fuse costs a boolean,
 and what bills is the number of booleans (trap 26).
+
+**The relief sits the same height proud everywhere, and that took the skin's own
+numbers.** The flank is a dome in both directions — 4.89 mm out at (−1, 11.4) and 3.5 at
+its corners — so a flat outline extruded at one z stands anything from flush to a
+millimetre proud, which is what makes ornament read as slabs stuck on rather than as
+chasing. The hull's skin was raycast on a 17 × 13 grid (`$SP/ornate/surf.js`), the grid
+lives in the generator, and every element is BANDED by the skin height under its own
+outline: three bands a side, each with its own plane at `skin + 0.28`. Nothing on the
+lamp stands less than 0.28 or more than 0.76 proud.
+
+Three measured facts about the ornament's cost, all of them counter-intuitive:
+
+- **A round bead costs 228 triangles.** The mesher's angular deflection is scale-free
+  (0.22 rad, ≥28 chords a turn) so a 0.4 mm bead is tessellated as finely as a 40 mm boss.
+  Ninety-eight beads were 22 k triangles on their own. They are **polygons** now — eight
+  sides, circumradius corrected so the flats sit where the circle was — and the lamp went
+  from 57 k triangles to 26 k for a difference nobody can see at 0.4 mm.
+- **One long prism is worse than two short ones.** The hull is symmetric about Front, so
+  each relief band could be ONE body extruded symmetrically through the lamp instead of
+  two. It halves the bodies — and BRepMesh answers a 9.6 mm long thin planar face with a
+  grid, 2 700 triangles an element against 150. It measured 2 s *slower*. Two bodies.
+- **Bodies are cheaper than they look.** Meshing nineteen of them is 2.8 s, their edge
+  meshes 0.3 s and the face painter 0.1 s. The build's 12.7 s of construction is where the
+  money goes, and 4.6 s of that is the ONE fuse that carries the handle's arm into the
+  hull. Dropping the arm's section from a 16-point superellipse to a 12-point one, and the
+  medallion from five sections to four, took 1.9 s off without changing either shape.
 
 Two rules follow from that, and both are easy to break by accident:
 
@@ -1182,8 +1211,10 @@ Two rules follow from that, and both are easy to break by accident:
    bodies, and the comment in the demo says so.
 
 What the ornament is, body by body: the handle's **scroll** and **leaf**; **gold relief**
-on each flank (four tapering arc-band strokes and a six-lobed scallop shell, on a plane
-0.5 mm outside the skin); **six bead rings** (stem, collar, collar rim, foot, and two on
+on each flank in three bands — a framed oval cartouche (an outer and an inner ellipse in
+one sketch, so `regions` reads the inner one as a hole and the boss comes out as a frame),
+six tapering arc-band strokes, six florets, two pointed leaves and a six-lobed scallop
+shell; **six bead rings** (stem, collar, collar rim, foot, and two on
 the spout — the spout's ride on the spout's own tilted planes, so they sit square to it);
 the **foot's scallops**, fourteen half-buried discs round the rim; and **three sets of red
 cabochons**, three a side on the hull plus one on the spout, coloured through
@@ -1208,11 +1239,20 @@ medallions, 2 s for the two bores, 0.5 s for all fourteen bodies. The rest is me
 **Left out on purpose.** The spout's enamel panels edged in gold (the photograph has them;
 they need either a per-face paint the loft cannot give — the spout is one face — or a
 dozen more merged tools at 0.3 s a face). The rope moulding that runs along the real
-handle's spine, for the same reason. A medallion with a raised *rim* rather than a solid
-oval boss: an annular sketch doubles the faces crossing the hull and doubles that 1.4 s.
-And the beads are extruded circles rather than hemispheres — a ring of spheres cannot be
-one feature in this kernel (a revolve turns about one axis), and 26 revolves would be 26
-bodies for a detail 0.3 mm across.
+handle's spine, for the same reason. And the beads are extruded polygons rather than
+hemispheres — a ring of spheres cannot be one feature in this kernel (a revolve turns
+about one axis), and 20 revolves would be 20 bodies for a detail 0.3 mm across.
+
+**One thing the rendered view will always do.** Metal at `metalness 0.96` has no diffuse
+term: what you see is the studio panorama reflected in it. A big FLAT face pointing
+sideways reflects the panorama's dark horizon and goes black, which is why the first cut
+of this ornament — one 5 mm oval slab and three thick crescents — read as holes in the
+rendered view while the workshop view (roughness 0.9, metalness 0) showed them gold. The
+normals were never wrong: they measure `[0,0,1]` and the materials are DoubleSide either
+way (`$SP/ornate/normals.js`). The answer is geometric, and it is the same answer as
+"make it finer": no flat face bigger than a millimetre or so. The cartouche is a lofted
+dome that comes almost to a point, the strokes are 0.3 mm wide, and the florets are
+polygons whose walls always catch the light somewhere.
 
 ### Job A: what the plumbing had to learn
 
@@ -1289,7 +1329,7 @@ suites ask for.
   than the tube is wide — and every one of them fused correctly, volume rising by the
   tube's own volume each time. A **coarse smooth loft** reproduces it perfectly: five
   sections a fifth of a turn apart, skinned smooth, swings 1.9 mm wide of its own end
-  section and the fuse then deletes a third of the hull (1300.5 → 945.2 mm³, no error).
+  section and the fuse then deletes half the hull (1300.5 → 701.1 mm³, no error).
   That is what `--sabotage smooth` does and what check 21 catches. The rule stands
   whatever the kernel version does with a given shape: **after every merged feature the
   volume must go up**, and the suite now asserts it step by step.
@@ -1318,14 +1358,14 @@ came with the ornament:
 
 - **21, every merged feature makes the lamp bigger.** The lamp is rebuilt through
   `buildPartShapes` at each `merge:true` solid feature and the total mesh volume must rise
-  every time: 427.0 → 1253.6 → 1300.5 → 1371.5 → 1419.1 → 1425.0 → 1432.7 mm³. Seven
-  builds, ~12 s. This is the check that catches a self-intersecting tool, which OCCT
+  every time: 427.0 → 1253.6 → 1300.5 → 1371.4 → 1419.3 → 1423.8 → 1425.4 mm³. Seven
+  builds, ~10 s. This is the check that catches a self-intersecting tool, which OCCT
   answers by deleting a *different* argument without an error.
 - **22, the handle is a tapered scroll.** Read off the run of tilted planes, which is the
   centreline: the arm turns 281° and the coil 476°, the coil's path is 6.09 mm long and
   its whole footprint is 3.12 mm, and the coil weighs 6.6 mm³ against the 13.1 a ribbon of
-  its starting section would weigh over that length — so it turns, it coils, and it
-  tapers. Then the coil is built on its own and matched by volume against one of the
+  its starting section would weigh over that length (6.6 against 12.9) — so it turns, it
+  coils, and it tapers. Then the coil is built on its own and matched by volume against one of the
   lamp's shipped bodies, so the check is about the model and not about the numbers in it.
 
 It also writes `$SP/ornate-workshop.png` and `$SP/ornate-rendered.png`, the two pictures
@@ -1335,8 +1375,9 @@ the ornament is judged by, and reports `summary.coldBuildMs`.
 `--sabotage opacity` makes the genie solid (11 and 15); `--sabotage enamel` strips the
 overlays (13); `--sabotage lid` shoves the lid 3 up and 2 across (7, 9 and 10);
 `--sabotage handle` puts the old constant swept tube back in place of the scroll (22);
-`--sabotage smooth` draws the arm the way it was first drawn, five sections and a smooth
-skin, and the fuse eats the hull (21 goes red naming `Handle arm`, 1300.5 → 945.2).
+`--sabotage smooth` draws the arm the way it was first drawn, a smooth skin through every
+third section, and the fuse eats the hull (21 goes red naming `Handle arm`, 1300.5 →
+701.1 mm³ with no error anywhere).
 
 Three of the twenty-one are about the autosave, because `restoreAutosave` had to change:
 `asmSig` must ignore the build's bookkeeping and not the user's edits; an assembly demo left
